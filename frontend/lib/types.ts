@@ -14,21 +14,32 @@ export interface Strategy {
   notional_per_trade: number;
 }
 
-export interface Me {
-  player: string;
-  rank: number | null;
-  cycles_run: number;
-  account: { cash: number; equity: number; return_pct: number };
-  positions: Position[];
+export interface Account {
+  you: string;
+  team: string[];
+  broker: string;
+  is_paper: boolean;
+  trading_enabled: boolean;
+  cash: number;
+  equity: number;
+  buying_power: number;
   strategy: Strategy | null;
 }
 
-export interface Standing {
-  rank: number;
-  player: string;
-  equity: number;
-  return_pct: number;
-  cycles_run: number;
+export interface Order {
+  symbol: string;
+  side: string;
+  qty: number;
+  status: string;
+  avg_fill_price: number | null;
+  submitted_at: string;
+}
+
+export interface ActivityEntry {
+  seq: number;
+  actor: string;
+  action: string;
+  detail: string;
 }
 
 export interface Signal {

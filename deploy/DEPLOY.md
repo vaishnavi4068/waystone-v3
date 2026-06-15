@@ -1,7 +1,9 @@
 # Waystone Arena — GKE Deployment Runbook (Platform Engineer)
 
-Hosts the 5-player paper-trading strategy competition as a remote MCP server with TLS, keys
-in **GCP Secret Manager**, and live Polygon data. **Paper money only** (no real broker).
+Hosts the team trading workspace as a remote MCP server with TLS, keys in **GCP Secret
+Manager**, live Polygon data, and **real execution on one shared Alpaca paper account**.
+Five members operate the same account via Claude; tools are attributed to the caller.
+**Alpaca paper** (no real money) — going live is a deliberate later step.
 
 ---
 
@@ -99,8 +101,20 @@ create the k8s Secret directly. Re-run + `rollout restart` to rotate.
 kubectl create namespace waystone-arena
 kubectl -n waystone-arena create secret generic waystone-arena-secrets \
   --from-literal=POLYGON_API_KEY="$(gcloud secrets versions access latest --secret=polygon-api-key)" \
+  --from-literal=ALPACA_API_KEY="$(gcloud secrets versions access latest --secret=alpaca-api-key)" \
+  --from-literal=ALPACA_API_SECRET="$(gcloud secrets versions access latest --secret=alpaca-api-secret)" \
+  --from-literal=ALPACA_PAPER="true" \
   --from-literal=ANTHROPIC_API_KEY="$(gcloud secrets versions access latest --secret=anthropic-api-key)" \
   --from-literal=WAYSTONE_ADMIN_TOKEN="$(gcloud secrets versions access latest --secret=waystone-admin-token)"
+```
+
+**This is the shared team account.** With `ALPACA_API_KEY`/`ALPACA_API_SECRET` set, `run_cycle`
+places **real orders on one shared Alpaca paper account**; without them it falls back to the
+in-process simulator. Keep `ALPACA_PAPER=true` — going live (real money) is a deliberate later
+step, not a flag flip. Add the Alpaca secrets to Secret Manager alongside the others:
+```sh
+printf '%s' "$ALPACA_API_KEY"    | gcloud secrets create alpaca-api-key    --data-file=-
+printf '%s' "$ALPACA_API_SECRET" | gcloud secrets create alpaca-api-secret --data-file=-
 ```
 
 Either way, the Deployment consumes `waystone-arena-secrets` via `envFrom` — unchanged.
@@ -231,14 +245,17 @@ over TLS. Hand each user theirs over a private channel.
 
 ## 9. How players use it
 
-- **Dashboard (read-only):** open `https://$DOMAIN/` in a browser, paste your token to sign
-  in — your account/positions/strategy + the shared leaderboard, signals, charts, backtests,
-  news. See [deploy/UI's docs](../docs/UI.md).
-- **Claude (submit/run strategies):** add the remote MCP server `https://$DOMAIN/mcp` with
-  header `Authorization: Bearer <token>` in **Claude Code / Desktop** — works today. The
-  **claude.ai web** connector needs OAuth (not built). See [CLAUDE_CONNECTOR.md](CLAUDE_CONNECTOR.md).
+- **Dashboard (read-only):** open `https://$DOMAIN/` in a browser, paste your token — the
+  shared account, positions, orders, the shared strategy, team, activity log, signals,
+  charts, backtests, news. See [docs/UI.md](../docs/UI.md).
+- **Claude (operate the account):** add the remote MCP server `https://$DOMAIN/mcp` with
+  header `Authorization: Bearer <token>` in **Claude Code / Desktop**. Tools:
+  `set_strategy` / `get_strategy`, `run_cycle` (submits real orders to the shared Alpaca
+  paper account), `account` / `positions` / `orders`, `backtest`, `halt` / `resume`,
+  `activity`. The **claude.ai web** connector needs OAuth (not built) — see
+  [CLAUDE_CONNECTOR.md](CLAUDE_CONNECTOR.md).
 
-Same per-user token for both surfaces — never shared, sent only over TLS.
+Same per-member token for both surfaces — never shared, sent only over TLS.
 
 ---
 

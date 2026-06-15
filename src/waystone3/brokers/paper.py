@@ -122,6 +122,9 @@ class PaperBroker:
     async def get_order(self, order_id: str) -> Order:
         return self._orders[order_id]
 
+    async def list_orders(self, limit: int = 50) -> list[Order]:
+        return list(self._orders.values())[-limit:][::-1]
+
     def _apply_fill(
         self, symbol: str, side: OrderSide, qty: Decimal, price: Decimal
     ) -> None:

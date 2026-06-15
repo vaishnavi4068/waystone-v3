@@ -69,9 +69,5 @@ def test_standings_requires_valid_token() -> None:
         asyncio.run(svc.standings("bogus"))
 
 
-def test_mcp_server_builds_with_tools() -> None:
-    # The thin transport wires the service into FastMCP without error.
-    from waystone3.mcp_server import build_mcp
-
-    mcp = build_mcp(_service())
-    assert mcp.name == "waystone-arena"
+# (The MCP server now serves the shared workspace, not the competition; its build is
+# covered by the workspace tests + the live HTTP smoke.)

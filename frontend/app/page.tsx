@@ -2,8 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { getMe } from "@/lib/api";
-import { money, pct, tone } from "@/lib/format";
+import { getAccount } from "@/lib/api";
+import { money } from "@/lib/format";
 
 function Stat({ label, value, className = "" }: { label: string; value: string; className?: string }) {
   return (
@@ -15,60 +15,34 @@ function Stat({ label, value, className = "" }: { label: string; value: string; 
 }
 
 export default function Page() {
-  const { data, isLoading } = useQuery({ queryKey: ["me"], queryFn: getMe });
-
+  const { data, isLoading } = useQuery({ queryKey: ["account"], queryFn: getAccount });
   if (isLoading || !data) return <div className="text-slate-400">Loading…</div>;
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-semibold">My Dashboard · {data.player}</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Shared Account</h1>
+        <div className="text-sm text-slate-400">
+          {data.broker} ·{" "}
+          <span className={data.is_paper ? "text-amber-400" : "text-rose-400"}>
+            {data.is_paper ? "PAPER" : "LIVE"}
+          </span>{" "}
+          ·{" "}
+          <span className={data.trading_enabled ? "text-emerald-400" : "text-rose-400"}>
+            {data.trading_enabled ? "trading on" : "HALTED"}
+          </span>
+        </div>
+      </div>
 
-      <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Stat label="Equity" value={money(data.account.equity)} />
-        <Stat label="Cash" value={money(data.account.cash)} />
-        <Stat
-          label="Return"
-          value={pct(data.account.return_pct)}
-          className={tone(data.account.return_pct)}
-        />
-        <Stat label="Rank" value={data.rank ? `#${data.rank}` : "—"} />
+      <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <Stat label="Equity" value={money(data.equity)} />
+        <Stat label="Cash" value={money(data.cash)} />
+        <Stat label="Buying power" value={money(data.buying_power)} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="card p-5">
-          <div className="mb-3 font-medium">Positions · {data.cycles_run} cycles run</div>
-          {data.positions.length === 0 ? (
-            <div className="text-sm text-slate-500">No open positions.</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="text-left text-slate-500">
-                <tr>
-                  <th className="py-1">Symbol</th>
-                  <th>Qty</th>
-                  <th>Entry</th>
-                  <th>Mark</th>
-                  <th>Unrealized</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.positions.map((p) => (
-                  <tr key={p.symbol} className="border-t border-slate-800">
-                    <td className="py-1.5 font-medium">{p.symbol}</td>
-                    <td>{p.qty}</td>
-                    <td>{money(p.avg_entry_price)}</td>
-                    <td>{p.market_price != null ? money(p.market_price) : "—"}</td>
-                    <td className={p.unrealized_pnl != null ? tone(p.unrealized_pnl) : ""}>
-                      {p.unrealized_pnl != null ? money(p.unrealized_pnl) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div className="card p-5">
-          <div className="mb-3 font-medium">My Strategy</div>
+          <div className="mb-3 font-medium">Shared strategy</div>
           {data.strategy ? (
             <div className="space-y-3 text-sm">
               <div>
@@ -102,9 +76,28 @@ export default function Page() {
             </div>
           ) : (
             <div className="text-sm text-slate-500">
-              No strategy submitted yet — submit one from Claude.
+              No shared strategy yet — set one from Claude (&quot;set strategy …&quot;).
             </div>
           )}
+        </div>
+
+        <div className="card p-5">
+          <div className="mb-3 font-medium">Team</div>
+          <div className="flex flex-wrap gap-2 text-sm">
+            {data.team.map((m) => (
+              <span
+                key={m}
+                className={`rounded px-2 py-1 ${m === data.you ? "bg-emerald-600/20 text-emerald-300" : "bg-slate-800"}`}
+              >
+                {m}
+                {m === data.you ? " (you)" : ""}
+              </span>
+            ))}
+          </div>
+          <p className="mt-4 text-xs text-slate-500">
+            Everyone here operates this one account. Actions are attributed to the member
+            who runs them — see Activity.
+          </p>
         </div>
       </div>
     </div>

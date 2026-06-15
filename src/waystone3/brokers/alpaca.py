@@ -100,6 +100,13 @@ class AlpacaBroker:
         result = await asyncio.to_thread(self._client.get_order_by_id, order_id)
         return _order_from_alpaca(result)
 
+    async def list_orders(self, limit: int = 50) -> list[Order]:
+        from alpaca.trading.requests import GetOrdersRequest
+
+        req = GetOrdersRequest(status="all", limit=limit)
+        results = await asyncio.to_thread(self._client.get_orders, req)
+        return [_order_from_alpaca(o) for o in results]
+
 
 def _account_from_alpaca(a: TradeAccount) -> AccountInfo:
     return AccountInfo(

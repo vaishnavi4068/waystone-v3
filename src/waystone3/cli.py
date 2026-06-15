@@ -208,26 +208,26 @@ def serve(
 
 @app.command("arena-seed")
 def arena_seed(
-    players: str = typer.Option(..., help="Comma-separated player display names."),
+    players: str = typer.Option(..., help="Comma-separated team member names."),
 ) -> None:
-    """Register players for the Arena (writes to WAYSTONE_DB) and print their tokens."""
+    """Add team members to the shared workspace (writes to WAYSTONE_DB) and print tokens."""
     import os
 
-    from waystone3.competition.arena import build_service_from_env, seed_players
+    from waystone3.workspace.runtime import build_service_from_env, seed_members
 
     if not os.getenv("WAYSTONE_ADMIN_TOKEN"):
         raise typer.BadParameter("set WAYSTONE_ADMIN_TOKEN first")
     if not os.getenv("WAYSTONE_DB"):
-        raise typer.BadParameter("set WAYSTONE_DB (a SQLite path) so seeded players persist")
+        raise typer.BadParameter("set WAYSTONE_DB (a SQLite path) so members persist")
     names = [n for n in (s.strip() for s in players.split(",")) if n]
     service = build_service_from_env()
-    created = seed_players(service, names)
+    created = seed_members(service, names)
 
-    table = Table(title="Arena players (hand each token to its player)")
-    table.add_column("Player")
+    table = Table(title="Team members (hand each token to its member)")
+    table.add_column("Member")
     table.add_column("Token")
     for row in created:
-        table.add_row(row["display_name"], row["token"])
+        table.add_row(row["name"], row["token"])
     console.print(table)
 
 

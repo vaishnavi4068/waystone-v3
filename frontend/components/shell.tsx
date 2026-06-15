@@ -2,22 +2,25 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
+  Activity,
   BarChart3,
   CandlestickChart,
   LineChart,
+  ListOrdered,
   LogOut,
   Newspaper,
-  Trophy,
-  UserCircle,
+  Wallet,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { clearToken, getMe } from "@/lib/api";
+import { clearToken, getAccount } from "@/lib/api";
 
 const NAV = [
-  { href: "/", label: "My Dashboard", icon: UserCircle },
-  { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
+  { href: "/", label: "Account", icon: Wallet },
+  { href: "/positions", label: "Positions", icon: BarChart3 },
+  { href: "/orders", label: "Orders", icon: ListOrdered },
+  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/signals", label: "Signals", icon: LineChart },
   { href: "/charts", label: "Charts", icon: CandlestickChart },
   { href: "/backtests", label: "Backtests", icon: BarChart3 },
@@ -26,7 +29,7 @@ const NAV = [
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const me = useQuery({ queryKey: ["me"], queryFn: getMe });
+  const acct = useQuery({ queryKey: ["account"], queryFn: getAccount });
 
   function logout() {
     clearToken();
@@ -60,9 +63,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="mt-4 border-t border-slate-800 pt-4">
-          <div className="text-sm font-medium">{me.data?.player ?? "…"}</div>
-          {me.data?.rank != null && (
-            <div className="text-xs text-slate-500">Rank #{me.data.rank}</div>
+          <div className="text-sm font-medium">{acct.data?.you ?? "…"}</div>
+          {acct.data && (
+            <div className="text-xs text-slate-500">
+              {acct.data.broker} · {acct.data.is_paper ? "paper" : "LIVE"}
+              {acct.data.trading_enabled ? "" : " · halted"}
+            </div>
           )}
           <button
             onClick={logout}

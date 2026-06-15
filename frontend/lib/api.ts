@@ -1,12 +1,14 @@
 import axios from "axios";
 
 import type {
+  Account,
+  ActivityEntry,
   BacktestResult,
   Bar,
-  Me,
   NewsItem,
+  Order,
+  Position,
   Signal,
-  Standing,
 } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:9200";
@@ -35,8 +37,10 @@ async function get<T>(path: string): Promise<T> {
   return data;
 }
 
-export const getMe = () => get<Me>("/api/me");
-export const getStandings = () => get<Standing[]>("/api/standings");
+export const getAccount = () => get<Account>("/api/account");
+export const getPositions = () => get<Position[]>("/api/positions");
+export const getOrders = () => get<Order[]>("/api/orders");
+export const getActivity = () => get<ActivityEntry[]>("/api/activity");
 export const getSignals = (symbols = "") =>
   get<Signal[]>(`/api/signals${symbols ? `?symbols=${symbols}` : ""}`);
 export const getBars = (symbol: string, lookback = 200) =>
