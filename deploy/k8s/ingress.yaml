@@ -1,0 +1,47 @@
+# Public HTTPS for the whole stack on one host, fanned out by path:
+#   /mcp*  -> Arena MCP server (players' Claude connectors)
+#   /api/* -> read-only dashboard API
+#   /*     -> dashboard frontend
+# Replace __ARENA_DOMAIN__ (e.g. arena.example.com) in BOTH the cert and the rule. Prereqs:
+#   gcloud compute addresses create waystone-arena-ip --global
+#   # then A record: __ARENA_DOMAIN__ -> the reserved IP
+# The managed cert provisions automatically once DNS resolves (10-30m).
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: waystone-arena-cert
+  namespace: waystone-arena
+spec:
+  domains:
+    - __ARENA_DOMAIN__
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: waystone-arena
+  namespace: waystone-arena
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "waystone-arena-ip"
+    networking.gke.io/managed-certificates: "waystone-arena-cert"
+spec:
+  rules:
+    - host: __ARENA_DOMAIN__
+      http:
+        paths:
+          - path: /mcp
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: waystone-arena, port: { number: 80 } }
+          - path: /mcp/*
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: waystone-arena, port: { number: 80 } }
+          - path: /api/*
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: waystone-api, port: { number: 80 } }
+          - path: /*
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: waystone-frontend, port: { number: 80 } }

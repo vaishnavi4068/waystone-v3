@@ -1,0 +1,115 @@
+# Waystone Arena on GKE: namespace + persistent SQLite + the MCP server + its Service.
+# Replace __IMAGE__ with your pushed image (e.g. REGION-docker.pkg.dev/PROJECT/REPO/waystone-arena:TAG).
+#
+# Single replica by design: SQLite on a ReadWriteOnce volume has one writer, which is
+# correct for a 5-player competition. Do not scale this Deployment > 1.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: waystone-arena
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: waystone-arena-data
+  namespace: waystone-arena
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waystone-arena
+  namespace: waystone-arena
+  labels: { app: waystone-arena }
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # single RWO volume — never run two writers at once
+  selector:
+    matchLabels: { app: waystone-arena }
+  template:
+    metadata:
+      labels: { app: waystone-arena }
+    spec:
+      containers:
+        - name: arena
+          image: __IMAGE__
+          ports:
+            - containerPort: 9100
+          env:
+            - name: WAYSTONE_DB
+              value: /data/arena.db
+          envFrom:
+            - secretRef: { name: waystone-arena-secrets }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /healthz, port: 9100 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 9100 }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+        # Read-only dashboard API — sidecar so it shares the RWO SQLite volume with the
+        # Arena (a separate pod can't mount the same ReadWriteOnce PVC).
+        - name: api
+          image: __IMAGE__
+          command: ["uv", "run", "waystone3", "api-serve", "--host", "0.0.0.0", "--port", "9200"]
+          ports:
+            - containerPort: 9200
+          env:
+            - name: WAYSTONE_DB
+              value: /data/arena.db
+          envFrom:
+            - secretRef: { name: waystone-arena-secrets }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /api/health, port: 9200 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: waystone-arena-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waystone-arena
+  namespace: waystone-arena
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'  # container-native LB for the ingress
+spec:
+  type: ClusterIP
+  selector: { app: waystone-arena }
+  ports:
+    - port: 80
+      targetPort: 9100
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waystone-api
+  namespace: waystone-arena
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: ClusterIP
+  selector: { app: waystone-arena }  # same pods; targets the api sidecar port
+  ports:
+    - port: 80
+      targetPort: 9200

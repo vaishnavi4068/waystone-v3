@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waystone v3 vs. QuantMind Trading API</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c232d;
+    --border: #2d3543;
+    --text: #e6edf3;
+    --muted: #9aa6b2;
+    --ws: #5e8bff;      /* waystone accent */
+    --qm: #f7a23b;      /* quantmind accent */
+    --good: #3fb950;
+    --bad: #f85149;
+    --chip: #21262d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.hero {
+    text-align: center;
+    padding: 24px 0 40px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+  }
+  .hero h1 { font-size: 2.1rem; margin: 0 0 12px; letter-spacing: -0.02em; }
+  .hero h1 .ws { color: var(--ws); }
+  .hero h1 .qm { color: var(--qm); }
+  .hero p.sub { color: var(--muted); margin: 0 auto; max-width: 720px; font-size: 1.05rem; }
+  .hero .meta { color: var(--muted); font-size: 0.82rem; margin-top: 16px; }
+  .hero .meta code { background: var(--chip); padding: 2px 7px; border-radius: 5px; }
+
+  h2 {
+    font-size: 1.35rem;
+    margin: 48px 0 18px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tldr { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 8px; }
+  @media (max-width: 760px){ .tldr, .gaps { grid-template-columns: 1fr !important; } }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px;
+  }
+  .card.ws { border-top: 3px solid var(--ws); }
+  .card.qm { border-top: 3px solid var(--qm); }
+  .card h3 { margin: 0 0 6px; font-size: 1.1rem; }
+  .card.ws h3 { color: var(--ws); }
+  .card.qm h3 { color: var(--qm); }
+  .card .tag { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .card p { margin: 10px 0 0; color: var(--text); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; margin-top: 8px; }
+  thead th {
+    text-align: left;
+    padding: 12px 14px;
+    background: var(--panel-2);
+    border-bottom: 2px solid var(--border);
+    position: sticky; top: 0;
+  }
+  thead th:first-child { width: 21%; }
+  thead th.ws { color: var(--ws); }
+  thead th.qm { color: var(--qm); }
+  tbody td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+  tbody td:first-child { font-weight: 600; color: var(--muted); }
+
+  .pill { display:inline-block; font-size:0.72rem; padding:1px 7px; border-radius:20px; border:1px solid var(--border); background:var(--chip); margin:1px 2px 1px 0; }
+  .yes { color: var(--good); font-weight: 600; }
+  .no { color: var(--bad); font-weight: 600; }
+
+  .gaps { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .gaps ul { margin: 10px 0 0; padding-left: 18px; }
+  .gaps li { margin-bottom: 7px; }
+
+  .meet { background: var(--panel); border:1px solid var(--border); border-radius:12px; padding: 8px 24px 20px; }
+  .meet .row { display:flex; gap:14px; padding: 16px 0; border-bottom:1px solid var(--border); align-items:flex-start; }
+  .meet .row:last-child { border-bottom:none; }
+  .meet .row .ico { font-size:1.4rem; line-height:1; }
+  .meet code, .endpoints code, td code { background: var(--chip); padding: 1px 6px; border-radius: 5px; font-size: 0.85em; color:#cbd5e1; }
+  .meet .row strong { color: var(--ws); }
+
+  .endpoints { font-size: 0.9rem; }
+  .endpoints .grp { margin-bottom: 14px; }
+  .endpoints .grp b { color: var(--qm); }
+
+  footer { margin-top: 56px; padding-top: 18px; border-top:1px solid var(--border); color: var(--muted); font-size: 0.82rem; text-align:center; }
+  .legend { text-align:center; color:var(--muted); font-size:0.8rem; margin-top:10px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1><span class="ws">Waystone&nbsp;v3</span> &nbsp;vs.&nbsp; <span class="qm">QuantMind&nbsp;Trading&nbsp;API</span></h1>
+    <p class="sub">Two trading systems at different altitudes of the stack — an opinionated momentum <em>application</em> versus crypto-derivatives <em>infrastructure</em> exposed as a REST API. More complementary than competitive.</p>
+    <p class="meta">Sources: Waystone v3 codebase · QuantMind OpenAPI 3.1 <code>v0.5.0</code> (25 endpoints, 43 schemas)</p>
+  </header>
+
+  <!-- TL;DR -->
+  <h2>TL;DR</h2>
+  <div class="tldr">
+    <div class="card ws">
+      <span class="tag">The brain + safety rails</span>
+      <h3>Waystone v3</h3>
+      <p>An opinionated momentum / trend-following engine. Pluggable signal fusion, a Claude agent control plane, integrated backtesting, and a deliberate <strong>paper-only</strong> posture. Stocks/ETFs today.</p>
+    </div>
+    <div class="card qm">
+      <span class="tag">The plumbing</span>
+      <h3>QuantMind API</h3>
+      <p>A multi-tenant, crypto-derivatives-centric <strong>data + pricing + execution</strong> platform. Instrument catalog, OHLC, BTC/ETH vol surfaces, and hosted strategies running against real exchange accounts.</p>
+    </div>
+  </div>
+  <p class="legend">QuantMind could sit <em>underneath</em> Waystone as a data/execution backend.</p>
+
+  <!-- Side by side -->
+  <h2>Side-by-side</h2>
+  <table>
+    <thead>
+      <tr><th>Dimension</th><th class="ws">Waystone v3</th><th class="qm">QuantMind API</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>What it is</td><td>Trading <em>application</em> / engine</td><td>Trading <em>infrastructure</em> exposed as REST</td></tr>
+      <tr><td>Primary job</td><td>signals → fuse → decide → paper-trade; Claude agent control plane</td><td>serve catalog, OHLC, vol surfaces; run managed strategies on exchange accounts</td></tr>
+      <tr><td>Asset focus</td><td>Stocks/ETFs (yfinance / Polygon)</td><td>Crypto-first (Deribit, Binance, Bybit, OKX, Kraken) + some equity (Nasdaq, Stooq, FMP)</td></tr>
+      <tr><td>Asset classes</td><td><span class="pill">equity</span></td><td><span class="pill">crypto</span><span class="pill">forex</span><span class="pill">commodity</span><span class="pill">equity</span><span class="pill">bond</span><span class="pill">index</span></td></tr>
+      <tr><td>Security types</td><td>long equity <span class="pill">allow_short flag</span></td><td><span class="pill">spot</span><span class="pill">margin</span><span class="pill">perpetual</span><span class="pill">future</span><span class="pill">option</span><span class="pill">rate</span></td></tr>
+      <tr><td>Options / derivatives</td><td><span class="no">None</span></td><td><span class="yes">First-class</span> — <code>/vol-surfaces/{asset}</code> (BTC/ETH), option IV bid/ask, forwards, strikes</td></tr>
+      <tr><td>Strategy model</td><td><code>SignalContributor</code> plugins blended by weights (ma_crossover, price_action, volume, sentiment)</td><td><code>StrategyMarket</code>: arbitrage, market_maker, trend_following, mean_reversion, event_driven</td></tr>
+      <tr><td>Execution</td><td>PaperBroker (in-memory) + Alpaca · <span class="yes">paper-only guardrail</span></td><td>Real exchange accounts · vaults exchange API keys · <code>trading_state: trading</code></td></tr>
+      <tr><td>AI / sentiment</td><td><span class="yes">Claude</span> sentiment + analyst / tuner / supervisor agents</td><td><span class="no">None</span> (pure quant infra)</td></tr>
+      <tr><td>Multi-tenancy</td><td>Single-process; Arena bearer tokens in-memory</td><td>Orgs, users, tokens, accounts, RBAC, regions</td></tr>
+      <tr><td>Interface</td><td>Typer CLI + FastMCP (Claude Arena)</td><td>Versioned REST <code>/v1</code>, cursor pagination, <code>X-Quantmind-Api-Key</code></td></tr>
+      <tr><td>Backtesting</td><td><span class="yes">Built-in</span> (<code>run_backtest</code>, shared pipeline)</td><td><span class="no">Not exposed via API</span></td></tr>
+      <tr><td>Persistence</td><td>In-memory (export / import)</td><td>Durable server-side catalog / accounts / markets</td></tr>
+      <tr><td>Maturity stance</td><td>Greenfield, paper-safe blueprint</td><td>Production multi-tenant platform</td></tr>
+    </tbody>
+  </table>
+
+  <!-- What each lacks -->
+  <h2>What each has that the other lacks</h2>
+  <div class="gaps">
+    <div class="card qm">
+      <h3>QuantMind has, Waystone doesn't</h3>
+      <ul>
+        <li>Real options / volatility pricing (vol surfaces, IV)</li>
+        <li>Crypto / perp / future connectivity</li>
+        <li>Live exchange execution with API-key vaulting</li>
+        <li>Multi-tenant SaaS surface (orgs / accounts / RBAC)</li>
+        <li>Versioned public REST API</li>
+      </ul>
+    </div>
+    <div class="card ws">
+      <h3>Waystone has, QuantMind doesn't (exposed)</h3>
+      <ul>
+        <li>Pluggable signal-fusion architecture</li>
+        <li>LLM sentiment + autonomous agent control plane</li>
+        <li>Integrated backtesting on the live pipeline</li>
+        <li>Explicit paper-only safety guardrail</li>
+        <li>Claude Arena — MCP multiplayer competition</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Endpoint map -->
+  <h2>QuantMind endpoint map</h2>
+  <div class="meet endpoints">
+    <div class="grp"><b>Reference data</b> — <code>GET /securities</code>, <code>/securities/{id}</code>, <code>/figi</code> (Open FIGI), <code>/exchanges</code>, <code>/countries</code></div>
+    <div class="grp"><b>Market data</b> — <code>GET /ohlc/{security_id}</code> (trade/book), <code>/block</code>, <code>/block/headers</code></div>
+    <div class="grp"><b>Derivatives pricing</b> — <code>GET /vol-surfaces/{asset}</code> (BTC/ETH) · IV bid/ask, forwards, spot inputs &nbsp;⭐ standout</div>
+    <div class="grp"><b>Strategy execution</b> — <code>/markets</code> (StrategyMarket CRUD), <code>/markets/schema/{strategy_name}</code></div>
+    <div class="grp"><b>Accounts &amp; secrets</b> — <code>/accounts</code>, <code>/accounts/{id}/api_keys</code> (exchange key vault)</div>
+    <div class="grp"><b>Tenancy</b> — <code>/user</code>, <code>/user/orgs</code>, <code>/user/tokens</code>, <code>/watchlists</code></div>
+  </div>
+
+  <!-- Where they meet -->
+  <h2>Where they could meet</h2>
+  <div class="meet">
+    <div class="row">
+      <span class="ico">🔌</span>
+      <div><strong>QuantMindDataSource</strong> implementing the <code>MarketDataSource</code> protocol (<code>/ohlc/{security_id}</code>, <code>/securities</code>) — adds crypto / derivatives data to Waystone.</div>
+    </div>
+    <div class="row">
+      <span class="ico">⚡</span>
+      <div><strong>QuantMindBroker</strong> implementing the <code>Broker</code> protocol against <code>StrategyMarket</code> + accounts — extends execution beyond stocks into crypto / perps.</div>
+    </div>
+    <div class="row">
+      <span class="ico">📈</span>
+      <div><strong>Vol-surface SignalContributor</strong> consuming <code>/vol-surfaces/{asset}</code> — an options-aware signal Waystone cannot produce today.</div>
+    </div>
+  </div>
+
+  <footer>
+    Comparison generated for Waystone v3 · QuantMind data from public OpenAPI spec (<code>api.quantmind.com/v1/openapi.json</code>).
+    Analysis only — no integration is implied or scheduled.
+  </footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# Build the frontend image with NEXT_PUBLIC_API_BASE baked in.
+#   gcloud builds submit frontend --config=frontend/cloudbuild.yaml \
+#     --substitutions=_API_BASE="https://arena.example.com",_IMAGE="<frontend image>"
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - NEXT_PUBLIC_API_BASE=${_API_BASE}
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+substitutions:
+  _API_BASE: ""
+  _IMAGE: ""

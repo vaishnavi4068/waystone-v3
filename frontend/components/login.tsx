@@ -1,0 +1,44 @@
+"use client";
+
+import { useState } from "react";
+
+import { setToken } from "@/lib/api";
+
+export default function Login({ onLogin }: { onLogin: () => void }) {
+  const [value, setValue] = useState("");
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!value.trim()) return;
+    setToken(value.trim());
+    onLogin();
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center p-6">
+      <form onSubmit={submit} className="card w-full max-w-md p-8">
+        <h1 className="text-2xl font-semibold">Waystone Arena</h1>
+        <p className="mt-1 text-sm text-slate-400">
+          Paste your access token to view your dashboard.
+        </p>
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Bearer token"
+          className="mt-6 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 outline-none focus:border-emerald-500"
+        />
+        <button
+          type="submit"
+          className="mt-4 w-full rounded-lg bg-emerald-600 px-3 py-2 font-medium hover:bg-emerald-500"
+        >
+          Enter
+        </button>
+        <p className="mt-4 text-xs text-slate-500">
+          Your token is stored only in this browser. Everything here is read-only,
+          paper money.
+        </p>
+      </form>
+    </div>
+  );
+}

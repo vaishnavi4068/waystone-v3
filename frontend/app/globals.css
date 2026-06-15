@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: #0b0e14;
+  color: #e6e9ef;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.card {
+  background: #11151f;
+  border: 1px solid #1e2533;
+  border-radius: 12px;
+}

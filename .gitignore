@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Runtime data / secrets
+*.db
+.env
+.env.*
+!.env.example
+
+# Node / Next (frontend has its own .gitignore too)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# OS / editor
+.DS_Store
