@@ -1,10 +1,13 @@
 """Env-driven assembly of the shared workspace.
 
   POLYGON_API_KEY                         -> live Polygon bars/news (else offline stub)
-  ALPACA_API_KEY / ALPACA_API_SECRET      -> real Alpaca paper execution (else in-process sim)
-  ALPACA_PAPER (default true)             -> paper vs live (keep true)
+  WAYSTONE_BROKER (alpaca|paper)          -> force the broker; unset = auto-detect
+  ALPACA_API_KEY / ALPACA_API_SECRET      -> Alpaca PAPER execution (else in-process sim)
   WAYSTONE_DB                             -> SQLite (members + shared strategy + flags)
   WAYSTONE_ADMIN_TOKEN                    -> token to add team members
+
+Paper-only platform: the Alpaca broker always runs against the paper account
+(ALPACA_PAPER is pinned true); there is no live-trading path here.
 """
 
 from __future__ import annotations
@@ -12,12 +15,16 @@ from __future__ import annotations
 import os
 from typing import Any
 
+import structlog
+
 from waystone3.brokers.base import Broker
 from waystone3.data.base import MarketDataSource
 from waystone3.data.stub import StubDataSource
 from waystone3.workspace.service import WorkspaceService
 from waystone3.workspace.store import WorkspaceStore
 from waystone3.workspace.workspace import TradingWorkspace
+
+log = structlog.get_logger()
 
 
 def build_data_from_env() -> MarketDataSource:
@@ -29,13 +36,33 @@ def build_data_from_env() -> MarketDataSource:
 
 
 def build_broker_from_env() -> Broker:
-    if os.getenv("ALPACA_API_KEY") and os.getenv("ALPACA_API_SECRET"):
+    """Select the broker for the shared **paper** account.
+
+    ``WAYSTONE_BROKER`` makes the choice explicit (``alpaca`` or ``paper``); unset =
+    auto-detect — Alpaca paper if both ALPACA creds are present, else the in-process sim.
+    The explicit form lets a deploy pin the sim even with creds present, and surfaces a clear
+    error instead of silently falling back to the sim when ``alpaca`` is requested but
+    misconfigured. Either way it's paper — there is no live path. Logged at startup so
+    operators can confirm the selection.
+    """
+    choice = os.getenv("WAYSTONE_BROKER", "").strip().lower()
+    if choice not in ("", "alpaca", "paper"):
+        raise ValueError(f"WAYSTONE_BROKER must be 'alpaca' or 'paper', got {choice!r}")
+    has_creds = bool(os.getenv("ALPACA_API_KEY") and os.getenv("ALPACA_API_SECRET"))
+    use_alpaca = choice == "alpaca" or (choice == "" and has_creds)
+
+    if use_alpaca:
         from waystone3.brokers.alpaca import AlpacaBroker
 
-        return AlpacaBroker()  # reads ALPACA_* + ALPACA_PAPER from env
-    from waystone3.brokers.paper import PaperBroker
+        broker: Broker = AlpacaBroker()  # reads ALPACA_* from env; paper account
+    else:
+        from waystone3.brokers.paper import PaperBroker
 
-    return PaperBroker()
+        broker = PaperBroker()
+    log.info(
+        "broker_selected", broker=broker.name, is_paper=broker.is_paper, choice=choice or "auto"
+    )
+    return broker
 
 
 def build_workspace_from_env() -> TradingWorkspace:

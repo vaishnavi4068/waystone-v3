@@ -131,10 +131,12 @@ hours — tune in the manifest.
 sed "s|__IMAGE__|$REG/waystone-arena:$TAG|g" deploy/k8s/trader.yaml | kubectl apply -f -
 ```
 
-### 5b. Point the read-only API at Alpaca  ⚠️ open
-So `/api/account` reflects the real shared account, `api-serve` must select the Alpaca
-broker (it currently builds a workspace broker; there's no broker flag on `api-serve` yet).
-This is the one remaining wiring item — track separately.
+### 5b. Read-only API on the shared Alpaca paper account  ✅ wired
+`api-serve` builds its workspace via `build_broker_from_env`, which selects the broker from
+env: set **`WAYSTONE_BROKER=alpaca`** (with the ALPACA creds in the secret) and `/api/account`
+reflects the shared **paper** account; unset = auto-detect (Alpaca when creds present, else
+the in-process sim); `WAYSTONE_BROKER=paper` pins the sim. The choice is logged at startup
+(`broker_selected`). Paper-only — there is no live path.
 
 ### 5c. Alpaca + Cliq + WhatsApp secret keys  ✅ wired
 `deploy/k8s/secret-provider.yaml` already mounts `alpaca-api-key`, `alpaca-api-secret`,

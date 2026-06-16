@@ -78,6 +78,8 @@ spec:
           env:
             - name: WAYSTONE_DB
               value: /data/arena.db
+            - name: WAYSTONE_BROKER      # /api/account reflects the shared Alpaca PAPER account
+              value: alpaca
           envFrom:
             - secretRef: { name: waystone-arena-secrets }
           volumeMounts:
