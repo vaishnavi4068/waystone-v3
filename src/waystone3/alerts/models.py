@@ -38,6 +38,6 @@ class Recipient:
     id: int
     name: str
     role: Role
-    channel: str  # "log" | "sms" | "whatsapp"
-    contact: str = ""  # phone for sms/whatsapp
+    channel: str  # "log" | "sms" | "whatsapp" | "whatsapp_group" | "cliq"
+    contact: str = ""  # phone (sms/whatsapp); group id/JID (whatsapp_group); webhook url (cliq)
     min_severity: Severity = Severity.WARN

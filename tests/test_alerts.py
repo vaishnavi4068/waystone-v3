@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import ClassVar
 
 from waystone3.agents.base import AgentContext
 from waystone3.agents.notifier import NotifierAgent
 from waystone3.agents.registry import AgentRegistry
-from waystone3.alerts.channels import LogChannel, TwilioSmsChannel
-from waystone3.alerts.models import Alert, Role, Severity
+from waystone3.alerts import channels as channels_mod
+from waystone3.alerts.channels import (
+    LogChannel,
+    TwilioSmsChannel,
+    WhatsAppGroupChannel,
+    ZohoCliqChannel,
+)
+from waystone3.alerts.models import Alert, Recipient, Role, Severity
 from waystone3.alerts.recipients import RecipientStore
 from waystone3.alerts.router import AlertRouter
 from waystone3.bus.bus import EventBus
@@ -73,6 +80,148 @@ async def test_unconfigured_twilio_degrades_not_raises() -> None:
     results = await router.dispatch(Alert(Severity.INFO, Role.TRADER, "t", "b"))
     assert results[0][1] is False  # not delivered, but no exception
     assert router.audit.records[0].delivered is False
+
+
+class _FakeResp:
+    def __init__(self, status_code: int = 200) -> None:
+        self.status_code = status_code
+        self.is_success = 200 <= status_code < 300
+
+
+class _FakeClient:
+    """Stand-in for httpx.AsyncClient that records the last POST."""
+
+    captured: ClassVar[dict[str, object]] = {}
+    status_code: ClassVar[int] = 200
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    async def __aenter__(self) -> _FakeClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+    async def post(
+        self, url: str, json: object = None, headers: object = None
+    ) -> _FakeResp:
+        _FakeClient.captured = {"url": url, "json": json, "headers": headers}
+        return _FakeResp(_FakeClient.status_code)
+
+
+async def test_unconfigured_whatsapp_group_degrades_not_raises() -> None:
+    channel = WhatsAppGroupChannel(api_url="", api_token="")
+    rec = Recipient(
+        id=1, name="Traders group", role=Role.TRADER,
+        channel="whatsapp_group", contact="12036000@g.us",
+    )
+    delivered = await channel.send(Alert(Severity.WARN, Role.TRADER, "t", "b"), rec)
+    assert delivered is False  # no url/token -> logged no-op, no exception
+
+
+async def test_whatsapp_group_posts_to_gateway(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _FakeClient.captured = {}
+    _FakeClient.status_code = 200
+    monkeypatch.setattr(channels_mod.httpx, "AsyncClient", _FakeClient)
+    channel = WhatsAppGroupChannel(
+        api_url="https://gateway.example/send",
+        api_token="tok-123",
+        group_id="12036000@g.us",
+        group_name="Waystone Traders",
+    )
+    rec = Recipient(id=1, name="grp", role=Role.TRADER, channel="whatsapp_group")
+    delivered = await channel.send(
+        Alert(Severity.WARN, Role.TRADER, "Order filled", "BUY 1 NVDA @ 100"), rec
+    )
+    assert delivered is True
+    assert _FakeClient.captured["url"] == "https://gateway.example/send"
+    assert _FakeClient.captured["json"] == {
+        "group_id": "12036000@g.us",
+        "message": "[WARN] Order filled: BUY 1 NVDA @ 100",
+    }
+    assert _FakeClient.captured["headers"] == {"Authorization": "Bearer tok-123"}  # type: ignore[index]
+
+
+async def test_whatsapp_group_recipient_contact_overrides_group(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _FakeClient.captured = {}
+    _FakeClient.status_code = 200
+    monkeypatch.setattr(channels_mod.httpx, "AsyncClient", _FakeClient)
+    channel = WhatsAppGroupChannel(
+        api_url="https://gateway.example/send", api_token="tok", group_id="default@g.us"
+    )
+    rec = Recipient(
+        id=2, name="other", role=Role.TRADER,
+        channel="whatsapp_group", contact="99999@g.us",
+    )
+    await channel.send(Alert(Severity.WARN, Role.TRADER, "t", "b"), rec)
+    assert _FakeClient.captured["json"]["group_id"] == "99999@g.us"  # type: ignore[index]
+
+
+async def test_whatsapp_group_non_2xx_reports_not_delivered(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _FakeClient.captured = {}
+    _FakeClient.status_code = 500
+    monkeypatch.setattr(channels_mod.httpx, "AsyncClient", _FakeClient)
+    channel = WhatsAppGroupChannel(
+        api_url="https://gateway.example/send", api_token="tok", group_id="g@g.us"
+    )
+    rec = Recipient(id=3, name="grp", role=Role.TRADER, channel="whatsapp_group")
+    delivered = await channel.send(Alert(Severity.WARN, Role.TRADER, "t", "b"), rec)
+    assert delivered is False
+
+
+async def test_unconfigured_cliq_degrades_not_raises() -> None:
+    channel = ZohoCliqChannel(webhook_url="")
+    rec = Recipient(id=1, name="Team channel", role=Role.TRADER, channel="cliq")
+    delivered = await channel.send(Alert(Severity.WARN, Role.TRADER, "t", "b"), rec)
+    assert delivered is False  # no webhook -> logged no-op, no exception
+
+
+async def test_cliq_posts_to_webhook(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _FakeClient.captured = {}
+    _FakeClient.status_code = 200
+    monkeypatch.setattr(channels_mod.httpx, "AsyncClient", _FakeClient)
+    channel = ZohoCliqChannel(
+        webhook_url="https://cliq.zoho.com/api/v2/channelsbyname/traders/message?zapikey=K",
+        channel_name="Waystone Traders",
+    )
+    rec = Recipient(id=1, name="grp", role=Role.TRADER, channel="cliq")
+    delivered = await channel.send(
+        Alert(Severity.INFO, Role.TRADER, "Strategy run", "Mark: Momentum-v2 P&L +$240"),
+        rec,
+    )
+    assert delivered is True
+    assert _FakeClient.captured["url"].endswith("zapikey=K")  # type: ignore[union-attr]
+    assert _FakeClient.captured["json"] == {
+        "text": "[INFO] Strategy run: Mark: Momentum-v2 P&L +$240"
+    }
+    assert _FakeClient.captured["headers"] is None  # key in url -> no auth header
+
+
+async def test_cliq_recipient_contact_overrides_webhook(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _FakeClient.captured = {}
+    _FakeClient.status_code = 200
+    monkeypatch.setattr(channels_mod.httpx, "AsyncClient", _FakeClient)
+    channel = ZohoCliqChannel(webhook_url="https://cliq.zoho.com/default?zapikey=A")
+    rec = Recipient(
+        id=2, name="other", role=Role.TRADER,
+        channel="cliq", contact="https://cliq.zoho.com/other?zapikey=B",
+    )
+    await channel.send(Alert(Severity.WARN, Role.TRADER, "t", "b"), rec)
+    assert _FakeClient.captured["url"] == "https://cliq.zoho.com/other?zapikey=B"
+
+
+async def test_cliq_oauth_token_sets_header(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _FakeClient.captured = {}
+    _FakeClient.status_code = 200
+    monkeypatch.setattr(channels_mod.httpx, "AsyncClient", _FakeClient)
+    channel = ZohoCliqChannel(
+        webhook_url="https://cliq.zoho.com/api/v2/channelsbyname/traders/message",
+        oauth_token="tok-xyz",
+    )
+    rec = Recipient(id=3, name="grp", role=Role.TRADER, channel="cliq")
+    await channel.send(Alert(Severity.WARN, Role.TRADER, "t", "b"), rec)
+    assert _FakeClient.captured["headers"] == {"Authorization": "Zoho-oauthtoken tok-xyz"}
 
 
 async def test_notifier_agent_bridges_events_to_router() -> None:

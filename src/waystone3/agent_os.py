@@ -21,7 +21,13 @@ from waystone3.agents.registry import AgentRegistry
 from waystone3.agents.supervisor import RiskSupervisorAgent
 from waystone3.agents.tuner import TuningAgent
 from waystone3.alerts.audit import DispatchRecord
-from waystone3.alerts.channels import LogChannel, TwilioSmsChannel, TwilioWhatsAppChannel
+from waystone3.alerts.channels import (
+    LogChannel,
+    TwilioSmsChannel,
+    TwilioWhatsAppChannel,
+    WhatsAppGroupChannel,
+    ZohoCliqChannel,
+)
 from waystone3.alerts.recipients import RecipientStore
 from waystone3.alerts.router import AlertRouter
 from waystone3.brokers.base import Broker
@@ -74,6 +80,8 @@ def build_agent_os(
             "log": LogChannel(),
             "sms": TwilioSmsChannel(),
             "whatsapp": TwilioWhatsAppChannel(),
+            "whatsapp_group": WhatsAppGroupChannel(),
+            "cliq": ZohoCliqChannel(),
         },
         store=store,
     )
