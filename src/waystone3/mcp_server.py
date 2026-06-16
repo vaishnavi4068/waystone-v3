@@ -13,6 +13,7 @@ import contextvars
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from waystone3.workspace.service import AuthError, WorkspaceService
 
@@ -22,6 +23,7 @@ _token: contextvars.ContextVar[str | None] = contextvars.ContextVar("token", def
 def build_mcp(service: WorkspaceService) -> FastMCP:
     mcp = FastMCP(
         "waystone-arena",
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         instructions=(
             "Waystone is a shared team trading workspace: one Alpaca paper account the team "
             "operates together. Set the shared strategy, run cycles (which submit real orders "
