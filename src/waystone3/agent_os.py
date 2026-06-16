@@ -8,6 +8,7 @@ that the next cycle reads. The core ``run_cycle`` never imports any of this.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -28,6 +29,7 @@ from waystone3.alerts.channels import (
     WhatsAppGroupChannel,
     ZohoCliqChannel,
 )
+from waystone3.alerts.models import Role, Severity
 from waystone3.alerts.recipients import RecipientStore
 from waystone3.alerts.router import AlertRouter
 from waystone3.brokers.base import Broker
@@ -62,6 +64,19 @@ class AgentOS:
     recipients: RecipientStore = field(default_factory=RecipientStore)
 
 
+def _seed_team_recipients(store: RecipientStore) -> None:
+    """Auto-add a TRADER recipient for each messaging channel whose env is configured, so a
+    deploy that sets only the channel secret still delivers fills/strategy alerts to the team
+    group. TRADER role matches OrderFilled / StrategySubmitted / StrongSignal / OrderBlocked.
+    Skipped entirely when the caller injects its own recipients."""
+    if os.getenv("ZOHO_CLIQ_WEBHOOK_URL"):
+        store.create("Team channel (Cliq)", Role.TRADER, "cliq", min_severity=Severity.INFO)
+    if os.getenv("WHATSAPP_GROUP_API_URL"):
+        store.create(
+            "Team group (WhatsApp)", Role.TRADER, "whatsapp_group", min_severity=Severity.INFO
+        )
+
+
 def build_agent_os(
     *,
     is_paper: bool,
@@ -75,6 +90,8 @@ def build_agent_os(
     gateway = ActionGateway(state=state, policy=policy, bus=bus)
 
     store = recipients or RecipientStore()
+    if recipients is None:  # only auto-seed when the caller didn't supply its own roster
+        _seed_team_recipients(store)
     router = AlertRouter(
         channels={
             "log": LogChannel(),

@@ -8,12 +8,15 @@ of the platform. Everything is in-memory; the MCP layer (P4) adds auth + remote 
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import secrets
 from datetime import datetime
 from decimal import Decimal
 
 from waystone3.brokers.paper import PaperBroker
+from waystone3.bus.bus import EventBus
+from waystone3.bus.events import Event, StrategySubmitted
 from waystone3.competition.models import Entry, Standing, StrategyConfig
 from waystone3.competition.store import CompetitionStore
 from waystone3.core.types import Timeframe
@@ -34,16 +37,34 @@ class Competition:
         initial_cash: Decimal = Decimal(100_000),
         max_players: int = 5,
         store: CompetitionStore | None = None,
+        bus: EventBus | None = None,
     ) -> None:
         self.data = data
         self.initial_cash = initial_cash
         self.max_players = max_players
         self.store = store
+        # Optional event bus: when set, strategy submissions and order fills are published
+        # (attributed to the player) so a NotifierAgent on the same bus can post them to the
+        # team group. None = no notifications (the default, fully self-contained).
+        self._bus = bus
+        self._tasks: set[asyncio.Task[None]] = set()
         self._entries: dict[str, Entry] = {}
         self._by_token: dict[str, str] = {}
         self._ids = itertools.count(1)
         if store is not None:
             self._load()
+
+    def _emit(self, event: Event) -> None:
+        """Best-effort publish on the running loop. No bus or no loop (sync context) = skip."""
+        if self._bus is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._bus.publish(event))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _load(self) -> None:
         assert self.store is not None
@@ -112,6 +133,14 @@ class Competition:
         entry = self._require(user_id)
         entry.config = config
         self._persist(entry)
+        active = {n: w for n, w in config.weights.items() if w > 0}
+        self._emit(
+            StrategySubmitted(
+                actor=entry.display_name,
+                summary=f"weights={active}, watchlist={config.watchlist}",
+                watchlist=list(config.watchlist),
+            )
+        )
 
     # ── play ──────────────────────────────────────────────────────────────────
     def _contributors(self, config: StrategyConfig) -> list[SignalContributor]:
@@ -143,6 +172,8 @@ class Competition:
             watchlist=config.watchlist,
             timeframe=config.timeframe,
             bars_lookback=config.lookback,
+            bus=self._bus,
+            actor=entry.display_name,
         )
         entry.cycles_run += 1
         self._persist(entry)

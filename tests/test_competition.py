@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
+from waystone3.bus.bus import EventBus
+from waystone3.bus.events import Event, OrderFilled, StrategySubmitted
 from waystone3.competition.competition import Competition
 from waystone3.competition.models import StrategyConfig
 from waystone3.data.stub import StubDataSource
@@ -46,6 +49,35 @@ async def test_run_cycle_requires_strategy() -> None:
     e = comp.register("Alice")
     with pytest.raises(ValueError):
         await comp.run_cycle(e.user_id)
+
+
+async def test_bus_wired_competition_attributes_events_to_player() -> None:
+    bus = EventBus()
+    seen: list[Event] = []
+
+    async def capture(event: Event) -> None:
+        seen.append(event)
+
+    bus.subscribe(Event, capture, name="capture")
+
+    comp = Competition(StubDataSource(start_price=100.0, default_slope=1.0), bus=bus)
+    mark = comp.register("Mark")
+    comp.submit_strategy(mark.user_id, momentum_config(["AAPL"]))
+    await comp.run_cycle(mark.user_id)  # uptrend -> buys, publishes OrderFilled
+    for _ in range(10):  # let the best-effort StrategySubmitted task drain
+        await asyncio.sleep(0)
+
+    submits = [e for e in seen if isinstance(e, StrategySubmitted)]
+    fills = [e for e in seen if isinstance(e, OrderFilled)]
+    assert submits and submits[0].actor == "Mark"
+    assert fills and all(f.actor == "Mark" for f in fills)
+
+
+def test_competition_without_bus_does_not_emit() -> None:
+    # No bus wired -> submit is a pure no-op on the notification path (no loop needed).
+    comp = Competition(StubDataSource())
+    e = comp.register("Alice")
+    comp.submit_strategy(e.user_id, momentum_config(["AAPL"]))  # must not raise
 
 
 async def test_momentum_player_beats_idle_player() -> None:

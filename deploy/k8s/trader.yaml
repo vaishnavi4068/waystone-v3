@@ -1,0 +1,58 @@
+# Trader — runs the Agent OS loop against the SHARED Alpaca PAPER account on a schedule,
+# and (via the NotifierAgent + env-configured channel) posts order fills / strong signals to
+# the team group. Replace __IMAGE__ with the same Python image as the Arena.
+#
+# Why a CronJob (not a sidecar): `waystone3 serve` runs a fixed number of cycles then exits
+# — a periodic Job is the honest fit, and bounds cost. It needs no SQLite (the agent-OS run
+# is stateless), so it lives in its own pod and just `envFrom`s the secret the Arena pod's
+# CSI mount keeps populated (ALPACA_*, ZOHO_CLIQ_WEBHOOK_URL, WHATSAPP_GROUP_*, POLYGON_*).
+#
+# Delivery wiring: build_agent_os auto-seeds a TRADER recipient for whichever messaging
+# channel env is set (ZOHO_CLIQ_WEBHOOK_URL -> "cliq"), so just setting the secret is enough
+# — no recipient YAML needed. Paper only: ALPACA_PAPER stays "true".
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: waystone-trader
+  namespace: waystone-arena
+spec:
+  # Every 15 min during US market hours (UTC). Adjust to your cadence / DST as needed.
+  schedule: "*/15 13-21 * * 1-5"
+  concurrencyPolicy: Forbid          # never overlap runs against the shared account
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600      # a run must finish within 10m or it's killed
+      template:
+        metadata:
+          labels: { app: waystone-trader }
+        spec:
+          restartPolicy: Never
+          serviceAccountName: waystone-arena
+          containers:
+            - name: trader
+              image: __IMAGE__
+              command:
+                - "uv"
+                - "run"
+                - "waystone3"
+                - "serve"
+                - "--broker"
+                - "alpaca"
+                - "--source"
+                - "yfinance"
+                - "--symbols"
+                - "AAPL,MSFT,NVDA,AMZN,GOOGL"
+                - "--cycles"
+                - "1"
+              env:
+                - name: ALPACA_PAPER
+                  value: "true"        # keep true — live trading is a deliberate later step
+              envFrom:
+                - secretRef: { name: waystone-arena-secrets }
+              resources:
+                requests: { cpu: "100m", memory: "256Mi" }
+                limits:   { cpu: "500m", memory: "512Mi" }

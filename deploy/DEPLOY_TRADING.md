@@ -29,11 +29,13 @@ doc covers the **three deltas** that make the team-trading + alerts story work:
     │ frontend (3000)│ │  api (9200)│ │   READ-ONLY website (GET-only API, CORS GET-only)
     │ Next.js, RO    │ │  FastAPI   │ │
     └────────────────┘ └─────┬──────┘ │
-                             │ shares RWO SQLite + Alpaca creds (same pod)
-    ┌────────────────────────▼─────────▼──────────────────────────┐
-    │  POD waystone-arena:  arena(9100) + api(9200) + trader[NEW]  │
-    │  trader = `waystone3 serve` → trades shared Alpaca PAPER acct │
-    │           → emits OrderFilled → NotifierAgent → Zoho Cliq     │
+    ┌──────────────────────────────────▼──────────────────────────┐
+    │  POD waystone-arena:  arena(9100) + api(9200)  [+ CSI sync]  │
+    └──────────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────┐
+    │  CronJob waystone-trader [NEW]: `serve --broker alpaca`       │
+    │  → trades shared Alpaca PAPER acct on a schedule              │
+    │  → emits OrderFilled/StrategySubmitted → NotifierAgent → Cliq │
     └──────────────────────────┬───────────────────────────────────┘
                               │
         ┌─────────────────────┼────────────────────────┐
@@ -44,7 +46,7 @@ doc covers the **three deltas** that make the team-trading + alerts story work:
 **Already in `deploy/k8s/`** ✅ — namespace, RWO SQLite PVC, `arena` + `api` containers,
 3 Services, ingress fan-out, ManagedCertificate, Secret Manager CSI provider, frontend.
 
-**Added by this doc** 🆕 — the `trader` sidecar, the Alpaca + Cliq secret keys, and the
+**Added by this doc** 🆕 — the `trader` CronJob, the Alpaca + Cliq + WhatsApp secret keys, and the
 broker/alert env. See [§5 Gaps to close](#5-gaps-to-close-the-deltas).
 
 ---
@@ -115,69 +117,43 @@ TLS provisions in 10–30 min once DNS resolves. The **read-only website** is th
 
 ## 5. Gaps to close (the deltas)
 
-Steps 1–4 stand up the site + shared account. To make trades actually run and ping Cliq:
+Steps 1–4 stand up the site + shared account. The pieces below make trades actually run and
+ping the team group. **Most are now implemented** — status noted per item.
 
-### 5a. Add the `trader` sidecar (executes on the shared account, emits events)
-Add a third container to the `waystone-arena` pod in `deploy/k8s/arena.yaml`, alongside
-`arena` and `api` (same pod ⇒ shares the RWO SQLite volume and the Alpaca creds, and is the
-event source for alerts):
+### 5a. Trader CronJob — `deploy/k8s/trader.yaml`  ✅ added
+`waystone3 serve` runs a fixed number of cycles then exits, so the trader is a **CronJob**,
+not an always-on sidecar (cleaner, bounds cost; the agent-OS run is stateless so it needs no
+SQLite). It runs `serve --broker alpaca --source yfinance` against the shared paper account
+and `envFrom`s `waystone-arena-secrets`. Schedule defaults to every 15 min during US market
+hours — tune in the manifest.
 
-```yaml
-        - name: trader
-          image: __IMAGE__
-          command: ["uv", "run", "waystone3", "serve"]   # the agent-OS loop
-          env:
-            - name: WAYSTONE_DB
-              value: /data/arena.db
-            - name: WAYSTONE_BROKER          # bind to the shared Alpaca PAPER account
-              value: alpaca
-          envFrom:
-            - secretRef: { name: waystone-arena-secrets }
-          volumeMounts:
-            - name: data
-              mountPath: /data
-          resources:
-            requests: { cpu: "100m", memory: "256Mi" }
-            limits:   { cpu: "500m", memory: "512Mi" }
+```bash
+sed "s|__IMAGE__|$REG/waystone-arena:$TAG|g" deploy/k8s/trader.yaml | kubectl apply -f -
 ```
 
-### 5b. Point the read-only API at Alpaca too
-So `/api/account` reflects the real shared paper account, set on the `api` container env:
-`WAYSTONE_BROKER=alpaca`, `ALPACA_PAPER=true`.
+### 5b. Point the read-only API at Alpaca  ⚠️ open
+So `/api/account` reflects the real shared account, `api-serve` must select the Alpaca
+broker (it currently builds a workspace broker; there's no broker flag on `api-serve` yet).
+This is the one remaining wiring item — track separately.
 
-### 5c. Wire the Cliq secret keys into the env Secret
-Add to `deploy/k8s/secret-provider.yaml` (`parameters.secrets` + `secretObjects.data`):
+### 5c. Alpaca + Cliq + WhatsApp secret keys  ✅ wired
+`deploy/k8s/secret-provider.yaml` already mounts `alpaca-api-key`, `alpaca-api-secret`,
+`zoho-cliq-webhook`, and `whatsapp-group-*` from Secret Manager and syncs them to the env
+Secret (`ALPACA_*`, `ZOHO_CLIQ_WEBHOOK_URL`, `WHATSAPP_GROUP_*`). `arena.yaml` now mounts the
+CSI volume + sets `serviceAccountName: waystone-arena` to trigger the sync. Just create the
+GCP secrets and grant the KSA `secretAccessor` (commands in the secret-provider header).
 
-```yaml
-      - resourceName: "projects/PROJECT_ID/secrets/alpaca-api-key/versions/latest"
-        path: "alpaca-api-key"
-      - resourceName: "projects/PROJECT_ID/secrets/alpaca-api-secret/versions/latest"
-        path: "alpaca-api-secret"
-      - resourceName: "projects/PROJECT_ID/secrets/zoho-cliq-webhook/versions/latest"
-        path: "zoho-cliq-webhook"
-```
-```yaml
-        - { objectName: "alpaca-api-key",    key: ALPACA_API_KEY }
-        - { objectName: "alpaca-api-secret", key: ALPACA_API_SECRET }
-        - { objectName: "zoho-cliq-webhook", key: ZOHO_CLIQ_WEBHOOK_URL }
-```
-Also grant the `waystone-arena` KSA `roles/secretmanager.secretAccessor` on the new secrets.
+### 5d. Trade/strategy → group message  ✅ wired (P&L pending)
+Implemented and tested:
+- `NotifierAgent` now reacts to **`OrderFilled`** and a new **`StrategySubmitted`** event;
+- both carry an **`actor`** (player display name), so messages read
+  "Order filled: NVDA — Mark: BUY 1 NVDA @ 100";
+- `build_agent_os` **auto-seeds** a TRADER recipient for whichever channel env is set
+  (`ZOHO_CLIQ_WEBHOOK_URL` → `cliq`, `WHATSAPP_GROUP_API_URL` → `whatsapp_group`) — so just
+  setting the secret delivers alerts; no recipient YAML needed.
 
-`ZohoCliqChannel` reads `ZOHO_CLIQ_WEBHOOK_URL` automatically (it's registered as the `cliq`
-channel in `agent_os.py`). Seed a recipient so alerts route to it, e.g. in startup config:
-`store.create("Team channel", Role.TRADER, channel="cliq", min_severity=Severity.INFO)`.
-
-### 5d. Code wiring — make trades/strategies actually emit to Cliq  ⚠️ required
-The `cliq` channel is the delivery half. For "Mark ran Momentum-v2 — BUY 1 NVDA, P&L +$240"
-to appear, the agent layer still needs:
-- `NotifierAgent.subscribes_to` to include **`OrderFilled`** (today: StrongSignal /
-  OrderBlocked / AgentAction / AgentError), plus a `_to_alert(OrderFilled)` branch;
-- a new **`StrategySubmitted`** event published from the competition/workspace submit path;
-- a **`user_id`** (and P&L) field on those events so the message names *who* and the profit.
-
-This is a small, tested code change (see `src/waystone3/agents/notifier.py`,
-`bus/events.py`). Until it lands, Cliq still fires for strong signals and risk blocks, but
-not for routine fills.
+Remaining enhancement: **per-trade realized P&L** in the message (needs cost-basis tracking;
+today the message carries side/qty/price). Strategy + fills already reach the group.
 
 ---
 

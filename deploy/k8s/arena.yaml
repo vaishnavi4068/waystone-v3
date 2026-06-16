@@ -35,6 +35,9 @@ spec:
     metadata:
       labels: { app: waystone-arena }
     spec:
+      # KSA bound to a GCP SA via Workload Identity; required for the Secret Manager CSI
+      # driver to fetch + sync secrets into the `waystone-arena-secrets` env Secret.
+      serviceAccountName: waystone-arena
       containers:
         - name: arena
           image: __IMAGE__
@@ -48,6 +51,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            # Mounting the CSI volume is what triggers the Secret Manager -> env-Secret sync
+            # (see secret-provider.yaml). Keeps the long-lived `waystone-arena-secrets`
+            # populated for the api sidecar AND the trader CronJob to envFrom.
+            - name: sm
+              mountPath: /mnt/secrets
+              readOnly: true
           readinessProbe:
             httpGet: { path: /healthz, port: 9100 }
             initialDelaySeconds: 10
@@ -85,6 +94,12 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: waystone-arena-data
+        - name: sm
+          csi:
+            driver: secrets-store.csi.x-k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: waystone-arena-sm
 ---
 apiVersion: v1
 kind: Service

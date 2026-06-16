@@ -30,6 +30,14 @@ class OrderFilled(Event):
     qty: Decimal
     price: Decimal
     order_id: str
+    actor: str = ""  # who placed it (e.g. competitor display name); "" = shared/system loop
+
+
+@dataclass(frozen=True)
+class StrategySubmitted(Event):
+    actor: str  # who submitted (competitor display name)
+    summary: str  # short human description of the strategy config
+    watchlist: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

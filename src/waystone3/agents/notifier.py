@@ -1,8 +1,10 @@
 """NotifierAgent — bridges bus events to the alert router.
 
-Observe-only: it translates notable events (strong signals, risk blocks, agent actions,
-agent errors) into alerts and hands them to the router, which handles recipient matching,
-channel delivery, dedup, and audit.
+Observe-only: it translates notable events (filled/blocked orders, submitted strategies,
+strong signals, agent actions, agent errors) into alerts and hands them to the router, which
+handles recipient matching, channel delivery, dedup, and audit. Order fills and strategy
+submissions are what surface to the team group (e.g. a Zoho Cliq channel) — both are routed
+to the TRADER role so a single team recipient receives them.
 """
 
 from __future__ import annotations
@@ -16,6 +18,8 @@ from waystone3.bus.events import (
     AlertRaised,
     Event,
     OrderBlocked,
+    OrderFilled,
+    StrategySubmitted,
     StrongSignal,
 )
 
@@ -26,7 +30,9 @@ class NotifierAgent:
     subscribes_to: tuple[type[Event], ...] = (
         AlertRaised,
         StrongSignal,
+        OrderFilled,
         OrderBlocked,
+        StrategySubmitted,
         AgentAction,
         AgentError,
     )
@@ -47,6 +53,17 @@ class NotifierAgent:
             return Alert(
                 Severity.INFO, Role.TRADER, f"Strong signal: {event.symbol}",
                 f"score={event.score}",
+            )
+        if isinstance(event, OrderFilled):
+            who = f"{event.actor}: " if event.actor else ""
+            return Alert(
+                Severity.INFO, Role.TRADER, f"Order filled: {event.symbol}",
+                f"{who}{event.side.upper()} {event.qty} {event.symbol} @ {event.price}",
+            )
+        if isinstance(event, StrategySubmitted):
+            return Alert(
+                Severity.INFO, Role.TRADER, f"Strategy submitted by {event.actor}",
+                event.summary,
             )
         if isinstance(event, OrderBlocked):
             return Alert(

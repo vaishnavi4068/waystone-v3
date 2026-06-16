@@ -17,7 +17,7 @@ from waystone3.alerts.models import Alert, Recipient, Role, Severity
 from waystone3.alerts.recipients import RecipientStore
 from waystone3.alerts.router import AlertRouter
 from waystone3.bus.bus import EventBus
-from waystone3.bus.events import AlertRaised, OrderBlocked
+from waystone3.bus.events import AlertRaised, OrderBlocked, OrderFilled, StrategySubmitted
 
 
 def _router() -> tuple[AlertRouter, RecipientStore]:
@@ -244,3 +244,52 @@ async def test_notifier_agent_bridges_events_to_router() -> None:
     titles = {r.title for r in router.audit.records}
     assert "news" in titles
     assert any("Order blocked" in t for t in titles)
+
+
+class _CaptureChannel:
+    """Records every Alert it is asked to send (the audit log keeps only the title)."""
+
+    name = "capture"
+
+    def __init__(self) -> None:
+        self.alerts: list[Alert] = []
+
+    async def send(self, alert: Alert, recipient: Recipient) -> bool:
+        self.alerts.append(alert)
+        return True
+
+
+def _notifier_with_capture() -> tuple[EventBus, _CaptureChannel]:
+    cap = _CaptureChannel()
+    store = RecipientStore()
+    store.create("Team channel", Role.TRADER, "capture", min_severity=Severity.INFO)
+    router = AlertRouter(channels={"capture": cap}, store=store)
+    bus = EventBus()
+    reg = AgentRegistry()
+    reg.register(NotifierAgent(router=router))
+    reg.install(bus, AgentContext(bus=bus))
+    return bus, cap
+
+
+async def test_notifier_bridges_order_filled_with_actor() -> None:
+    bus, cap = _notifier_with_capture()
+    await bus.publish(
+        OrderFilled("NVDA", "buy", Decimal(1), Decimal(100), "ord-1", actor="Mark")
+    )
+    assert cap.alerts[-1].title == "Order filled: NVDA"
+    assert cap.alerts[-1].body == "Mark: BUY 1 NVDA @ 100"
+
+
+async def test_notifier_order_filled_without_actor_omits_prefix() -> None:
+    bus, cap = _notifier_with_capture()
+    await bus.publish(OrderFilled("AAPL", "sell", Decimal(2), Decimal(190), "ord-2"))
+    assert cap.alerts[-1].body == "SELL 2 AAPL @ 190"  # shared/system loop -> no "who:" prefix
+
+
+async def test_notifier_bridges_strategy_submitted() -> None:
+    bus, cap = _notifier_with_capture()
+    await bus.publish(
+        StrategySubmitted(actor="Akash", summary="weights={'momentum': 1.0}", watchlist=["NVDA"])
+    )
+    assert cap.alerts[-1].title == "Strategy submitted by Akash"
+    assert "momentum" in cap.alerts[-1].body

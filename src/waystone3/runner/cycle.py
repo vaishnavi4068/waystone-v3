@@ -78,6 +78,7 @@ async def run_cycle(
     cycle: int = 0,
     strong_signal_threshold: Decimal = Decimal(7),
     trading_enabled: bool = True,
+    actor: str = "",
 ) -> CycleReport:
     async def emit(event: Event) -> None:
         if bus is not None:
@@ -135,6 +136,7 @@ async def run_cycle(
                 intent.qty,
                 order.avg_fill_price or last_close,
                 order.id,
+                actor,
             )
         )
 
