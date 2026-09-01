@@ -307,9 +307,9 @@ def ibkr_seed_demo(
     from waystone3.ibkr.demo import seed_demo
 
     day = date_cls.fromisoformat(date) if date else None
-    report = seed_demo(Path(out), day)
+    report = seed_demo(Path(out), day, history_days=40)
     console.print(
-        f"Wrote demo dump for {report.date} under {out}.\n"
+        f"Wrote demo dump for {report.date} (+ 40 weekdays) under {out}.\n"
         f"  export IBKR_REPORTS_LOCAL_DIR={out}\n"
         f"  uv run waystone3 api-serve"
     )

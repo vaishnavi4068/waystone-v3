@@ -16,6 +16,7 @@ from waystone3.ibkr.classify import book_for, parse_client_books
 from waystone3.ibkr.convert import execution_from_fill
 from waystone3.ibkr.demo import demo_report, seed_demo
 from waystone3.ibkr.export import assemble_report, publish_report
+from waystone3.ibkr.kpis import SPECS, KpiStatus, compute_options_kpis, evaluate
 from waystone3.ibkr.ledger import ExecutionLedger
 from waystone3.ibkr.models import Book
 from waystone3.ibkr.paths import success_key
@@ -184,3 +185,47 @@ def test_api_without_store_stays_on_paper_broker() -> None:
     assert acct["broker"] == "paper"
     days = client.get("/api/ibkr/days", headers={"Authorization": f"Bearer {member.token}"})
     assert days.status_code == 404
+
+
+def _spec(key: str):
+    return next(s for s in SPECS if s.key == key)
+
+
+def test_evaluate_sheet_thresholds() -> None:
+    sharpe = _spec("weekly_sharpe")
+    assert evaluate(1.6, sharpe) is KpiStatus.PASS
+    assert evaluate(1.2, sharpe) is KpiStatus.WARN
+    assert evaluate(0.5, sharpe) is KpiStatus.FAIL
+    drawdown = _spec("max_dd")
+    assert evaluate(10.0, drawdown) is KpiStatus.PASS
+    assert evaluate(20.0, drawdown) is KpiStatus.WARN
+    assert evaluate(30.0, drawdown) is KpiStatus.FAIL
+    assert evaluate(None, sharpe) is KpiStatus.EMPTY
+
+
+def test_options_kpis_history_computes_stage1(tmp_path: Path) -> None:
+    seed_demo(tmp_path, datetime(2026, 9, 1, tzinfo=NY).date(), history_days=40)
+    payload = compute_options_kpis(LocalFsStore(tmp_path))
+    assert payload["days"] == 41
+    assert payload["assumptions"]["nav"] == 100_000
+    s1 = next(s for s in payload["stages"] if s["id"] == "s1")
+    by_key = {row["key"]: row for row in s1["kpis"]}
+    assert by_key["trade_count"]["value"] is not None
+    assert by_key["trade_count"]["value"] >= 40
+    assert by_key["weekly_sharpe"]["value"] is not None
+    vega = next(
+        row
+        for stage in payload["stages"]
+        if stage["id"] == "s3"
+        for row in stage["kpis"]
+        if row["key"] == "net_vega"
+    )
+    assert vega["status"] == "—"
+    assert {s["id"] for s in payload["stages"]} == {"s1", "s2", "s3", "s4", "s5", "exec"}
+
+
+def test_api_options_kpis(tmp_path: Path) -> None:
+    client, token, _ = _ibkr_client(tmp_path)
+    data = client.get("/api/ibkr/options-kpis", headers={"Authorization": f"Bearer {token}"}).json()
+    assert data["assumptions"]["option_multiplier"] == 100
+    assert any(s["name"].startswith("Stage 1") for s in data["stages"])

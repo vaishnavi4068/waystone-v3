@@ -163,3 +163,41 @@ export interface IbkrReport {
     totals: BookStats;
   };
 }
+
+export interface OptionsKpiRow {
+  key: string;
+  label: string;
+  source: string;
+  critical: boolean;
+  target: number;
+  min: number;
+  direction: "ge" | "le";
+  value: number | null;
+  status: string;
+  definition: string;
+}
+
+export interface OptionsKpiStage {
+  id: string;
+  name: string;
+  verdict: string;
+  filled: number;
+  total: number;
+  kpis: OptionsKpiRow[];
+}
+
+export interface IbkrOptionsKpis {
+  as_of: string | null;
+  days: number;
+  assumptions: {
+    nav: number;
+    contracts_per_trade: number;
+    option_multiplier: number;
+    round_trip_slippage: number;
+  };
+  overall: string;
+  stages: OptionsKpiStage[];
+  weeks: { week: string; return_pct: number }[];
+  trade_count: number;
+  span_days: number;
+}

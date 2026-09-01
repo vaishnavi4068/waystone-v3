@@ -27,7 +27,9 @@ npm run dev                    # http://localhost:3000
 ```
 
 Sign in with the seed token. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
-and futures vs options cards. After the VM has written a real dump, point the API at GCS
+and futures vs options cards. Open **Options KPIs** (`/options-kpis`) for the Strategy 5
+weekly paper scorecard (Sharpe, Sortino, drawdown, profit factor, expectancy, etc.).
+After the VM has written a real dump, point the API at GCS
 instead of the demo tree:
 
 ```sh
@@ -124,4 +126,8 @@ Date is the America/New_York calendar day. The API lists a day only when `_SUCCE
 | `IBKR_REPORTS_BUCKET` | VM write, laptop/GKE read | GCS bucket |
 | `IBKR_REPORTS_LOCAL_DIR` | laptop API | local tree with the same keys (demo / tests) |
 | `IBKR_PAPER` | API | `true` only if this IBKR account is paper |
+| `IBKR_KPI_NAV` | API | Assumed account size for the options scorecard (default 100000) |
+| `IBKR_KPI_MULTIPLIER` | API | Option $/pt/contract (default 100) |
+| `IBKR_KPI_SLIPPAGE` | API | Round-trip slippage as a fraction of premium (default 0.02) |
+| `IBKR_KPI_CONTRACTS` | API | Contracts per trade assumption (default 1) |
 | `WAYSTONE_DB` / `WAYSTONE_ADMIN_TOKEN` | API | existing dashboard login tokens |

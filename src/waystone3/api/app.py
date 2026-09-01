@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from waystone3.core.types import Timeframe
 from waystone3.fusion.fuse import fuse
+from waystone3.ibkr.kpis import compute_options_kpis
 from waystone3.ibkr.models import AccountSnapshot
 from waystone3.ibkr.reader import load_latest, load_report
 from waystone3.ibkr.settings import IbkrSettings
@@ -213,6 +214,15 @@ def build_app(
         if report is None:
             raise HTTPException(status_code=404, detail="no published IBKR report")
         return report_dict(report, store)
+
+    @app.get("/api/ibkr/options-kpis")
+    async def ibkr_options_kpis(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        if store is None:
+            raise HTTPException(status_code=404, detail="IBKR reports not configured")
+        return compute_options_kpis(store)
 
     @app.get("/api/activity")
     async def activity(

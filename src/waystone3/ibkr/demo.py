@@ -157,8 +157,50 @@ def demo_report(day: date | None = None, settings: IbkrSettings | None = None) -
     )
 
 
-def seed_demo(out: Path, day: date | None = None) -> DailyReport:
-    """Write a published daily prefix under ``out`` (same keys as GCS)."""
-    report = demo_report(day)
-    publish_report(LocalFsStore(out), report)
-    return report
+def _history_option_fill(day: date, pnl: float, seq: int) -> Execution:
+    noon = datetime(day.year, day.month, day.day, 13, 0, tzinfo=NY)
+    return Execution(
+        exec_id=f"hist-opt-{day.isoformat()}-{seq}",
+        time=noon,
+        account="U1234567",
+        sec_type="OPT",
+        symbol="SPX",
+        local_symbol="SPX   260918C05200000",
+        exchange="CBOE",
+        expiry="20260918",
+        strike=5200.0,
+        right="C",
+        multiplier="100",
+        side="SLD" if pnl >= 0 else "BOT",
+        qty=1,
+        price=18.40,
+        commission=1.25,
+        realized_pnl=pnl,
+        client_id=2,
+        book=Book.OPTIONS,
+    )
+
+
+def seed_demo(out: Path, day: date | None = None, history_days: int = 0) -> DailyReport:
+    """Write a published daily prefix plus prior weekdays so options KPIs have history."""
+    from waystone3.ibkr.kpis import prior_weekdays
+
+    target = day or today_ny()
+    store = LocalFsStore(out)
+    cfg = IbkrSettings()
+    pattern = [240.0, -80.0, 190.0, -45.0, 310.0, 95.0, -130.0, 275.0]
+    for i, hist in enumerate(prior_weekdays(target, history_days)):
+        pnl = pattern[i % len(pattern)]
+        report = assemble_report(
+            hist,
+            [_history_option_fill(hist, pnl, 1)],
+            [],
+            demo_account(),
+            cfg,
+            tws_connected=False,
+            generated_at=datetime(hist.year, hist.month, hist.day, 18, 0, tzinfo=NY),
+        )
+        publish_report(store, report)
+    latest = demo_report(target, cfg)
+    publish_report(store, latest)
+    return latest

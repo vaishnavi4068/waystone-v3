@@ -16,7 +16,8 @@ backtests, and news. Nothing here mutates state.
 
 | Screen | Shows |
 |---|---|
-| **Daily** (`/ibkr`) | IBKR KPI blotter: NLV, day P&L, futures vs options, fills (GCS dump) |
+| **Daily** (`/ibkr`) | IBKR blotter: NLV, day P&L, futures vs options, fills (GCS dump) |
+| **Options KPIs** (`/options-kpis`) | Strategy 5 weekly paper scorecard (stages 1–5 + slippage) |
 | **Leaderboard** (`/leaderboard`) | all players ranked by paper-account return |
 | **Signals** (`/signals`) | composite momentum score (−10…+10) + contributor breakdown per symbol |
 | **Charts** (`/charts`) | candlesticks for any symbol |

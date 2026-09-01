@@ -16,3 +16,7 @@ class IbkrSettings(BaseSettings):
     ibkr_ledger_dir: str = "./reports/ledger"
     ibkr_client_books: str = ""
     ibkr_paper: bool = False
+    ibkr_kpi_nav: float = 100_000.0
+    ibkr_kpi_contracts: float = 1.0
+    ibkr_kpi_multiplier: float = 100.0
+    ibkr_kpi_slippage: float = 0.02
