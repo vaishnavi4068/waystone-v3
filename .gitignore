@@ -14,6 +14,7 @@ dist/
 .env
 .env.*
 !.env.example
+.devdata/
 
 # Node / Next (frontend has its own .gitignore too)
 frontend/node_modules/
