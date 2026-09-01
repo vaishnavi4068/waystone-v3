@@ -17,9 +17,9 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
       <form onSubmit={submit} className="card w-full max-w-md p-8">
-        <h1 className="text-2xl font-semibold">Waystone Arena</h1>
+        <h1 className="text-2xl font-semibold">Waystone</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Paste your access token to view your dashboard.
+          Paste your access token to view the IBKR daily dashboard.
         </p>
         <input
           type="password"
@@ -35,8 +35,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
           Enter
         </button>
         <p className="mt-4 text-xs text-slate-500">
-          Your token is stored only in this browser. Everything here is read-only,
-          paper money.
+          Your token is stored only in this browser. Everything here is read-only.
         </p>
       </form>
     </div>

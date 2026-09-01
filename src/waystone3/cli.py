@@ -253,5 +253,67 @@ def api_serve(
     run(host=host, port=port)
 
 
+@app.command("ibkr-collect")
+def ibkr_collect() -> None:
+    """Merge today's TWS fills into the local execId ledger (read-only)."""
+    from waystone3.ibkr.collect import collect
+
+    result = collect()
+    console.print(
+        f"IBKR ledger {result.day.isoformat()}: {len(result.executions)} fill(s), "
+        f"{result.new_fills} new, {len(result.positions)} open position(s)."
+    )
+
+
+@app.command("ibkr-export")
+def ibkr_export(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Write a local tree instead of GCS."),
+    date: str | None = typer.Option(
+        None, "--date", help="America/New_York calendar day YYYY-MM-DD (default: today)."
+    ),
+) -> None:
+    """Collect from TWS and publish the daily dump (GCS, or local with --dry-run)."""
+    from datetime import date as date_cls
+
+    from waystone3.ibkr.export import export_day
+
+    day = date_cls.fromisoformat(date) if date else None
+    try:
+        report = export_day(day=day, dry_run=dry_run)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    dest = "dry-run tree" if dry_run else "GCS"
+    console.print(
+        f"Published {report.date} to {dest}: {report.summary.totals.fills} fill(s), "
+        f"realized PnL {report.summary.totals.realized_pnl:.2f}."
+    )
+
+
+@app.command("ibkr-seed-demo")
+def ibkr_seed_demo(
+    out: str = typer.Option(
+        "./reports/demo",
+        "--out",
+        help="Local directory mirroring GCS keys (set IBKR_REPORTS_LOCAL_DIR to this).",
+    ),
+    date: str | None = typer.Option(
+        None, "--date", help="America/New_York day YYYY-MM-DD (default: today)."
+    ),
+) -> None:
+    """Write a sample futures+options dump so the KPI dashboard works locally (no TWS)."""
+    from datetime import date as date_cls
+    from pathlib import Path
+
+    from waystone3.ibkr.demo import seed_demo
+
+    day = date_cls.fromisoformat(date) if date else None
+    report = seed_demo(Path(out), day)
+    console.print(
+        f"Wrote demo dump for {report.date} under {out}.\n"
+        f"  export IBKR_REPORTS_LOCAL_DIR={out}\n"
+        f"  uv run waystone3 api-serve"
+    )
+
+
 if __name__ == "__main__":
     app()

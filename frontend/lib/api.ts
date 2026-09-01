@@ -5,6 +5,8 @@ import type {
   ActivityEntry,
   BacktestResult,
   Bar,
+  IbkrDays,
+  IbkrReport,
   NewsItem,
   Order,
   Position,
@@ -41,6 +43,9 @@ export const getAccount = () => get<Account>("/api/account");
 export const getPositions = () => get<Position[]>("/api/positions");
 export const getOrders = () => get<Order[]>("/api/orders");
 export const getActivity = () => get<ActivityEntry[]>("/api/activity");
+export const getIbkrDays = () => get<IbkrDays>("/api/ibkr/days");
+export const getIbkrReport = (date?: string) =>
+  get<IbkrReport>(`/api/ibkr/report${date ? `?date=${date}` : ""}`);
 export const getSignals = (symbols = "") =>
   get<Signal[]>(`/api/signals${symbols ? `?symbols=${symbols}` : ""}`);
 export const getBars = (symbol: string, lookback = 200) =>

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   BarChart3,
+  CalendarDays,
   CandlestickChart,
   LineChart,
   ListOrdered,
@@ -17,6 +18,7 @@ import { usePathname } from "next/navigation";
 import { clearToken, getAccount } from "@/lib/api";
 
 const NAV = [
+  { href: "/ibkr", label: "Daily", icon: CalendarDays },
   { href: "/", label: "Account", icon: Wallet },
   { href: "/positions", label: "Positions", icon: BarChart3 },
   { href: "/orders", label: "Orders", icon: ListOrdered },
@@ -40,8 +42,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       <aside className="flex w-60 flex-col border-r border-slate-800 p-4">
         <div className="mb-6">
-          <div className="text-lg font-semibold">Waystone Arena</div>
-          <div className="text-xs text-slate-500">paper competition</div>
+          <div className="text-lg font-semibold">Waystone</div>
+          <div className="text-xs text-slate-500">IBKR live</div>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {

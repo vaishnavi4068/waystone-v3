@@ -9,11 +9,8 @@ dist/
 .ruff_cache/
 .pytest_cache/
 
-# Runtime data / secrets
-*.db
-.env
-.env.*
-!.env.example
+reports/
+
 
 # Node / Next (frontend has its own .gitignore too)
 frontend/node_modules/

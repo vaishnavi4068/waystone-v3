@@ -4,8 +4,8 @@ import "./globals.css";
 import Providers from "./providers";
 
 export const metadata: Metadata = {
-  title: "Waystone Arena",
-  description: "Read-only dashboard for the Waystone paper-trading competition",
+  title: "Waystone",
+  description: "Read-only IBKR daily reporting dashboard",
 };
 
 export default function RootLayout({

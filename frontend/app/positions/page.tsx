@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { getPositions } from "@/lib/api";
-import { money, tone } from "@/lib/format";
+import { contractLabel, money, tone } from "@/lib/format";
 
 export default function Page() {
   const { data, isLoading } = useQuery({ queryKey: ["positions"], queryFn: getPositions });
@@ -15,11 +15,12 @@ export default function Page() {
       {data.length === 0 ? (
         <div className="card p-5 text-sm text-slate-500">No open positions.</div>
       ) : (
-        <div className="card overflow-hidden">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-900/60 text-left text-slate-500">
               <tr>
-                <th className="px-5 py-3">Symbol</th>
+                <th className="px-5 py-3">Contract</th>
+                <th>Book</th>
                 <th>Qty</th>
                 <th>Entry</th>
                 <th>Mark</th>
@@ -28,8 +29,14 @@ export default function Page() {
             </thead>
             <tbody>
               {data.map((p) => (
-                <tr key={p.symbol} className="border-t border-slate-800">
-                  <td className="px-5 py-3 font-medium">{p.symbol}</td>
+                <tr key={`${p.local_symbol ?? p.symbol}-${p.expiry ?? ""}`} className="border-t border-slate-800">
+                  <td className="px-5 py-3 font-medium">
+                    {contractLabel(p)}
+                    <div className="text-xs font-normal text-slate-500">
+                      {[p.expiry, p.strike, p.right].filter(Boolean).join(" ")}
+                    </div>
+                  </td>
+                  <td className="capitalize">{p.book ?? "—"}</td>
                   <td>{p.qty}</td>
                   <td>{money(p.avg_entry_price)}</td>
                   <td>{p.market_price != null ? money(p.market_price) : "—"}</td>

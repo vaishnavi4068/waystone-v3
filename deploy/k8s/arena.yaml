@@ -78,8 +78,10 @@ spec:
           env:
             - name: WAYSTONE_DB
               value: /data/arena.db
-            - name: WAYSTONE_BROKER      # /api/account reflects the shared Alpaca PAPER account
+            - name: WAYSTONE_BROKER      # fallback if IBKR_REPORTS_BUCKET is unset
               value: alpaca
+            - name: IBKR_REPORTS_BUCKET  # GCS bucket written by `waystone3 ibkr-export`
+              value: ""
           envFrom:
             - secretRef: { name: waystone-arena-secrets }
           volumeMounts:

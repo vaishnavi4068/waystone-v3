@@ -4,6 +4,15 @@ export interface Position {
   avg_entry_price: number;
   market_price: number | null;
   unrealized_pnl: number | null;
+  local_symbol?: string;
+  sec_type?: string;
+  expiry?: string | null;
+  strike?: number | null;
+  right?: string | null;
+  book?: string;
+  exchange?: string;
+  multiplier?: string | null;
+  market_value?: number | null;
 }
 
 export interface Strategy {
@@ -24,6 +33,14 @@ export interface Account {
   equity: number;
   buying_power: number;
   strategy: Strategy | null;
+  nlv?: number;
+  excess_liquidity?: number;
+  maint_margin?: number;
+  currency?: string;
+  report_date?: string | null;
+  as_of?: string | null;
+  published?: boolean;
+  today_published?: boolean;
 }
 
 export interface Order {
@@ -33,6 +50,14 @@ export interface Order {
   status: string;
   avg_fill_price: number | null;
   submitted_at: string;
+  local_symbol?: string;
+  sec_type?: string;
+  expiry?: string | null;
+  strike?: number | null;
+  right?: string | null;
+  book?: string;
+  commission?: number | null;
+  realized_pnl?: number | null;
 }
 
 export interface ActivityEntry {
@@ -74,4 +99,67 @@ export interface NewsItem {
   url: string;
   symbols: string[];
   published_at: string;
+}
+
+export interface BookStats {
+  fills: number;
+  qty: number;
+  notional: number;
+  commission: number;
+  realized_pnl: number;
+}
+
+export interface IbkrExecution {
+  exec_id: string;
+  time: string;
+  account: string;
+  sec_type: string;
+  symbol: string;
+  local_symbol: string;
+  exchange: string;
+  expiry: string | null;
+  strike: number | null;
+  right: string | null;
+  multiplier: string | null;
+  side: string;
+  qty: number;
+  price: number;
+  commission: number | null;
+  realized_pnl: number | null;
+  client_id: number | null;
+  book: string;
+}
+
+export interface IbkrDays {
+  days: string[];
+  latest: string | null;
+  today: string;
+  today_published: boolean;
+}
+
+export interface IbkrReport {
+  date: string;
+  generated_at: string;
+  published: boolean;
+  today: string;
+  today_published: boolean;
+  executions: IbkrExecution[];
+  positions: Position[];
+  account: {
+    account_id: string;
+    nlv: number;
+    cash: number;
+    buying_power: number;
+    excess_liquidity: number;
+    maint_margin: number;
+    currency: string;
+    equity: number;
+  };
+  summary: {
+    date: string;
+    futures: BookStats;
+    options: BookStats;
+    other: BookStats;
+    totals: BookStats;
+  };
 }
