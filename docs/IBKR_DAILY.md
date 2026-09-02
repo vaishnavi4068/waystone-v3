@@ -23,7 +23,7 @@ uv run waystone3 api-serve                       # http://localhost:9200
 cd frontend
 cp .env.example .env.local     # NEXT_PUBLIC_API_BASE=http://localhost:9200
 npm install
-npm run dev                    # http://localhost:3000
+npm run dev                    # http://localhost:3001 (3000 is often used by other apps)
 ```
 
 Sign in with the seed token. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,

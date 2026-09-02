@@ -10,7 +10,7 @@ backtests, and news. Nothing here mutates state.
 | Piece | What | Run |
 |---|---|---|
 | **API** (`src/waystone3/api/`) | FastAPI, read-only, per-user auth, reads the live competition DB | `uv run waystone3 api-serve` (port 9200) |
-| **Frontend** (`frontend/`) | Next.js 16 + React 19 + Tailwind + TanStack Query + Lightweight Charts | `npm run dev` (port 3000) |
+| **Frontend** (`frontend/`) | Next.js 16 + React 19 + Tailwind + TanStack Query + Lightweight Charts | `npm run dev` (port **3001**) |
 
 ## Screens (per user)
 
@@ -41,7 +41,7 @@ uv run waystone3 api-serve                                            # http://l
 cd frontend
 cp .env.example .env.local        # NEXT_PUBLIC_API_BASE=http://localhost:9200
 npm install
-npm run dev                       # http://localhost:3000  -> paste a player token to sign in
+npm run dev                       # http://localhost:3001  -> paste a player token to sign in
 ```
 
 For live market data, set `POLYGON_API_KEY` before `api-serve` (the API uses the same
