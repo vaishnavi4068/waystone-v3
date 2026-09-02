@@ -16,7 +16,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { clearToken, getAccount } from "@/lib/api";
+import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
 
 const NAV = [
   { href: "/ibkr", label: "Daily", icon: CalendarDays },
@@ -67,12 +67,15 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="mt-4 border-t border-slate-800 pt-4">
-          <div className="text-sm font-medium">{acct.data?.you ?? "…"}</div>
+          <div className="text-sm font-medium">{acct.data?.you ?? (acct.isError ? "API down" : "…")}</div>
           {acct.data && (
             <div className="text-xs text-slate-500">
               {acct.data.broker} · {acct.data.is_paper ? "paper" : "LIVE"}
               {acct.data.trading_enabled ? "" : " · halted"}
             </div>
+          )}
+          {acct.isError && (
+            <div className="mt-1 text-xs text-rose-300">{apiErrorMessage(acct.error)}</div>
           )}
           <button
             onClick={logout}

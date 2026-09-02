@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 
+import QueryGate from "@/components/query-gate";
 import { getAccount } from "@/lib/api";
 import { money } from "@/lib/format";
 
@@ -24,8 +25,14 @@ function Stat({
 }
 
 export default function Page() {
-  const { data, isLoading } = useQuery({ queryKey: ["account"], queryFn: getAccount });
-  if (isLoading || !data) return <div className="text-slate-400">Loading…</div>;
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["account"],
+    queryFn: getAccount,
+  });
+  if (isLoading) return <QueryGate isLoading isError={false} />;
+  if (isError || !data) {
+    return <QueryGate isLoading={false} isError error={error} />;
+  }
 
   const ibkr = data.broker === "ibkr";
 

@@ -74,10 +74,16 @@ def build_app(
     *,
     ibkr_paper: bool | None = None,
 ) -> FastAPI:
-    # Default: build a fresh workspace per request from env. Correct in prod because the
-    # broker (Alpaca) and the SQLite DB are the shared sources of truth across processes.
+    # Default: one workspace for the process. Building Alpaca/Polygon clients on every
+    # request (the old per-call factory) made the dashboard feel hung under 15s polling.
     # Tests inject a single shared instance (the in-process PaperBroker isn't cross-process).
-    factory = workspace_factory or build_workspace_from_env
+    if workspace_factory is None:
+        _workspace = build_workspace_from_env()
+
+        def factory() -> TradingWorkspace:
+            return _workspace
+    else:
+        factory = workspace_factory
     store = report_store if report_store is not None else build_report_store_from_env()
     paper = IbkrSettings().ibkr_paper if ibkr_paper is None else ibkr_paper
 

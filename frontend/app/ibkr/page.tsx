@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { CalendarDays } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { getIbkrDays, getIbkrReport } from "@/lib/api";
+import QueryGate from "@/components/query-gate";
+import { getIbkrDays, getIbkrReport, isNotFound } from "@/lib/api";
 import { contractLabel, money, tone } from "@/lib/format";
 import type { IbkrExecution } from "@/lib/types";
 
@@ -89,7 +90,12 @@ export default function Page() {
     return rows.filter((r) => r.book === book);
   }, [report.data, book]);
 
-  if (days.isLoading) return <div className="text-slate-400">Loading…</div>;
+  if (days.isLoading) {
+    return <QueryGate isLoading isError={false} />;
+  }
+  if (days.isError && !isNotFound(days.error)) {
+    return <QueryGate isLoading={false} isError error={days.error} />;
+  }
   if (days.isError || !days.data) {
     return (
       <div className="card p-5 text-sm text-slate-400">
@@ -139,6 +145,9 @@ export default function Page() {
       )}
 
       {report.isLoading && <div className="text-slate-400">Loading report…</div>}
+      {report.isError && (
+        <QueryGate isLoading={false} isError error={report.error} />
+      )}
       {report.data && (
         <>
           <p className="mb-4 text-xs text-slate-500">

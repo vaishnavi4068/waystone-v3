@@ -2,12 +2,19 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import QueryGate from "@/components/query-gate";
 import { getPositions } from "@/lib/api";
 import { contractLabel, money, tone } from "@/lib/format";
 
 export default function Page() {
-  const { data, isLoading } = useQuery({ queryKey: ["positions"], queryFn: getPositions });
-  if (isLoading || !data) return <div className="text-slate-400">Loading…</div>;
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["positions"],
+    queryFn: getPositions,
+  });
+  if (isLoading) return <QueryGate isLoading isError={false} />;
+  if (isError || !data) {
+    return <QueryGate isLoading={false} isError error={error} />;
+  }
 
   return (
     <div>

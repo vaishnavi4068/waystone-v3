@@ -2,16 +2,28 @@
 
 import { useState } from "react";
 
-import { setToken } from "@/lib/api";
+import { apiErrorMessage, clearToken, getAccount, setToken } from "@/lib/api";
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!value.trim()) return;
+    if (!value.trim() || busy) return;
+    setBusy(true);
+    setError("");
     setToken(value.trim());
-    onLogin();
+    try {
+      await getAccount();
+      onLogin();
+    } catch (err) {
+      clearToken();
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -28,11 +40,13 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
           placeholder="Bearer token"
           className="mt-6 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 outline-none focus:border-emerald-500"
         />
+        {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
         <button
           type="submit"
-          className="mt-4 w-full rounded-lg bg-emerald-600 px-3 py-2 font-medium hover:bg-emerald-500"
+          disabled={busy}
+          className="mt-4 w-full rounded-lg bg-emerald-600 px-3 py-2 font-medium hover:bg-emerald-500 disabled:opacity-60"
         >
-          Enter
+          {busy ? "Connecting…" : "Enter"}
         </button>
         <p className="mt-4 text-xs text-slate-500">
           Your token is stored only in this browser. Everything here is read-only.

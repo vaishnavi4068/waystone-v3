@@ -2,7 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { getIbkrOptionsKpis } from "@/lib/api";
+import QueryGate from "@/components/query-gate";
+import { getIbkrOptionsKpis, isNotFound } from "@/lib/api";
 import { money } from "@/lib/format";
 import type { OptionsKpiRow, OptionsKpiStage } from "@/lib/types";
 
@@ -81,12 +82,17 @@ function StageBlock({ stage }: { stage: OptionsKpiStage }) {
 }
 
 export default function Page() {
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["ibkr-options-kpis"],
     queryFn: getIbkrOptionsKpis,
   });
 
-  if (isLoading) return <div className="text-slate-400">Loading…</div>;
+  if (isLoading) {
+    return <QueryGate isLoading isError={false} />;
+  }
+  if (isError && !isNotFound(error)) {
+    return <QueryGate isLoading={false} isError error={error} />;
+  }
   if (isError || !data) {
     return (
       <div className="card p-5 text-sm text-slate-400">
