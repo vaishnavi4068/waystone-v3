@@ -77,5 +77,26 @@ def build_service_from_env() -> WorkspaceService:
     )
 
 
-def seed_members(service: WorkspaceService, names: list[str]) -> list[dict[str, Any]]:
-    return [service.register(service.admin_token, name) for name in names]
+def seed_members(
+    service: WorkspaceService,
+    names: list[str],
+    passwords: list[str | None] | None = None,
+) -> list[dict[str, Any]]:
+    """Register up to ``max_members`` dashboard users with unique passwords."""
+    if not names:
+        raise ValueError("at least one player name is required")
+    if len(names) > service.ws.max_members:
+        raise ValueError(f"at most {service.ws.max_members} dashboard users")
+    lowered = [n.strip().lower() for n in names]
+    if len(lowered) != len(set(lowered)):
+        raise ValueError("player names must be unique")
+    pws = list(passwords) if passwords is not None else [None] * len(names)
+    if len(pws) != len(names):
+        raise ValueError("passwords count must match players")
+    provided = [p for p in pws if p]
+    if len(provided) != len(set(provided)):
+        raise ValueError("passwords must be unique")
+    return [
+        service.register(service.admin_token, name, password=pw)
+        for name, pw in zip(names, pws, strict=True)
+    ]

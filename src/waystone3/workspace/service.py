@@ -28,11 +28,22 @@ class WorkspaceService:
             raise AuthError("invalid or missing token")
         return name
 
-    def register(self, admin_token: str | None, name: str) -> dict[str, Any]:
+    def register(
+        self, admin_token: str | None, name: str, password: str | None = None
+    ) -> dict[str, Any]:
         if not self.admin_token or admin_token != self.admin_token:
             raise AuthError("admin token required to add team members")
-        member = self.ws.register_member(name)
-        return {"name": member.name, "token": member.token}
+        member = self.ws.register_member(name, password=password)
+        return {"name": member.name, "token": member.token, "password": member.password}
+
+    def login(self, name: str, password: str) -> dict[str, str]:
+        token = self.ws.authenticate_password(name, password)
+        if token is None:
+            raise AuthError("invalid username or password")
+        actor = self.ws.authenticate(token)
+        if actor is None:
+            raise AuthError("invalid username or password")
+        return {"name": actor, "token": token}
 
     def set_strategy(
         self,

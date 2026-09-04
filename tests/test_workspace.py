@@ -29,6 +29,33 @@ def test_register_and_authenticate() -> None:
     assert ws.authenticate(m.token) == "Manoj"
     assert ws.authenticate("bogus") is None
     assert "Manoj" in ws.members()
+    assert m.password  # unique dashboard password issued at registration
+    assert ws.authenticate_password("Manoj", m.password) == m.token
+    assert ws.authenticate_password("manoj", m.password) == m.token  # case-insensitive name
+    assert ws.authenticate_password("Manoj", "wrong-password") is None
+    assert ws.authenticate_password("Unknown", m.password) is None
+
+
+def test_explicit_password_and_duplicate_name() -> None:
+    ws = _ws()
+    m = ws.register_member("Manoj", password="unique-pass-1")
+    assert ws.authenticate_password("Manoj", "unique-pass-1") == m.token
+    with pytest.raises(WorkspaceError, match="already exists"):
+        ws.register_member("manoj", password="unique-pass-2")
+    with pytest.raises(WorkspaceError, match="at least 8"):
+        ws.register_member("Mark", password="short")
+
+
+def test_five_users_max_with_unique_passwords() -> None:
+    ws = TradingWorkspace(StubDataSource(), PaperBroker(), max_members=5)
+    issued: set[str] = set()
+    for name in ("Manoj", "Mark", "Brent", "Akash", "Cole"):
+        member = ws.register_member(name)
+        assert member.password not in issued
+        issued.add(member.password)
+        assert ws.authenticate_password(name, member.password) == member.token
+    with pytest.raises(WorkspaceError, match="team is full"):
+        ws.register_member("Extra")
 
 
 def test_team_is_capped() -> None:
@@ -85,6 +112,7 @@ async def test_persistence_across_restart(tmp_path) -> None:
 
     ws2 = _ws(WorkspaceStore(db))
     assert ws2.authenticate(m.token) == "Manoj"     # member restored
+    assert ws2.authenticate_password("Manoj", m.password) == m.token
     assert ws2.strategy is not None                 # shared strategy restored
     assert ws2.strategy.watchlist == ["AAPL", "MSFT"]
     assert ws2.trading_enabled is False             # kill-switch restored

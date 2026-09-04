@@ -107,13 +107,14 @@ Watch **Workloads → waystone-arena** until the pod is green (Running, 1/1).
 ## 10. Seed the 5 players (Cloud Shell)
 ```sh
 gcloud container clusters get-credentials waystone-cluster --region "$REGION"
-kubectl -n waystone-arena exec deploy/waystone-arena -- \
+kubectl -n waystone-arena exec deploy/waystone-arena -c arena -- \
   uv run waystone3 arena-seed --players "Manoj,Mark,Brent,Akash,Cole"
-# copy each printed token
+# copy each printed dashboard password + MCP token
 kubectl -n waystone-arena rollout restart deploy/waystone-arena   # reload players from DB
 ```
-Then store each token in Secret Manager (Console → Secret Manager → Create Secret):
-`arena-user-manoj` … `arena-user-cole`. Hand each player their token privately.
+Then store each MCP token in Secret Manager (Console → Secret Manager → Create Secret):
+`arena-user-manoj` … `arena-user-cole`. Hand each player their **username + unique
+password** (dashboard) and token (Claude MCP) privately.
 
 ## 11. (Optional) Turn on Vertex for Claude
 **Console → Kubernetes Engine → Workloads → waystone-arena → Edit → YAML**, add under the

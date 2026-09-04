@@ -221,8 +221,9 @@ The Ingress fans out by path: `/mcp` → Arena, `/api/*` → API, `/*` → front
 The server loads players from the DB **at startup**, so seed → restart → store tokens.
 
 ```sh
-# 1) Seed (writes to the persistent DB; prints a token per player). -c arena: the pod now
-#    has two containers (arena + api); seed via the arena one.
+# 1) Seed (writes to the persistent DB; prints a unique dashboard password + MCP token
+#    per player). -c arena: the pod now has two containers (arena + api); seed via arena.
+#    Optional: --passwords "p1,p2,p3,p4,p5" to set the five unique passwords yourself.
 kubectl -n waystone-arena exec deploy/waystone-arena -c arena -- \
   uv run waystone3 arena-seed --players "Manoj,Mark,Brent,Akash,Cole"
 
@@ -238,16 +239,17 @@ printf '%s' "<akash-token>" | gcloud secrets create arena-user-akash --data-file
 printf '%s' "<cole-token>"  | gcloud secrets create arena-user-cole  --data-file=-
 ```
 
-Each player's **bearer token is their secure login** — per-user, never shared, sent only
-over TLS. Hand each user theirs over a private channel.
+Each player gets a **unique dashboard password** (username = their member name) and an
+**MCP bearer token**. Both are per-user, never shared, sent only over TLS. Hand each
+user theirs over a private channel.
 
 ---
 
 ## 9. How players use it
 
-- **Dashboard (read-only):** open `https://$DOMAIN/` in a browser, paste your token — the
-  shared account, positions, orders, the shared strategy, team, activity log, signals,
-  charts, backtests, news. See [docs/UI.md](../docs/UI.md).
+- **Dashboard (read-only):** open `https://$DOMAIN/` and sign in with your **member name
+  + unique password** — the shared account, positions, orders, the shared strategy, team,
+  activity log, signals, charts, backtests, news. See [docs/UI.md](../docs/UI.md).
 - **Claude (operate the account):** add the remote MCP server `https://$DOMAIN/mcp` with
   header `Authorization: Bearer <token>` in **Claude Code / Desktop**. Tools:
   `set_strategy` / `get_strategy`, `run_cycle` (submits real orders to the shared Alpaca
@@ -255,7 +257,8 @@ over TLS. Hand each user theirs over a private channel.
   `activity`. The **claude.ai web** connector needs OAuth (not built) — see
   [CLAUDE_CONNECTOR.md](CLAUDE_CONNECTOR.md).
 
-Same per-member token for both surfaces — never shared, sent only over TLS.
+Dashboard login uses name + password; Claude still uses the per-member bearer token.
+Never share either credential; send only over TLS.
 
 ---
 

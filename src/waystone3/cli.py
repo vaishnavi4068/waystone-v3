@@ -208,27 +208,45 @@ def serve(
 
 @app.command("arena-seed")
 def arena_seed(
-    players: str = typer.Option(..., help="Comma-separated team member names."),
+    players: str = typer.Option(..., help="Comma-separated team member names (max 5)."),
+    passwords: str = typer.Option(
+        "",
+        help="Optional comma-separated unique passwords, one per player. Generated if omitted.",
+    ),
 ) -> None:
-    """Add team members to the shared workspace (writes to WAYSTONE_DB) and print tokens."""
+    """Add team members to the shared workspace (writes to WAYSTONE_DB) and print credentials."""
     import os
 
     from waystone3.workspace.runtime import build_service_from_env, seed_members
+    from waystone3.workspace.workspace import WorkspaceError
 
     if not os.getenv("WAYSTONE_ADMIN_TOKEN"):
         raise typer.BadParameter("set WAYSTONE_ADMIN_TOKEN first")
     if not os.getenv("WAYSTONE_DB"):
         raise typer.BadParameter("set WAYSTONE_DB (a SQLite path) so members persist")
     names = [n for n in (s.strip() for s in players.split(",")) if n]
+    pw_list: list[str | None] | None = None
+    if passwords.strip():
+        pw_list = [p.strip() or None for p in passwords.split(",")]
+        if len(pw_list) != len(names):
+            raise typer.BadParameter("passwords count must match --players")
     service = build_service_from_env()
-    created = seed_members(service, names)
+    try:
+        created = seed_members(service, names, pw_list)
+    except (ValueError, WorkspaceError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
-    table = Table(title="Team members (hand each token to its member)")
+    table = Table(title="Team members (hand each password + token privately)")
     table.add_column("Member")
-    table.add_column("Token")
+    table.add_column("Dashboard password")
+    table.add_column("MCP token")
     for row in created:
-        table.add_row(row["name"], row["token"])
+        table.add_row(row["name"], row["password"], row["token"])
     console.print(table)
+    console.print(
+        "[dim]Dashboard: sign in with member name + password. "
+        "Claude MCP: Authorization: Bearer <token>.[/dim]"
+    )
 
 
 @app.command("arena-serve")
