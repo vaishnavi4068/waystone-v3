@@ -6,7 +6,7 @@ import pytest
 
 from waystone3.brokers.paper import PaperBroker
 from waystone3.data.stub import StubDataSource
-from waystone3.workspace.runtime import seed_members
+from waystone3.workspace.runtime import DEFAULT_DASHBOARD_USERS, seed_members
 from waystone3.workspace.service import AuthError, WorkspaceService
 from waystone3.workspace.workspace import TradingWorkspace
 
@@ -31,16 +31,20 @@ def test_add_member_requires_admin() -> None:
         svc.login("Manoj", "not-the-password")
 
 
+def test_default_dashboard_usernames() -> None:
+    assert DEFAULT_DASHBOARD_USERS == ("Mark", "Manoj", "Brent", "Akash", "Kole")
+
+
 def test_seed_five_unique_passwords() -> None:
     svc = _service()
     created = seed_members(
         svc,
-        ["Manoj", "Mark", "Brent", "Akash", "Cole"],
-        ["pass-manoj1", "pass-mark12", "pass-brent1", "pass-akash1", "pass-cole12"],
+        list(DEFAULT_DASHBOARD_USERS),
+        ["pass-mark12", "pass-manoj1", "pass-brent1", "pass-akash1", "pass-kole12"],
     )
     assert len(created) == 5
     assert len({row["password"] for row in created}) == 5
-    assert svc.login("Cole", "pass-cole12")["name"] == "Cole"
+    assert svc.login("Kole", "pass-kole12")["name"] == "Kole"
     with pytest.raises(ValueError, match="at most"):
         seed_members(_service(), ["A", "B", "C", "D", "E", "F"])
     with pytest.raises(ValueError, match="unique"):

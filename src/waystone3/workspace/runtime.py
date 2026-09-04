@@ -26,6 +26,9 @@ from waystone3.workspace.workspace import TradingWorkspace
 
 log = structlog.get_logger()
 
+# Fixed dashboard roster — usernames for the 5 team members.
+DEFAULT_DASHBOARD_USERS = ("Mark", "Manoj", "Brent", "Akash", "Kole")
+
 
 def build_data_from_env() -> MarketDataSource:
     if os.getenv("POLYGON_API_KEY"):

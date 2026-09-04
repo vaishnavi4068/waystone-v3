@@ -66,8 +66,8 @@ printf '%s' "$(openssl rand -hex 24)" | gcloud secrets create waystone-admin-tok
 ```
 
 Player tokens are created **after seeding** (Step 8) — one secret per user:
-`arena-user-manoj`, `arena-user-mark`, `arena-user-brent`, `arena-user-akash`,
-`arena-user-cole`.
+`arena-user-mark`, `arena-user-manoj`, `arena-user-brent`, `arena-user-akash`,
+`arena-user-kole`.
 
 ### How the pod reads them — pick one
 
@@ -225,18 +225,18 @@ The server loads players from the DB **at startup**, so seed → restart → sto
 #    per player). -c arena: the pod now has two containers (arena + api); seed via arena.
 #    Optional: --passwords "p1,p2,p3,p4,p5" to set the five unique passwords yourself.
 kubectl -n waystone-arena exec deploy/waystone-arena -c arena -- \
-  uv run waystone3 arena-seed --players "Manoj,Mark,Brent,Akash,Cole"
+  uv run waystone3 arena-seed --players "Mark,Manoj,Brent,Akash,Kole"
 
 # 2) Reload so BOTH the MCP server and the API pick up the new players (each loads at start).
 kubectl -n waystone-arena rollout restart deploy/waystone-arena
 kubectl -n waystone-arena rollout status deploy/waystone-arena
 
 # 3) Store each printed token in Secret Manager (replace the values with the printed tokens):
-printf '%s' "<manoj-token>" | gcloud secrets create arena-user-manoj --data-file=-
 printf '%s' "<mark-token>"  | gcloud secrets create arena-user-mark  --data-file=-
+printf '%s' "<manoj-token>" | gcloud secrets create arena-user-manoj --data-file=-
 printf '%s' "<brent-token>" | gcloud secrets create arena-user-brent --data-file=-
 printf '%s' "<akash-token>" | gcloud secrets create arena-user-akash --data-file=-
-printf '%s' "<cole-token>"  | gcloud secrets create arena-user-cole  --data-file=-
+printf '%s' "<kole-token>"  | gcloud secrets create arena-user-kole  --data-file=-
 ```
 
 Each player gets a **unique dashboard password** (username = their member name) and an

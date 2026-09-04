@@ -37,7 +37,7 @@ mutates state.
 ```sh
 # 1) Seed players + start the API against that DB (stub data if no POLYGON_API_KEY)
 export WAYSTONE_DB=./arena.db WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
-uv run waystone3 arena-seed --players "Manoj,Mark,Brent,Akash,Cole"   # copy a password
+uv run waystone3 arena-seed --players "Mark,Manoj,Brent,Akash,Kole"   # copy a password
 uv run waystone3 api-serve                                            # http://localhost:9200
 
 # 2) Frontend

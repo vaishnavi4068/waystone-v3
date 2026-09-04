@@ -27,7 +27,7 @@ the value as the secret value, leave defaults):
 - `polygon-api-key` → your Polygon key
 - `anthropic-api-key` → your Anthropic key *(skip if using Vertex)*
 - `waystone-admin-token` → a long random string you generate
-- (player token secrets `arena-user-manoj` … `arena-user-cole` come **after** seeding, Step 10)
+- (player token secrets `arena-user-mark` … `arena-user-kole` come **after** seeding, Step 10)
 
 ## 4. Create the GKE cluster
 **Console → Kubernetes Engine → Clusters → Create → "GKE Autopilot" → Configure.**
@@ -108,12 +108,12 @@ Watch **Workloads → waystone-arena** until the pod is green (Running, 1/1).
 ```sh
 gcloud container clusters get-credentials waystone-cluster --region "$REGION"
 kubectl -n waystone-arena exec deploy/waystone-arena -c arena -- \
-  uv run waystone3 arena-seed --players "Manoj,Mark,Brent,Akash,Cole"
+  uv run waystone3 arena-seed --players "Mark,Manoj,Brent,Akash,Kole"
 # copy each printed dashboard password + MCP token
 kubectl -n waystone-arena rollout restart deploy/waystone-arena   # reload players from DB
 ```
 Then store each MCP token in Secret Manager (Console → Secret Manager → Create Secret):
-`arena-user-manoj` … `arena-user-cole`. Hand each player their **username + unique
+`arena-user-mark` … `arena-user-kole`. Hand each player their **username + unique
 password** (dashboard) and token (Claude MCP) privately.
 
 ## 11. (Optional) Turn on Vertex for Claude

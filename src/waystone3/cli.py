@@ -19,6 +19,7 @@ from waystone3.risk.guard import RiskGuard
 from waystone3.runner.backtest import BacktestResult, run_backtest
 from waystone3.runner.config import RunnerConfig, default_contributors
 from waystone3.runner.cycle import CycleReport, run_cycle
+from waystone3.workspace.runtime import DEFAULT_DASHBOARD_USERS
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="Waystone v3 momentum CLI")
 console = Console()
@@ -208,7 +209,11 @@ def serve(
 
 @app.command("arena-seed")
 def arena_seed(
-    players: str = typer.Option(..., help="Comma-separated team member names (max 5)."),
+    players: str = typer.Option(
+        ",".join(DEFAULT_DASHBOARD_USERS),
+        help="Comma-separated team member names (max 5). "
+        "Defaults to Mark, Manoj, Brent, Akash, Kole.",
+    ),
     passwords: str = typer.Option(
         "",
         help="Optional comma-separated unique passwords, one per player. Generated if omitted.",

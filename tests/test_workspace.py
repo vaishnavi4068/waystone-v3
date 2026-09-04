@@ -7,6 +7,7 @@ import pytest
 from waystone3.brokers.paper import PaperBroker
 from waystone3.competition.models import StrategyConfig
 from waystone3.data.stub import StubDataSource
+from waystone3.workspace.runtime import DEFAULT_DASHBOARD_USERS
 from waystone3.workspace.store import WorkspaceStore
 from waystone3.workspace.workspace import TradingWorkspace, WorkspaceError
 
@@ -49,7 +50,7 @@ def test_explicit_password_and_duplicate_name() -> None:
 def test_five_users_max_with_unique_passwords() -> None:
     ws = TradingWorkspace(StubDataSource(), PaperBroker(), max_members=5)
     issued: set[str] = set()
-    for name in ("Manoj", "Mark", "Brent", "Akash", "Cole"):
+    for name in DEFAULT_DASHBOARD_USERS:
         member = ws.register_member(name)
         assert member.password not in issued
         issued.add(member.password)
