@@ -1317,6 +1317,8 @@ ibkr = [
 ]
 research = [
     { name = "boto3" },
+    { name = "numpy" },
+    { name = "pandas" },
     { name = "requests" },
     { name = "scipy" },
 ]
@@ -1339,6 +1341,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "ib-insync", marker = "extra == 'ibkr'", specifier = ">=0.9" },
     { name = "mcp", specifier = ">=1.2" },
+    { name = "numpy", marker = "extra == 'research'", specifier = ">=1.26" },
+    { name = "pandas", marker = "extra == 'research'", specifier = ">=2.2" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
     { name = "python-dotenv", specifier = ">=1.0" },
