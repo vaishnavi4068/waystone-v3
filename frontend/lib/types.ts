@@ -201,3 +201,19 @@ export interface IbkrOptionsKpis {
   trade_count: number;
   span_days: number;
 }
+
+export interface IbkrFuturesKpis {
+  as_of: string | null;
+  days: number;
+  instrument: string;
+  assumptions: {
+    nav: number;
+    contracts_per_trade: number;
+    point_value: number;
+  };
+  overall: string;
+  stages: OptionsKpiStage[];
+  weeks: { week: string; return_pct: number }[];
+  trade_count: number;
+  span_days: number;
+}

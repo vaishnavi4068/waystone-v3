@@ -19,6 +19,7 @@ mutates state.
 |---|---|
 | **Daily** (`/ibkr`) | IBKR blotter: NLV, day P&L, futures vs options, fills (GCS dump) |
 | **Options KPIs** (`/options-kpis`) | Strategy 5 weekly paper scorecard (stages 1–5 + slippage) |
+| **Futures KPIs** (`/futures-kpis`) | NQ v5.1 scorecard (tiers 0–4, GREEN/AMBER/RED) |
 | **Leaderboard** (`/leaderboard`) | all players ranked by paper-account return |
 | **Signals** (`/signals`) | composite momentum score (−10…+10) + contributor breakdown per symbol |
 | **Charts** (`/charts`) | candlesticks for any symbol |
@@ -31,7 +32,7 @@ mutates state.
 `{name, token}`. All other routes are GET and require `Authorization: Bearer <token>`:
 
 `/api/account` · `/api/positions` · `/api/orders` · `/api/activity` · `/api/ibkr/days` ·
-`/api/ibkr/report` · `/api/ibkr/options-kpis` · `/api/signals` · `/api/bars` ·
+`/api/ibkr/report` · `/api/ibkr/options-kpis` · `/api/ibkr/futures-kpis` · `/api/signals` · `/api/bars` ·
 `/api/backtest` · `/api/news`
 
 ## Run locally

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from waystone3.core.types import Timeframe
 from waystone3.fusion.fuse import fuse
+from waystone3.ibkr.futures_kpis import compute_futures_kpis
 from waystone3.ibkr.kpis import compute_options_kpis
 from waystone3.ibkr.models import AccountSnapshot
 from waystone3.ibkr.reader import load_latest, load_report
@@ -250,6 +251,15 @@ def build_app(
         if store is None:
             raise HTTPException(status_code=404, detail="IBKR reports not configured")
         return compute_options_kpis(store)
+
+    @app.get("/api/ibkr/futures-kpis")
+    async def ibkr_futures_kpis(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        if store is None:
+            raise HTTPException(status_code=404, detail="IBKR reports not configured")
+        return compute_futures_kpis(store)
 
     @app.get("/api/activity")
     async def activity(

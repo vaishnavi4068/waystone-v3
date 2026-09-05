@@ -28,7 +28,8 @@ npm run dev                    # http://localhost:3001 — UI proxies /api to :9
 
 Sign in with the seeded username and password. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
 and futures vs options cards. Open **Options KPIs** (`/options-kpis`) for the Strategy 5
-weekly paper scorecard (Sharpe, Sortino, drawdown, profit factor, expectancy, etc.).
+weekly paper scorecard. Open **Futures KPIs** (`/futures-kpis`) for the NQ v5.1 tiers
+(trade count, Sharpe, drawdown, cost drag, margin-to-equity).
 After the VM has written a real dump, point the API at GCS
 instead of the demo tree:
 
@@ -130,4 +131,6 @@ Date is the America/New_York calendar day. The API lists a day only when `_SUCCE
 | `IBKR_KPI_MULTIPLIER` | API | Option $/pt/contract (default 100) |
 | `IBKR_KPI_SLIPPAGE` | API | Round-trip slippage as a fraction of premium (default 0.02) |
 | `IBKR_KPI_CONTRACTS` | API | Contracts per trade assumption (default 1) |
+| `IBKR_KPI_POINT_VALUE` | API | Futures $/point (default 20, NQ) |
+| `IBKR_KPI_TRIALS` | API | Optional trial count for the futures Tier 0 row |
 | `WAYSTONE_DB` / `WAYSTONE_ADMIN_TOKEN` | API | existing dashboard login tokens |

@@ -21,6 +21,7 @@ import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
 const NAV = [
   { href: "/ibkr", label: "Daily", icon: CalendarDays },
   { href: "/options-kpis", label: "Options KPIs", icon: Gauge },
+  { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
   { href: "/", label: "Account", icon: Wallet },
   { href: "/positions", label: "Positions", icon: BarChart3 },
   { href: "/orders", label: "Orders", icon: ListOrdered },

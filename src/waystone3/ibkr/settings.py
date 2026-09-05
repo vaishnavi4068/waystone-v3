@@ -20,3 +20,5 @@ class IbkrSettings(BaseSettings):
     ibkr_kpi_contracts: float = 1.0
     ibkr_kpi_multiplier: float = 100.0
     ibkr_kpi_slippage: float = 0.02
+    ibkr_kpi_point_value: float = 20.0
+    ibkr_kpi_trials: float = 0.0

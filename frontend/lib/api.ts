@@ -6,6 +6,7 @@ import type {
   BacktestResult,
   Bar,
   IbkrDays,
+  IbkrFuturesKpis,
   IbkrOptionsKpis,
   IbkrReport,
   NewsItem,
@@ -102,6 +103,7 @@ export const getIbkrDays = () => get<IbkrDays>("/api/ibkr/days");
 export const getIbkrReport = (date?: string) =>
   get<IbkrReport>(`/api/ibkr/report${date ? `?date=${date}` : ""}`);
 export const getIbkrOptionsKpis = () => get<IbkrOptionsKpis>("/api/ibkr/options-kpis");
+export const getIbkrFuturesKpis = () => get<IbkrFuturesKpis>("/api/ibkr/futures-kpis");
 export const getSignals = (symbols = "") =>
   get<Signal[]>(`/api/signals${symbols ? `?symbols=${symbols}` : ""}`);
 export const getBars = (symbol: string, lookback = 200) =>
