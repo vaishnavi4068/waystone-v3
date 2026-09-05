@@ -10,7 +10,7 @@ KPI / compare pages. Algo onboarding on **Compare** writes the registry on the r
 
 | Piece | What | Run |
 |---|---|---|
-| **API** (`src/waystone3/api/`) | FastAPI, read-only, per-user auth, reads the live competition DB | `uv run waystone3 api-serve --host ::` (port 9200) |
+| **API** (`src/waystone3/api/`) | FastAPI, read-only, per-user auth, reads the live competition DB | `uv run waystone3 api-serve` (port 9200) |
 | **Frontend** (`frontend/`) | Next.js 16 + React 19 + Tailwind + TanStack Query + Lightweight Charts | `npm run dev` (port **3001**, IPv4 + IPv6) |
 
 ## Screens (per user)
@@ -51,7 +51,7 @@ paper algos (live + replay folder prefixes).
 # 1) Seed players + start the API against that DB (stub data if no POLYGON_API_KEY)
 export WAYSTONE_DB=./arena.db WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
 export IBKR_STAGED=1
-uv run waystone3 api-serve --host ::                                  # http://127.0.0.1:9200
+uv run waystone3 api-serve                                            # http://127.0.0.1:9200
 # The five users are created on first start with their default passwords.
 
 # 2) Frontend

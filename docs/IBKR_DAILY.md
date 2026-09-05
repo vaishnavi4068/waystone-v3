@@ -29,7 +29,7 @@ export WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
 export IBKR_STAGED=1
 export IBKR_REPORTS_LOCAL_DIR=$PWD/reports/demo        # optional
 uv run waystone3 arena-seed --players "Manoj"          # optional; API also creates the five users
-uv run waystone3 api-serve --host ::                   # http://127.0.0.1:9200
+uv run waystone3 api-serve                             # http://127.0.0.1:9200
 
 # other terminal
 cd frontend

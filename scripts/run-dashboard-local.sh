@@ -32,8 +32,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Bind :: so http://localhost (IPv6) and 127.0.0.1 both work on Linux dual-stack.
-uv run waystone3 api-serve --host :: --port 9200 &
+# API stays on IPv4. Next rewrites /api to 127.0.0.1:9200; the UI binds :: so
+# browsers that resolve localhost to ::1 still load the page.
+uv run waystone3 api-serve --host 0.0.0.0 --port 9200 &
 API_PID=$!
 
 ok=0
