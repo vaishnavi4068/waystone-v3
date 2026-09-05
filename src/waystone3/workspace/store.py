@@ -42,6 +42,13 @@ class WorkspaceStore:
         )
         self._conn.commit()
 
+    def update_password_hash(self, token: str, password_hash: str) -> None:
+        self._conn.execute(
+            "UPDATE members SET password_hash=? WHERE token=?",
+            (password_hash, token),
+        )
+        self._conn.commit()
+
     def load_members(self) -> list[tuple[str, str, str]]:
         rows = self._conn.execute(
             "SELECT token, name, COALESCE(password_hash, '') FROM members ORDER BY ord"

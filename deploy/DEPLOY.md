@@ -221,9 +221,9 @@ The Ingress fans out by path: `/mcp` → Arena, `/api/*` → API, `/*` → front
 The server loads players from the DB **at startup**, so seed → restart → store tokens.
 
 ```sh
-# 1) Seed (writes to the persistent DB; prints a unique dashboard password + MCP token
-#    per player). -c arena: the pod now has two containers (arena + api); seed via arena.
-#    Optional: --passwords "p1,p2,p3,p4,p5" to set the five unique passwords yourself.
+# 1) Seed (writes the five users; default passwords are mark1234, manoj1234, …).
+#    -c arena: the pod now has two containers (arena + api); seed via arena.
+#    The API also creates these users on startup if the DB is empty.
 kubectl -n waystone-arena exec deploy/waystone-arena -c arena -- \
   uv run waystone3 arena-seed --players "Mark,Manoj,Brent,Akash,Kole"
 

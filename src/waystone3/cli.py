@@ -216,10 +216,10 @@ def arena_seed(
     ),
     passwords: str = typer.Option(
         "",
-        help="Optional comma-separated unique passwords, one per player. Generated if omitted.",
+        help="Optional comma-separated passwords. Omitting uses each user's default.",
     ),
 ) -> None:
-    """Add team members to the shared workspace (writes to WAYSTONE_DB) and print credentials."""
+    """Add team members (default password is lowercase name + 1234) and print credentials."""
     import os
 
     from waystone3.workspace.runtime import build_service_from_env, seed_members

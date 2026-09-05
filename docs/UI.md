@@ -1,7 +1,7 @@
 # Read-only dashboard UI
 
 A per-user, read-only web dashboard for the Arena. Each of the **5 team members** signs
-in with **their own username and unique password**. After login the browser stores the
+in with **their name and password**. After login the browser stores the
 same bearer token used for the MCP connector. Everyone sees the **shared** account,
 positions, and strategy — plus signals, charts, backtests, news, and the IBKR daily /
 KPI / compare pages. Algo onboarding on **Compare** writes the registry on the report store.
@@ -45,8 +45,8 @@ paper algos (live + replay folder prefixes).
 ```sh
 # 1) Seed players + start the API against that DB (stub data if no POLYGON_API_KEY)
 export WAYSTONE_DB=./arena.db WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
-uv run waystone3 arena-seed --players "Mark,Manoj,Brent,Akash,Kole"   # copy a password
 uv run waystone3 api-serve                                            # http://localhost:9200
+# The five users are created on first start with their default passwords.
 
 # 2) Frontend
 cd frontend
@@ -60,8 +60,8 @@ env-driven data source as the rest of the platform).
 
 ## Auth model
 
-The dashboard is limited to **5 members**. Each signs in with their **name + unique
-password** (`POST /api/login`). A successful login returns the member's bearer token,
+The dashboard is limited to **5 members**. Each signs in with their **name + password**
+(`POST /api/login`). A successful login returns the member's bearer token,
 which is stored only in the browser's `localStorage` and sent as
 `Authorization: Bearer <token>` on later API calls. Claude MCP still uses that same
 token directly. Always serve over HTTPS in production.

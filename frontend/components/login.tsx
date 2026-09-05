@@ -50,7 +50,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Your unique password"
+            placeholder="Your password"
             className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500"
           />
         </label>
