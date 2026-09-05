@@ -1,0 +1,15 @@
+{
+  "name": "Waystone v3",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "export PATH=\"$HOME/.local/bin:$PATH\"; export WAYSTONE_DB=\"$PWD/.devdata/arena.db\"; export WAYSTONE_ADMIN_TOKEN=dev-admin-token; uv run waystone3 api-serve --host 0.0.0.0 --port 9200"
+    },
+    {
+      "name": "frontend",
+      "command": "if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\"; fi; cd frontend && npm run dev"
+    }
+  ],
+  "ports": [3000, 9200]
+}
