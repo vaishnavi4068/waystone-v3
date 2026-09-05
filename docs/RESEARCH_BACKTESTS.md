@@ -41,14 +41,21 @@ export MASSIVE_S3_ENDPOINT=https://files.massive.com
 export MASSIVE_S3_BUCKET=flatfiles
 ```
 
-## Five-year window
+## Window: 2–5 years from the data
 
-Fetch and run default to **5 years** (or whatever NSDQ250 already holds — many names are ~2021–2026).
+Do not force five years. Fetch/run look at NSDQ250 (and then local CSVs), take the **overlap** across a sleeve's symbols, and clamp:
+
+- **≥ 5 years on GCS** → run the most recent **5** years
+- **4 years on GCS** → run **4** years
+- **2–5 years** → run that span
+- **< 2 years** → skip that sleeve (too short for a research backtest)
+
+`--years` is the **maximum** (default 5). `--min-years` is the floor (default 2).
 
 ```sh
 uv sync --extra research
-uv run waystone3 research-fetch --years 5          # NSDQ250 first
-uv run waystone3 research-run --years 5            # local CPU
+uv run waystone3 research-fetch --years 5          # uses 4y if that is what NSDQ250 has
+uv run waystone3 research-run --years 5            # same clamp
 uv run waystone3 research-publish                  # dated GCS objects
 ```
 

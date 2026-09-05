@@ -419,7 +419,12 @@ def algo_register(
 @app.command("research-fetch")
 def research_fetch(
     strategy: str | None = typer.Option(None, "--strategy", help="One catalog id, or all."),
-    years: int = typer.Option(5, "--years", help="Lookback when falling back to Massive/Yahoo."),
+    years: float = typer.Option(
+        5, "--years", help="Maximum lookback (clamped to available GCS history, 2-5)."
+    ),
+    min_years: float = typer.Option(
+        2, "--min-years", help="Skip a sleeve if overlap is shorter than this."
+    ),
     no_api: bool = typer.Option(
         False, "--no-api", help="NSDQ250 only; do not call Massive S3, Massive API, or Yahoo."
     ),
@@ -434,10 +439,18 @@ def research_fetch(
     from waystone3.research.fetch import fetch_market_data
     from waystone3.research.ops import post_status
 
-    post_status("fetch", "Research fetch started", f"strategy={strategy or 'all'} years={years}")
+    post_status("fetch", "Research fetch started", f"strategy={strategy or 'all'} years<={years:g}")
     report = fetch_market_data(
-        strategy_id=strategy, allow_api=not no_api, years=years, sync_flatfiles=flatfiles
+        strategy_id=strategy,
+        allow_api=not no_api,
+        years=years,
+        min_years=min_years,
+        sync_flatfiles=flatfiles,
     )
+    if report.window_start:
+        console.print(
+            f"Window: {report.window_start} → {report.window_end} ({report.window_years}y)"
+        )
     console.print(f"NSDQ250: {', '.join(report.from_nsdq250) or '—'}")
     console.print(f"Massive S3: {', '.join(report.from_s3) or '—'}")
     console.print(f"API/Yahoo: {', '.join(report.from_api) or '—'}")
@@ -455,19 +468,40 @@ def research_fetch(
 @app.command("research-run")
 def research_run(
     strategy: str | None = typer.Option(None, "--strategy", help="One catalog id, or all."),
-    years: int = typer.Option(5, "--years", help="Window when the script accepts --start."),
+    years: float = typer.Option(
+        5, "--years", help="Maximum window. Actual years follow GCS/local overlap (2-5)."
+    ),
+    min_years: float = typer.Option(
+        2, "--min-years", help="Skip a sleeve if overlap is shorter than this."
+    ),
     synthetic: bool = typer.Option(False, "--synthetic", help="Mechanics-only generated data."),
 ) -> None:
-    """Run research backtests on this machine (Mac Studio), default 5 years."""
+    """Run research backtests on this machine (Mac Studio).
+
+    Uses 2-5 years depending on NSDQ250 / local CSV overlap. Four years on GCS
+    means a four-year run, not a forced five-year window.
+    """
     from waystone3.research.ops import post_status
     from waystone3.research.run import run_strategies
 
-    post_status("run", "Research backtests started", f"strategy={strategy or 'all'} years={years}")
-    report = run_strategies(strategy_id=strategy, synthetic=synthetic, years=years)
+    post_status(
+        "run",
+        "Research backtests started",
+        f"strategy={strategy or 'all'} years={min_years:g}-{years:g}",
+    )
+    report = run_strategies(
+        strategy_id=strategy, synthetic=synthetic, years=years, min_years=min_years
+    )
     failed = 0
     for row in report.results:
+        if row.skipped:
+            console.print(f"skip {row.strategy_id}: {row.output}")
+            continue
         mark = "ok" if row.ok else "FAIL"
-        console.print(f"{mark} {row.strategy_id}: {' '.join(row.command[-6:])}")
+        win = ""
+        if row.window is not None:
+            win = f"  {row.window.start}→{row.window.end} ({row.window.years:.1f}y)"
+        console.print(f"{mark} {row.strategy_id}:{win} {' '.join(row.command[-6:])}")
         if not row.ok:
             failed += 1
             console.print(row.output[-800:])

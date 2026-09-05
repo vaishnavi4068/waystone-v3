@@ -15,7 +15,7 @@ from waystone3.research.catalog import (
 )
 from waystone3.research.nsdq250 import sync_daily_symbol, sync_intraday_root
 from waystone3.research.paths import toolkit_root
-from waystone3.research.window import default_window
+from waystone3.research.window import MAX_YEARS, MIN_YEARS, default_window, resolve_window
 
 
 @dataclass
@@ -25,6 +25,9 @@ class FetchReport:
     from_api: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    window_years: float | None = None
+    window_start: str | None = None
+    window_end: str | None = None
 
 
 def _has_daily(data_dir: Path, symbol: str) -> bool:
@@ -52,7 +55,8 @@ def fetch_market_data(
     strategy_id: str | None = None,
     allow_api: bool = True,
     data_dir: Path | None = None,
-    years: int = 5,
+    years: float = MAX_YEARS,
+    min_years: float = MIN_YEARS,
     sync_flatfiles: bool = False,
 ) -> FetchReport:
     """Prefer ``gs://$IBKR_REPORTS_BUCKET/NSDQ250``. Only then Massive or Yahoo."""
@@ -60,6 +64,24 @@ def fetch_market_data(
     dest = data_dir or (root / "data")
     dest.mkdir(parents=True, exist_ok=True)
     report = FetchReport()
+    tuned = resolve_window(
+        needed_daily_symbols(strategy_id),
+        dest,
+        roots=needed_intraday_roots(strategy_id),
+        min_years=min_years,
+        max_years=years,
+    )
+    if tuned is None:
+        api_years = int(years)
+    else:
+        api_years = max(int(min_years), min(int(years), round(tuned.years)))
+    if tuned is not None:
+        report.window_years = round(tuned.years, 2)
+        report.window_start = tuned.start
+        report.window_end = tuned.end
+        report.notes.append(
+            f"window {tuned.start} to {tuned.end} ({tuned.years:.1f}y; {min_years:g}-{years:g})"
+        )
 
     for symbol in needed_daily_symbols(strategy_id):
         if _has_daily(dest, symbol):
@@ -76,7 +98,7 @@ def fetch_market_data(
         if not allow_api:
             report.missing.append(symbol)
             continue
-        if _fetch_daily_via_api(symbol, root, years=years):
+        if _fetch_daily_via_api(symbol, root, years=api_years):
             report.from_api.append(symbol)
         else:
             report.missing.append(symbol)
@@ -96,7 +118,7 @@ def fetch_market_data(
         if not allow_api:
             report.missing.append(f"{fut}_1min")
             continue
-        if _fetch_futures_via_massive(fut, root, years=years):
+        if _fetch_futures_via_massive(fut, root, years=api_years):
             report.from_api.append(f"{fut}_1min")
         else:
             report.missing.append(f"{fut}_1min")
@@ -106,7 +128,7 @@ def fetch_market_data(
         from waystone3.research.massive_s3 import s3_config, sync_prefix
 
         if s3_config() is not None:
-            start, _ = default_window(years)
+            start, _ = default_window(api_years)
             written = sync_prefix(
                 f"us_options_opra/day_aggs_v1/{start[:4]}/",
                 dest / "flatfiles",

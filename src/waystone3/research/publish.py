@@ -23,6 +23,7 @@ from waystone3.research.paths import (
     toolkit_root,
     trades_key,
 )
+from waystone3.research.window import years_from_equity
 
 
 def _git_sha(root: Path) -> str:
@@ -130,7 +131,7 @@ def publish_results(
                 "host": host or socket.gethostname(),
                 "git_sha": _git_sha(repo),
                 "published_at": datetime.now(NY).isoformat(),
-                "window_years": 5,
+                "window_years": years_from_equity(folder / "equity.csv") or 0,
             }
             reports.put(
                 manifest_key(sid, day, variant),

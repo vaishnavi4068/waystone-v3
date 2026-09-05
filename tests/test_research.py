@@ -23,7 +23,13 @@ from waystone3.research.ops import (
 from waystone3.research.paths import success_key
 from waystone3.research.publish import publish_results
 from waystone3.research.reader import list_days, load_run
-from waystone3.research.window import default_window
+from waystone3.research.window import (
+    clamp_span,
+    default_window,
+    intersect_spans,
+    resolve_window,
+    tune_years,
+)
 from waystone3.workspace.workspace import TradingWorkspace
 
 
@@ -38,6 +44,50 @@ def test_default_window_is_five_years() -> None:
     start, end = default_window(5)
     assert start < end
     assert int(end[:4]) - int(start[:4]) == 5
+
+
+def test_tune_years_follows_gcs_availability() -> None:
+    assert tune_years(4.0) == 4.0
+    assert tune_years(5.5) == 5.0
+    assert tune_years(2.0) == 2.0
+    assert tune_years(1.5) is None
+
+
+def test_clamp_span_uses_four_years_when_that_is_what_exists() -> None:
+    start, end = clamp_span(date(2022, 7, 4), date(2026, 7, 4)) or (None, None)
+    assert start == date(2022, 7, 4)
+    assert end == date(2026, 7, 4)
+
+
+def test_clamp_span_caps_at_five_and_rejects_under_two() -> None:
+    capped = clamp_span(date(2018, 1, 1), date(2026, 1, 1))
+    assert capped is not None
+    assert (capped[1] - capped[0]).days <= int(5.1 * 365.25)
+    assert clamp_span(date(2025, 6, 1), date(2026, 1, 1)) is None
+
+
+def test_resolve_window_from_local_csvs(tmp_path: Path) -> None:
+    daily = tmp_path / "daily"
+    daily.mkdir()
+    (daily / "SPY.csv").write_text(
+        "date,open,high,low,close,volume\n2022-01-03,1,1,1,1,1\n2026-01-02,1,1,1,1,1\n"
+    )
+    (daily / "QQQ.csv").write_text(
+        "date,open,high,low,close,volume\n2021-06-01,1,1,1,1,1\n2026-01-02,1,1,1,1,1\n"
+    )
+    tuned = resolve_window(["SPY", "QQQ"], tmp_path)
+    assert tuned is not None
+    assert tuned.source == "data"
+    assert tuned.start == "2022-01-03"
+    assert tuned.end == "2026-01-02"
+    assert 3.9 < tuned.years < 4.1
+
+
+def test_intersect_spans_takes_overlap() -> None:
+    overlap = intersect_spans(
+        [(date(2021, 7, 5), date(2026, 7, 4)), (date(2022, 1, 1), date(2026, 7, 4))]
+    )
+    assert overlap == (date(2022, 1, 1), date(2026, 7, 4))
 
 
 def test_parse_nsdq250_daily_key() -> None:
