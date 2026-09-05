@@ -168,6 +168,8 @@ def build_app(
                 "published": report is not None,
                 "today_published": bool(days["today_published"]),
                 "strategy": _strategy_payload(ws),
+                "staged": bool(days.get("staged")),
+                "staged_week": days.get("staged_week"),
             }
         broker_acct = await ws.broker.get_account()
         return {
@@ -341,7 +343,14 @@ def build_app(
         reports = _reports()
         registry = ensure_registry(reports)
         days = list_compare_days(reports, registry)
-        return {"days": days, "latest": days[-1] if days else None}
+        from waystone3.ibkr.staged import is_staged_day, staged_meta
+
+        latest = days[-1] if days else None
+        return {
+            "days": days,
+            "latest": latest,
+            **staged_meta(latest, any_staged=any(is_staged_day(d) for d in days)),
+        }
 
     @app.get("/api/algos/{algo_id}/compare")
     async def algo_compare(

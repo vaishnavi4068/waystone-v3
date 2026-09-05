@@ -320,10 +320,12 @@ def ibkr_seed_demo(
         help="Local directory mirroring GCS keys (set IBKR_REPORTS_LOCAL_DIR to this).",
     ),
     date: str | None = typer.Option(
-        None, "--date", help="America/New_York day YYYY-MM-DD (default: today)."
+        None,
+        "--date",
+        help="America/New_York day YYYY-MM-DD (default: staged week ending 2026-08-14).",
     ),
 ) -> None:
-    """Write a sample futures+options dump so the KPI dashboard works locally (no TWS)."""
+    """Write staged sample dumps (week of 10 Aug 2026) so dashboards render locally."""
     from datetime import date as date_cls
     from pathlib import Path
 
@@ -332,7 +334,8 @@ def ibkr_seed_demo(
     day = date_cls.fromisoformat(date) if date else None
     report = seed_demo(Path(out), day, history_days=40)
     console.print(
-        f"Wrote demo dump for {report.date} (+ 40 weekdays) under {out}.\n"
+        f"Wrote STAGED dump for {report.date} (+ 40 weekdays) under {out}.\n"
+        f"  Week of 10 Aug 2026 is marked staged on Daily, Compare, Options KPIs, Futures KPIs.\n"
         f"  Also seeded 3 algos (s5_options, nq_futures, es_futures) live vs replay.\n"
         f"  export IBKR_REPORTS_LOCAL_DIR={out}\n"
         f"  uv run waystone3 api-serve"

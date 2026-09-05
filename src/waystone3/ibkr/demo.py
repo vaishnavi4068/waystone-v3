@@ -8,6 +8,7 @@ from pathlib import Path
 from waystone3.ibkr.export import assemble_report, publish_report
 from waystone3.ibkr.models import AccountSnapshot, Book, DailyReport, Execution, PositionSnapshot
 from waystone3.ibkr.settings import IbkrSettings
+from waystone3.ibkr.staged import STAGED_WEEK_DAYS, STAGED_WEEK_END, is_staged_day
 from waystone3.ibkr.store import LocalFsStore
 from waystone3.ibkr.timeutil import NY, today_ny
 
@@ -154,6 +155,7 @@ def demo_report(day: date | None = None, settings: IbkrSettings | None = None) -
         cfg,
         tws_connected=False,
         generated_at=datetime(target.year, target.month, target.day, 18, 0, tzinfo=NY),
+        staged=is_staged_day(target),
     )
 
 
@@ -204,10 +206,14 @@ def _history_option_fill(day: date, pnl: float, seq: int) -> Execution:
 
 
 def seed_demo(out: Path, day: date | None = None, history_days: int = 0) -> DailyReport:
-    """Write a published daily prefix plus prior weekdays so KPI pages have history."""
+    """Write a published daily prefix plus prior weekdays so KPI pages have history.
+
+    With no ``day``, seeds the staged week of 10 Aug 2026 (Mon–Fri) and 40 weekdays
+    of history ending that Friday. MANUAL KPI sources stay blank.
+    """
     from waystone3.ibkr.kpis import prior_weekdays
 
-    target = day or today_ny()
+    target = day or STAGED_WEEK_END
     store = LocalFsStore(out)
     cfg = IbkrSettings()
     pattern = [240.0, -80.0, 190.0, -45.0, 310.0, 95.0, -130.0, 275.0]
@@ -222,8 +228,16 @@ def seed_demo(out: Path, day: date | None = None, history_days: int = 0) -> Dail
             cfg,
             tws_connected=False,
             generated_at=datetime(hist.year, hist.month, hist.day, 18, 0, tzinfo=NY),
+            staged=False,
         )
         publish_report(store, report)
+    if is_staged_day(target):
+        for mid in STAGED_WEEK_DAYS:
+            if mid == target:
+                continue
+            mid_report = demo_report(mid, cfg)
+            publish_report(store, mid_report)
+            seed_compare_demo(store, mid, mid_report.executions)
     latest = demo_report(target, cfg)
     publish_report(store, latest)
     seed_compare_demo(store, target, latest.executions)

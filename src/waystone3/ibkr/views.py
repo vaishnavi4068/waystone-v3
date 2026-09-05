@@ -6,6 +6,7 @@ from typing import Any
 
 from waystone3.ibkr.models import AccountSnapshot, DailyReport, Execution, PositionSnapshot
 from waystone3.ibkr.reader import list_published_days, today_is_published
+from waystone3.ibkr.staged import is_staged_day, staged_meta
 from waystone3.ibkr.store import ReportStore
 from waystone3.ibkr.timeutil import today_ny
 
@@ -107,15 +108,18 @@ def report_dict(report: DailyReport, store: ReportStore) -> dict[str, Any]:
         "account": account_dict(report.account),
         "summary": report.summary.model_dump(mode="json"),
         "manifest": report.manifest.model_dump(mode="json"),
+        **staged_meta(report.date, any_staged=report.manifest.staged),
     }
 
 
 def days_dict(store: ReportStore) -> dict[str, Any]:
     days = [d.isoformat() for d in list_published_days(store)]
     today = today_ny().isoformat()
+    latest = days[-1] if days else None
     return {
         "days": days,
-        "latest": days[-1] if days else None,
+        "latest": latest,
         "today": today,
         "today_published": today in days,
+        **staged_meta(latest, any_staged=any(is_staged_day(d) for d in days)),
     }

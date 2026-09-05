@@ -5,6 +5,7 @@ import { CalendarDays } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import QueryGate from "@/components/query-gate";
+import StagedBanner from "@/components/staged-banner";
 import { getIbkrDays, getIbkrReport, isNotFound } from "@/lib/api";
 import { contractLabel, money, tone } from "@/lib/format";
 import type { IbkrExecution } from "@/lib/types";
@@ -135,6 +136,10 @@ export default function Page() {
           </select>
         </label>
       </div>
+
+      {(days.data.staged || report.data?.staged) && (
+        <StagedBanner week={report.data?.staged_week ?? days.data.staged_week} />
+      )}
 
       {unpublished && (
         <div className="mb-6 rounded-lg border border-amber-700/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">

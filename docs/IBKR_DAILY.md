@@ -26,6 +26,10 @@ npm install
 npm run dev                    # http://localhost:3001 — UI proxies /api to :9200
 ```
 
+`ibkr-seed-demo` writes **staged** sample data for **10–14 Aug 2026** (banner on Daily,
+Compare, Options KPIs, Futures KPIs). Source labels stay COMPUTED / DERIVED / MANUAL.
+Set `IBKR_STAGED=0` to turn the staged overlay off.
+
 Sign in with a team username and password. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
 and futures vs options cards. Open **Compare** (`/compare`) for per-algo live paper vs
 same-day replay. Open **Options KPIs** (`/options-kpis`) for the Strategy 5

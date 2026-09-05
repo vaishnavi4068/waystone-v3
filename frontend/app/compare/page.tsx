@@ -5,6 +5,7 @@ import { CalendarDays, GitCompare } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import QueryGate from "@/components/query-gate";
+import StagedBanner from "@/components/staged-banner";
 import {
   apiErrorMessage,
   createAlgo,
@@ -252,6 +253,10 @@ export default function Page() {
           </button>
         ))}
       </div>
+
+      {(days.data.staged || payload?.staged) && (
+        <StagedBanner week={payload?.staged_week ?? days.data.staged_week} />
+      )}
 
       {selected && (
         <p className="mb-4 text-xs text-slate-500">

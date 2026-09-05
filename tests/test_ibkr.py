@@ -256,6 +256,32 @@ def test_futures_kpis_history_computes_tiers(tmp_path: Path) -> None:
     assert {s.key for s in FUTURES_SPECS} >= {"sharpe", "max_dd", "cost_drag"}
 
 
+def test_staged_week_is_flagged(tmp_path: Path) -> None:
+    seed_demo(tmp_path, datetime(2026, 8, 14, tzinfo=NY).date())
+    store = LocalFsStore(tmp_path)
+    days = latest_published_day(store)
+    assert days == datetime(2026, 8, 14, tzinfo=NY).date()
+    loaded = load_report(store, datetime(2026, 8, 10, tzinfo=NY).date())
+    assert loaded is not None
+    assert loaded.manifest.staged is True
+    kpis = compute_options_kpis(store)
+    assert kpis["staged"] is True
+    assert kpis["staged_week"] == "week of 10 Aug 2026"
+    exec_stage = next(s for s in kpis["stages"] if s["id"] == "exec")
+    assert all(row["source"] == "MANUAL" and row["value"] is not None for row in exec_stage["kpis"])
+    fut = compute_futures_kpis(store)
+    assert fut["staged"] is True
+    ir = next(
+        row
+        for stage in fut["stages"]
+        if stage["id"] == "t1"
+        for row in stage["kpis"]
+        if row["key"] == "information_ratio"
+    )
+    assert ir["source"] == "MANUAL"
+    assert ir["value"] is not None
+
+
 def test_api_futures_kpis(tmp_path: Path) -> None:
     client, token, _ = _ibkr_client(tmp_path)
     data = client.get("/api/ibkr/futures-kpis", headers={"Authorization": f"Bearer {token}"}).json()

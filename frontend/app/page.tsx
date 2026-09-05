@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 
 import QueryGate from "@/components/query-gate";
+import StagedBanner from "@/components/staged-banner";
 import { getAccount } from "@/lib/api";
 import { money } from "@/lib/format";
 
@@ -51,6 +52,8 @@ export default function Page() {
           </span>
         </div>
       </div>
+
+      {data.staged ? <StagedBanner week={data.staged_week} /> : null}
 
       {ibkr && data.today_published === false && (
         <div className="mb-6 rounded-lg border border-amber-700/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">

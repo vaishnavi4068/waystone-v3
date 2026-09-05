@@ -41,6 +41,8 @@ export interface Account {
   as_of?: string | null;
   published?: boolean;
   today_published?: boolean;
+  staged?: boolean;
+  staged_week?: string | null;
 }
 
 export interface Order {
@@ -135,6 +137,9 @@ export interface IbkrDays {
   latest: string | null;
   today: string;
   today_published: boolean;
+  staged?: boolean;
+  staged_week?: string | null;
+  staged_days?: string[];
 }
 
 export interface IbkrReport {
@@ -162,6 +167,8 @@ export interface IbkrReport {
     other: BookStats;
     totals: BookStats;
   };
+  staged?: boolean;
+  staged_week?: string | null;
 }
 
 export interface OptionsKpiRow {
@@ -200,6 +207,9 @@ export interface IbkrOptionsKpis {
   weeks: { week: string; return_pct: number }[];
   trade_count: number;
   span_days: number;
+  staged?: boolean;
+  staged_week?: string | null;
+  staged_iso_week?: string | null;
 }
 
 export interface IbkrFuturesKpis {
@@ -216,6 +226,9 @@ export interface IbkrFuturesKpis {
   weeks: { week: string; return_pct: number }[];
   trade_count: number;
   span_days: number;
+  staged?: boolean;
+  staged_week?: string | null;
+  staged_iso_week?: string | null;
 }
 
 export interface AlgoConfig {
@@ -236,6 +249,8 @@ export interface AlgoList {
 export interface CompareDays {
   days: string[];
   latest: string | null;
+  staged?: boolean;
+  staged_week?: string | null;
 }
 
 export interface CompareRow {
@@ -271,6 +286,8 @@ export interface AlgoCompare {
   rows: CompareRow[];
   live_fills: IbkrExecution[];
   replay_fills: IbkrExecution[];
+  staged?: boolean;
+  staged_week?: string | null;
 }
 
 export interface AlgoOnboard {

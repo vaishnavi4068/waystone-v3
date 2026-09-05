@@ -38,6 +38,7 @@ def assemble_report(
     *,
     tws_connected: bool,
     generated_at: datetime | None = None,
+    staged: bool = False,
 ) -> DailyReport:
     stamp = generated_at or datetime.now(NY)
     iso = day.isoformat()
@@ -50,6 +51,7 @@ def assemble_report(
         ib_client_id=settings.ib_client_id,
         fill_count=len(executions),
         tws_connected=tws_connected,
+        staged=staged,
     )
     return DailyReport(
         date=iso,

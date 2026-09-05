@@ -85,9 +85,17 @@ class GcsStore:
 
 def build_report_store_from_env() -> ReportStore | None:
     local = os.getenv("IBKR_REPORTS_LOCAL_DIR", "").strip()
+    store: ReportStore | None
     if local:
-        return LocalFsStore(Path(local))
-    bucket = os.getenv("IBKR_REPORTS_BUCKET", "").strip()
-    if bucket:
-        return GcsStore(bucket)
-    return None
+        store = LocalFsStore(Path(local))
+    else:
+        bucket = os.getenv("IBKR_REPORTS_BUCKET", "").strip()
+        store = GcsStore(bucket) if bucket else None
+    if store is None:
+        return None
+    flag = os.getenv("IBKR_STAGED", "1").strip().lower()
+    if flag in {"0", "false", "no"}:
+        return store
+    from waystone3.ibkr.staged import OverlayStore, staged_fixture_store
+
+    return OverlayStore(store, staged_fixture_store())

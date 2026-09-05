@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import QueryGate from "@/components/query-gate";
+import StagedBanner from "@/components/staged-banner";
 import { getIbkrFuturesKpis, isNotFound } from "@/lib/api";
 import { money } from "@/lib/format";
 import type { OptionsKpiRow, OptionsKpiStage } from "@/lib/types";
@@ -150,6 +151,7 @@ export default function Page() {
           OVERALL {data.overall}
         </span>
       </div>
+      {data.staged ? <StagedBanner week={data.staged_week} /> : null}
       <p className="mb-6 text-xs text-slate-500">
         {data.instrument} · As of {data.as_of ?? "—"} · {data.days} published day(s) ·{" "}
         {data.trade_count} closed futures trades
@@ -191,8 +193,18 @@ export default function Page() {
           <div className="mb-3 font-medium">Weekly futures return</div>
           <div className="flex flex-wrap gap-3 text-sm">
             {data.weeks.map((w) => (
-              <div key={w.week} className="rounded bg-slate-800 px-3 py-2">
-                <div className="text-xs text-slate-500">{w.week}</div>
+              <div
+                key={w.week}
+                className={`rounded px-3 py-2 ${
+                  w.week === data.staged_iso_week
+                    ? "bg-violet-700/40 ring-1 ring-violet-400/50"
+                    : "bg-slate-800"
+                }`}
+              >
+                <div className="text-xs text-slate-500">
+                  {w.week}
+                  {w.week === data.staged_iso_week ? " · staged" : ""}
+                </div>
                 <div className={w.return_pct >= 0 ? "text-emerald-300" : "text-rose-300"}>
                   {w.return_pct >= 0 ? "+" : ""}
                   {w.return_pct.toFixed(2)}%

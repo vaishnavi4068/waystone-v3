@@ -14,6 +14,7 @@ from waystone3.ibkr.algo_paths import (
 from waystone3.ibkr.algo_registry import AlgoConfig, AlgoRegistry
 from waystone3.ibkr.models import Execution
 from waystone3.ibkr.reader import load_report
+from waystone3.ibkr.staged import staged_meta
 from waystone3.ibkr.store import ReportStore
 from waystone3.ibkr.summary import summarize
 from waystone3.ibkr.views import execution_dict
@@ -185,6 +186,7 @@ def compare_algo_day(store: ReportStore, algo: AlgoConfig, day: date) -> dict[st
         "rows": rows,
         "live_fills": [execution_dict(e) for e in live],
         "replay_fills": [execution_dict(e) for e in replay_fills],
+        **staged_meta(day),
     }
 
 
