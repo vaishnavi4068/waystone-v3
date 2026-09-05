@@ -17,7 +17,8 @@ merges — same deploy steps.
 |---|---|
 | `waystone3 arena-serve` / `/mcp` | MCP for Claude, not the dashboard |
 | `deploy/k8s/trader.yaml` | live cycle runner |
-| Alpaca / Polygon / Anthropic keys | dashboard reads **GCS IBKR dumps** + SQLite users |
+| Alpaca / Polygon / Anthropic keys | not needed for preview |
+| GCS bucket / Workload Identity | **skip for now** — `IBKR_STAGED=1` serves sample week data |
 | Frontend local port 3001 | the container listens on **3000** |
 
 ---
@@ -30,7 +31,6 @@ export REGION=us-central1
 export CLUSTER=waystone-cluster        # existing Autopilot cluster is fine
 export REPO=waystone
 export DOMAIN=dash.example.com         # hostname you control
-export BUCKET=waystone-data            # gs://waystone-data IBKR dumps
 export TAG=$(date +%Y%m%d-%H%M)
 export IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPO/waystone-arena:$TAG"
 export FRONTEND_IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPO/waystone-frontend:$TAG"
@@ -96,7 +96,7 @@ kubectl create namespace waystone-dash
 kubectl -n waystone-dash create secret generic waystone-dash-secrets \
   --from-literal=WAYSTONE_ADMIN_TOKEN="$(openssl rand -hex 24)"
 
-# Save the token; you need it to seed users (step 5).
+# Save the token; you need it to seed users (step 4).
 kubectl -n waystone-dash get secret waystone-dash-secrets \
   -o jsonpath='{.data.WAYSTONE_ADMIN_TOKEN}' | base64 -d; echo
 ```
@@ -107,7 +107,6 @@ Fill placeholders and apply [k8s/dashboard.yaml](k8s/dashboard.yaml):
 sed -e "s|__IMAGE__|$IMAGE|g" \
     -e "s|__FRONTEND_IMAGE__|$FRONTEND_IMAGE|g" \
     -e "s|__DASH_DOMAIN__|$DOMAIN|g" \
-    -e "s|__IBKR_BUCKET__|$BUCKET|g" \
     deploy/k8s/dashboard.yaml | kubectl apply -f -
 ```
 
@@ -115,37 +114,7 @@ Do **not** apply `arena.yaml` / `ingress.yaml` / `trader.yaml` for this stack.
 
 ---
 
-## 4. Let the API read GCS (`gs://waystone-data`)
-
-The dashboard never opens TWS. It only reads published prefixes after `_SUCCESS`.
-
-Bind the Kubernetes SA to a GCP SA that can **read** the bucket
-(Workload Identity; Autopilot has this on):
-
-```sh
-PROJECT_NUM=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
-gcloud iam service-accounts create waystone-dash --display-name="waystone dashboard" || true
-
-gcloud iam service-accounts add-iam-policy-binding \
-  "waystone-dash@$PROJECT.iam.gserviceaccount.com" \
-  --role=roles/iam.workloadIdentityUser \
-  --member="serviceAccount:$PROJECT.svc.id.goog[waystone-dash/waystone-dash]"
-
-kubectl -n waystone-dash annotate serviceaccount waystone-dash \
-  iam.gke.io/gcp-service-account="waystone-dash@$PROJECT.iam.gserviceaccount.com" \
-  --overwrite
-
-gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
-  --member="serviceAccount:waystone-dash@$PROJECT.iam.gserviceaccount.com" \
-  --role=roles/storage.objectViewer
-```
-
-Dump writes stay on the GCE VM (`waystone3 ibkr-export`). That VM SA needs
-`objectAdmin` (or similar) — the dashboard SA is **read-only**.
-
----
-
-## 5. Seed the five users (`main` prints passwords)
+## 4. Seed the five users (`main` prints passwords)
 
 On `main`, passwords are generated at seed time. Copy the table.
 
@@ -169,7 +138,7 @@ with the fixed default passwords on startup; seed is then optional.
 
 ---
 
-## 6. Check it
+## 5. Check it
 
 ```sh
 kubectl -n waystone-dash get pods,svc,ingress
@@ -181,6 +150,34 @@ Open `https://$DOMAIN/`. Sign in. Daily is `/ibkr`, Options KPIs is `/options-kp
 
 TLS via Managed Certificate takes 10–30 minutes after DNS is correct
 (`kubectl -n waystone-dash describe managedcertificate waystone-dash-cert`).
+
+---
+
+## 6. GCS later (optional — skip for preview)
+
+Leave `IBKR_REPORTS_BUCKET` empty and `IBKR_STAGED=1` until you have dumps. The API
+serves the built-in sample week (10–14 Aug 2026) with the STAGED DATA banner.
+
+When you are ready to point at `gs://waystone-data`:
+
+```sh
+export BUCKET=waystone-data
+kubectl -n waystone-dash set env deploy/waystone-dash-api \
+  IBKR_REPORTS_BUCKET="$BUCKET" IBKR_STAGED=0
+
+PROJECT_NUM=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
+gcloud iam service-accounts create waystone-dash --display-name="waystone dashboard" || true
+gcloud iam service-accounts add-iam-policy-binding \
+  "waystone-dash@$PROJECT.iam.gserviceaccount.com" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="serviceAccount:$PROJECT.svc.id.goog[waystone-dash/waystone-dash]"
+kubectl -n waystone-dash annotate serviceaccount waystone-dash \
+  iam.gke.io/gcp-service-account="waystone-dash@$PROJECT.iam.gserviceaccount.com" \
+  --overwrite
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+  --member="serviceAccount:waystone-dash@$PROJECT.iam.gserviceaccount.com" \
+  --role=roles/storage.objectViewer
+```
 
 ---
 
@@ -203,9 +200,9 @@ Rebuild the frontend whenever `$DOMAIN` changes (`NEXT_PUBLIC_API_BASE` is baked
 |---|---|
 | `WAYSTONE_DB` | `/data/arena.db` (PVC) |
 | `WAYSTONE_ADMIN_TOKEN` | from the Secret (seed only on `main`) |
-| `IBKR_REPORTS_BUCKET` | `waystone-data` |
+| `IBKR_REPORTS_BUCKET` | empty for preview; `waystone-data` later |
 | `IBKR_PAPER` | `true` |
 | `WAYSTONE_BROKER` | `paper` (no Alpaca) |
-| `IBKR_STAGED` | `0` in prod (omit / `1` only if you want the sample week overlay) |
+| `IBKR_STAGED` | `1` for preview sample data; `0` after you point GCS |
 
-`IBKR_REPORTS_LOCAL_DIR` must stay **unset** in the cluster so GCS is used.
+Leave `IBKR_REPORTS_LOCAL_DIR` unset in the cluster.

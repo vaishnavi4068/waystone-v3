@@ -178,6 +178,28 @@ def test_api_account_positions_orders_switch_to_ibkr(tmp_path: Path) -> None:
     assert all(o["status"] == "filled" for o in orders)
 
 
+def test_api_staged_without_bucket_serves_preview(monkeypatch) -> None:
+    monkeypatch.setenv("IBKR_STAGED", "1")
+    monkeypatch.delenv("IBKR_REPORTS_BUCKET", raising=False)
+    monkeypatch.delenv("IBKR_REPORTS_LOCAL_DIR", raising=False)
+    from waystone3.ibkr.store import build_report_store_from_env
+
+    store = build_report_store_from_env()
+    assert store is not None
+    ws = TradingWorkspace(StubDataSource(), PaperBroker())
+    member = ws.register_member("Manoj")
+    client = TestClient(
+        build_app(workspace_factory=lambda: ws, report_store=store, ibkr_paper=True)
+    )
+    days = client.get("/api/ibkr/days", headers={"Authorization": f"Bearer {member.token}"}).json()
+    assert "2026-08-14" in days["days"]
+    assert days.get("staged") is True
+    kpis = client.get(
+        "/api/ibkr/options-kpis", headers={"Authorization": f"Bearer {member.token}"}
+    ).json()
+    assert kpis["staged"] is True
+
+
 def test_api_without_store_stays_on_paper_broker() -> None:
     ws = TradingWorkspace(StubDataSource(), PaperBroker())
     member = ws.register_member("Manoj")
