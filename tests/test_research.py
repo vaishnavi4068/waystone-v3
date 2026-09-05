@@ -13,6 +13,13 @@ from waystone3.data.stub import StubDataSource
 from waystone3.ibkr.store import LocalFsStore
 from waystone3.research.catalog import list_strategies
 from waystone3.research.nsdq250 import ohlc_csv_to_wsbt, parse_daily_ohlc_key
+from waystone3.research.ops import (
+    ack_instruction,
+    add_instruction,
+    list_inbox,
+    post_status,
+    read_status,
+)
 from waystone3.research.paths import success_key
 from waystone3.research.publish import publish_results
 from waystone3.research.reader import list_days, load_run
@@ -74,6 +81,58 @@ def _client() -> tuple[TestClient, str]:
     return TestClient(app), member.token
 
 
+def test_ops_status_and_inbox(tmp_path: Path) -> None:
+    store = LocalFsStore(tmp_path)
+    post_status("run", "started", store=store)
+    latest = read_status(store)
+    assert latest is not None
+    assert latest["phase"] == "run"
+    row = add_instruction("publish now", action="approve-publish", store=store)
+    pending = list_inbox(store=store)
+    assert pending[0]["id"] == row["id"]
+    assert pending[0]["action"] == "approve-publish"
+    assert ack_instruction(row["id"], store=store) is True
+    assert list_inbox(store=store) == []
+
+
+def test_api_grok_inbox(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GROK_BOT_INBOX_TOKEN", "inbox-secret")
+    store = LocalFsStore(tmp_path)
+    ws = TradingWorkspace(StubDataSource(), PaperBroker())
+    member = ws.register_member("Manoj")
+    app = build_app(workspace_factory=lambda: ws, report_store=store)
+    client = TestClient(app)
+    denied = client.post(
+        "/api/research/ops/inbox",
+        json={"text": "go", "action": "approve-run"},
+    )
+    assert denied.status_code == 401
+    ok = client.post(
+        "/api/research/ops/inbox",
+        headers={"X-Grok-Bot-Key": "inbox-secret"},
+        json={"text": "go", "action": "approve-run"},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["action"] == "approve-run"
+    assert ok.json()["source"] == "grok_bot"
+    ops = client.get("/api/research/ops", headers={"Authorization": f"Bearer {member.token}"})
+    assert ops.status_code == 200
+    assert ops.json()["writable"] is True
+    assert ops.json()["inbox"][0]["action"] == "approve-run"
+    hq = client.post(
+        "/api/research/ops/inbox",
+        headers={"Authorization": f"Bearer {member.token}"},
+        json={"text": "publish now", "action": "approve-publish"},
+    )
+    assert hq.status_code == 200
+    assert hq.json()["source"] == "hq"
+    acked = client.post(
+        f"/api/research/ops/inbox/{ok.json()['id']}/ack",
+        headers={"Authorization": f"Bearer {member.token}"},
+    )
+    assert acked.status_code == 200
+
+
 def test_api_strategies_preview_without_bucket() -> None:
     client, token = _client()
     headers = {"Authorization": f"Bearer {token}"}
@@ -84,3 +143,6 @@ def test_api_strategies_preview_without_bucket() -> None:
     detail = client.get(f"/api/strategies/{first['id']}", headers=headers).json()
     assert detail["rule_sketch"]
     assert detail["latest"]["stats"]["sharpe"] is not None
+    ops = client.get("/api/research/ops", headers=headers).json()
+    assert ops["writable"] is False
+    assert ops["inbox"] == []

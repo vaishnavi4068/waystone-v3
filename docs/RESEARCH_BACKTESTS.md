@@ -50,3 +50,10 @@ gs://waystone-data/research/v1/<id>/dt=YYYY-MM-DD/<variant>/
 `dt=` is the last equity date (NY). HQ **Strategies** lists sleeves by book and shows Sharpe / CAGR / DD for that date.
 
 Preview without a published run: `IBKR_STAGED=1` serves a dated fixture (`2026-08-14`).
+
+## Mac worker + Grok Bot
+
+This Linux cloud VM cannot run the 5-year jobs. Start a worker on the Mac
+([docs/MAC_STUDIO_WORKER.md](MAC_STUDIO_WORKER.md)) and wire Grok Bot
+([docs/GROK_BOT.md](GROK_BOT.md)) so fetch/run/publish post status and can
+pick up `approve-*` instructions from the GCS inbox.

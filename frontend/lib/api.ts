@@ -17,6 +17,8 @@ import type {
   NewsItem,
   Order,
   Position,
+  ResearchOps,
+  ResearchOpsInboxItem,
   ResearchStrategy,
   Signal,
 } from "./types";
@@ -127,6 +129,11 @@ export const getIbkrOptionsKpis = () => get<IbkrOptionsKpis>("/api/ibkr/options-
 export const getIbkrFuturesKpis = () => get<IbkrFuturesKpis>("/api/ibkr/futures-kpis");
 export const getAlgos = () => get<AlgoList>("/api/algos");
 export const getStrategies = () => get<{ strategies: ResearchStrategy[] }>("/api/strategies");
+export const getResearchOps = () => get<ResearchOps>("/api/research/ops");
+export const postResearchInbox = (text: string, action: string) =>
+  post<ResearchOpsInboxItem>("/api/research/ops/inbox", { text, action });
+export const ackResearchInbox = (itemId: string) =>
+  post<{ ok: boolean }>(`/api/research/ops/inbox/${itemId}/ack`, {});
 export const getStrategy = (id: string, date?: string, variant?: string) => {
   const q = new URLSearchParams();
   if (date) q.set("date", date);

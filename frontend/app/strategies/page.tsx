@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 
 import QueryGate from "@/components/query-gate";
+import ResearchOpsPanel from "@/components/research-ops";
 import { getStrategies } from "@/lib/api";
 import type { ResearchStrategy } from "@/lib/types";
 
@@ -72,7 +73,9 @@ export default function Page() {
       <h1 className="mb-2 text-2xl font-semibold">Strategies</h1>
       <p className="mb-6 text-sm text-slate-400">
         Research sleeves. Mac Studio publishes dated runs to GCS; this page only reads them.
+        Approvals go to the GCS inbox that the Mac worker and Grok Bot share.
       </p>
+      <ResearchOpsPanel />
       <QueryGate query={q}>
         {BOOKS.map((book) => {
           const group = rows.filter((r) => r.book === book.id);

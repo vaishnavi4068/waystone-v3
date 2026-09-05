@@ -329,6 +329,31 @@ export interface ResearchStrategy {
   latest: ResearchRun | null;
 }
 
+export interface ResearchOpsStatus {
+  event?: string;
+  phase?: string;
+  title?: string;
+  body?: string;
+  approval?: string | null;
+  at?: string;
+  source?: string;
+}
+
+export interface ResearchOpsInboxItem {
+  id: string;
+  at: string;
+  text: string;
+  action: string;
+  acked: boolean;
+  source: string;
+}
+
+export interface ResearchOps {
+  status: ResearchOpsStatus | null;
+  inbox: ResearchOpsInboxItem[];
+  writable: boolean;
+}
+
 export interface AlgoOnboard {
   id: string;
   name: string;

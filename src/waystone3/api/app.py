@@ -28,6 +28,13 @@ from waystone3.ibkr.reader import load_latest, load_report
 from waystone3.ibkr.settings import IbkrSettings
 from waystone3.ibkr.store import ReportStore, build_report_store_from_env
 from waystone3.ibkr.views import account_dict, days_dict, order_dict, position_dict, report_dict
+from waystone3.research.ops import (
+    ack_instruction,
+    add_instruction,
+    inbox_token,
+    list_inbox,
+    read_status,
+)
 from waystone3.research.reader import get_strategy_payload, list_strategy_payloads
 from waystone3.research.staged import research_store
 from waystone3.runner.backtest import run_backtest
@@ -78,6 +85,11 @@ def _strategy_payload(ws: TradingWorkspace) -> dict[str, Any] | None:
 class LoginBody(BaseModel):
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
+
+
+class ResearchInboxBody(BaseModel):
+    text: str = Field(min_length=1)
+    action: str = ""
 
 
 class AlgoBody(BaseModel):
@@ -398,6 +410,49 @@ def build_app(
         if payload is None:
             raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
         return payload
+
+    @app.get("/api/research/ops")
+    async def research_ops(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        return {
+            "status": read_status(store),
+            "inbox": list_inbox(store=store),
+            "writable": store is not None,
+        }
+
+    @app.post("/api/research/ops/inbox")
+    async def research_ops_inbox(
+        body: ResearchInboxBody,
+        x_grok_bot_key: str = Header(default="", alias="X-Grok-Bot-Key"),
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        token = inbox_token()
+        bearer = authorization[7:] if authorization.startswith("Bearer ") else ""
+        authed = bool(token) and (x_grok_bot_key == token or bearer == token)
+        source = "grok_bot"
+        if not authed:
+            ws = factory()
+            name = ws.authenticate(bearer) if bearer else None
+            if name is None:
+                raise HTTPException(status_code=401, detail="missing grok bot or user token")
+            source = "hq"
+        try:
+            row = add_instruction(body.text, action=body.action, source=source, store=store)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return row
+
+    @app.post("/api/research/ops/inbox/{item_id}/ack")
+    async def research_ops_ack(
+        item_id: str,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, bool]:
+        del ctx
+        if not ack_instruction(item_id, store=store):
+            raise HTTPException(status_code=404, detail="inbox item not found")
+        return {"ok": True}
 
     @app.get("/api/activity")
     async def activity(

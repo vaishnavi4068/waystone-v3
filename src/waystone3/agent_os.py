@@ -23,6 +23,7 @@ from waystone3.agents.supervisor import RiskSupervisorAgent
 from waystone3.agents.tuner import TuningAgent
 from waystone3.alerts.audit import DispatchRecord
 from waystone3.alerts.channels import (
+    GrokBotChannel,
     LogChannel,
     TwilioSmsChannel,
     TwilioWhatsAppChannel,
@@ -75,6 +76,8 @@ def _seed_team_recipients(store: RecipientStore) -> None:
         store.create(
             "Team group (WhatsApp)", Role.TRADER, "whatsapp_group", min_severity=Severity.INFO
         )
+    if os.getenv("GROK_BOT_WEBHOOK_URL"):
+        store.create("Grok Bot", Role.OPS, "grok_bot", min_severity=Severity.INFO)
 
 
 def build_agent_os(
@@ -99,6 +102,7 @@ def build_agent_os(
             "whatsapp": TwilioWhatsAppChannel(),
             "whatsapp_group": WhatsAppGroupChannel(),
             "cliq": ZohoCliqChannel(),
+            "grok_bot": GrokBotChannel(),
         },
         store=store,
     )

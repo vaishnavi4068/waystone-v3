@@ -55,3 +55,8 @@ def success_key(strategy_id: str, day: date | str, variant: str = "default") -> 
 
 def latest_key(strategy_id: str) -> str:
     return f"{RESEARCH_PREFIX}/{strategy_id}/latest.json"
+
+
+OPS_STATUS_KEY = f"{RESEARCH_PREFIX}/ops/status.json"
+OPS_INBOX_KEY = f"{RESEARCH_PREFIX}/ops/inbox.jsonl"
+OPS_OUTBOX_KEY = f"{RESEARCH_PREFIX}/ops/outbox.jsonl"

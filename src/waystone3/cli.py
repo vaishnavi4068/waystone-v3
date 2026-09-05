@@ -432,7 +432,9 @@ def research_fetch(
     Mac Studio only. Do not put Massive or GCP keys on GKE.
     """
     from waystone3.research.fetch import fetch_market_data
+    from waystone3.research.ops import post_status
 
+    post_status("fetch", "Research fetch started", f"strategy={strategy or 'all'} years={years}")
     report = fetch_market_data(
         strategy_id=strategy, allow_api=not no_api, years=years, sync_flatfiles=flatfiles
     )
@@ -443,6 +445,11 @@ def research_fetch(
         console.print(f"Missing: {', '.join(report.missing)}")
     for note in report.notes:
         console.print(f"  {note}")
+    post_status(
+        "fetch_done",
+        "Research fetch finished",
+        f"nsdq={len(report.from_nsdq250)} api={len(report.from_api)} missing={len(report.missing)}",
+    )
 
 
 @app.command("research-run")
@@ -452,8 +459,10 @@ def research_run(
     synthetic: bool = typer.Option(False, "--synthetic", help="Mechanics-only generated data."),
 ) -> None:
     """Run research backtests on this machine (Mac Studio), default 5 years."""
+    from waystone3.research.ops import post_status
     from waystone3.research.run import run_strategies
 
+    post_status("run", "Research backtests started", f"strategy={strategy or 'all'} years={years}")
     report = run_strategies(strategy_id=strategy, synthetic=synthetic, years=years)
     failed = 0
     for row in report.results:
@@ -462,6 +471,12 @@ def research_run(
         if not row.ok:
             failed += 1
             console.print(row.output[-800:])
+    post_status(
+        "run_done" if not failed else "run_failed",
+        "Research backtests finished",
+        f"ok={len(report.results) - failed} fail={failed}",
+        approval="publish" if not failed else None,
+    )
     if failed:
         raise typer.Exit(code=1)
 
@@ -472,8 +487,10 @@ def research_publish(
     synthetic: bool = typer.Option(False, "--synthetic"),
 ) -> None:
     """Upload dated results to gs://$IBKR_REPORTS_BUCKET/research/v1/{id}/dt=YYYY-MM-DD/."""
+    from waystone3.research.ops import post_status
     from waystone3.research.publish import publish_results
 
+    post_status("publish", "Publishing dated results to GCS")
     try:
         published = publish_results(run_id=run_id, synthetic=synthetic)
     except ValueError as exc:
@@ -483,6 +500,69 @@ def research_publish(
         raise typer.Exit(code=1)
     for row in published:
         console.print(f"  {row['id']}  dt={row['date']}  {row['variant']}")
+    post_status("publish_done", "Published dated research results", f"{len(published)} run(s)")
+
+
+@app.command("research-status")
+def research_status(
+    title: str = typer.Option(..., "--title", help="Status title to post to Grok Bot + GCS."),
+    body: str = typer.Option("", "--body"),
+    phase: str = typer.Option("note", "--phase"),
+    approval: str | None = typer.Option(None, "--approval", help="Optional approval id requested."),
+) -> None:
+    """Post a status line to GCS ops and wake the Grok Bot webhook."""
+    from waystone3.research.ops import post_status, read_status
+
+    posted = post_status(phase, title, body, approval=approval)
+    console.print(posted)
+    latest = read_status()
+    if latest:
+        console.print(f"latest phase={latest.get('phase')} at={latest.get('at')}")
+
+
+@app.command("research-inbox")
+def research_inbox(
+    pending: bool = typer.Option(True, "--pending/--all"),
+) -> None:
+    """Show instructions Grok Bot (or ops) dropped into the GCS inbox."""
+    from waystone3.research.ops import list_inbox
+
+    rows = list_inbox(pending_only=pending)
+    if not rows:
+        console.print("inbox empty")
+        return
+    for row in rows:
+        console.print(f"{row.get('id')}  {row.get('action') or '-'}  {row.get('text')}")
+
+
+@app.command("research-inbox-add")
+def research_inbox_add(
+    text: str = typer.Argument(..., help="Instruction text from Grok Bot / ops."),
+    action: str = typer.Option(
+        "", "--action", help="approve-fetch, approve-run, or approve-publish"
+    ),
+    source: str = typer.Option("cli", "--source"),
+) -> None:
+    """Record an instruction so the Mac/cloud agent can pick it up."""
+    from waystone3.research.ops import add_instruction
+
+    try:
+        row = add_instruction(text, action=action, source=source)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"queued {row['id']}")
+
+
+@app.command("research-inbox-ack")
+def research_inbox_ack(
+    item_id: str = typer.Argument(..., help="Inbox id from research-inbox."),
+) -> None:
+    """Mark a Grok Bot / HQ instruction as handled."""
+    from waystone3.research.ops import ack_instruction
+
+    if not ack_instruction(item_id):
+        raise typer.BadParameter(f"inbox item {item_id} not found")
+    console.print(f"acked {item_id}")
 
 
 if __name__ == "__main__":
