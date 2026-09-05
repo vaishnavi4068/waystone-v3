@@ -105,6 +105,9 @@ spec:
           image: __FRONTEND_IMAGE__
           ports:
             - containerPort: 3000
+          env:
+            - name: HOSTNAME
+              value: "0.0.0.0"
           readinessProbe:
             httpGet: { path: /, port: 3000 }
             initialDelaySeconds: 10
