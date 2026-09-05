@@ -28,6 +28,15 @@ from waystone3.ibkr.reader import load_latest, load_report
 from waystone3.ibkr.settings import IbkrSettings
 from waystone3.ibkr.store import ReportStore, build_report_store_from_env
 from waystone3.ibkr.views import account_dict, days_dict, order_dict, position_dict, report_dict
+from waystone3.research.ops import (
+    ack_instruction,
+    add_instruction,
+    inbox_token,
+    list_inbox,
+    read_status,
+)
+from waystone3.research.reader import get_strategy_payload, list_runs, list_strategy_payloads
+from waystone3.research.staged import research_store
 from waystone3.runner.backtest import run_backtest
 from waystone3.runner.config import default_contributors, default_weights
 from waystone3.runner.cycle import score_all
@@ -78,6 +87,11 @@ class LoginBody(BaseModel):
     password: str = Field(min_length=1)
 
 
+class ResearchInboxBody(BaseModel):
+    text: str = Field(min_length=1)
+    action: str = ""
+
+
 class AlgoBody(BaseModel):
     id: str = Field(min_length=2, max_length=48)
     name: str = Field(min_length=1)
@@ -106,6 +120,7 @@ def build_app(
     else:
         factory = workspace_factory
     store = report_store if report_store is not None else build_report_store_from_env()
+    strategies = research_store(store)
     paper = IbkrSettings().ibkr_paper if ibkr_paper is None else ibkr_paper
 
     app = FastAPI(title="Waystone v3 — read-only dashboard API")
@@ -375,6 +390,80 @@ def build_app(
         else:
             raise HTTPException(status_code=404, detail="no compare days published")
         return compare_algo_day(reports, algo, day)
+
+    @app.get("/api/strategies")
+    async def strategy_list(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        return {"strategies": list_strategy_payloads(strategies)}
+
+    @app.get("/api/strategies/{strategy_id}")
+    async def strategy_detail(
+        strategy_id: str,
+        date: str | None = None,
+        variant: str | None = None,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        payload = get_strategy_payload(strategies, strategy_id, date, variant)
+        if payload is None:
+            raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
+        return payload
+
+    @app.get("/api/strategies/{strategy_id}/runs")
+    async def strategy_runs(
+        strategy_id: str,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        payload = get_strategy_payload(strategies, strategy_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
+        return {"strategy_id": strategy_id, "runs": list_runs(strategies, strategy_id)}
+
+    @app.get("/api/research/ops")
+    async def research_ops(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        return {
+            "status": read_status(store),
+            "inbox": list_inbox(store=store),
+            "writable": store is not None,
+        }
+
+    @app.post("/api/research/ops/inbox")
+    async def research_ops_inbox(
+        body: ResearchInboxBody,
+        x_grok_bot_key: str = Header(default="", alias="X-Grok-Bot-Key"),
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        token = inbox_token()
+        bearer = authorization[7:] if authorization.startswith("Bearer ") else ""
+        authed = bool(token) and (x_grok_bot_key == token or bearer == token)
+        source = "grok_bot"
+        if not authed:
+            ws = factory()
+            name = ws.authenticate(bearer) if bearer else None
+            if name is None:
+                raise HTTPException(status_code=401, detail="missing grok bot or user token")
+            source = "hq"
+        try:
+            row = add_instruction(body.text, action=body.action, source=source, store=store)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return row
+
+    @app.post("/api/research/ops/inbox/{item_id}/ack")
+    async def research_ops_ack(
+        item_id: str,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, bool]:
+        del ctx
+        if not ack_instruction(item_id, store=store):
+            raise HTTPException(status_code=404, detail="inbox item not found")
+        return {"ok": True}
 
     @app.get("/api/activity")
     async def activity(

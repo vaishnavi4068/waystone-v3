@@ -290,6 +290,70 @@ export interface AlgoCompare {
   staged_week?: string | null;
 }
 
+export interface ResearchStats {
+  days?: number;
+  years?: number;
+  total_return_pct?: number | null;
+  cagr_pct?: number | null;
+  ann_vol_pct?: number | null;
+  sharpe?: number | null;
+  sortino?: number | null;
+  max_drawdown_pct?: number | null;
+  calmar?: number | null;
+  trade_count?: number | null;
+  win_rate_pct?: number | null;
+}
+
+export interface ResearchRun {
+  date: string;
+  variant: string;
+  run_id?: string | null;
+  synthetic: boolean;
+  params: Record<string, unknown>;
+  stats: ResearchStats;
+  extra: Record<string, unknown>;
+  equity: number[];
+}
+
+export interface ResearchStrategy {
+  id: string;
+  name: string;
+  book: string;
+  instruments: string;
+  holding_period: string;
+  summary: string;
+  rule_sketch: string;
+  data_sources: string[];
+  modes: string[];
+  days: string[];
+  latest: ResearchRun | null;
+}
+
+export interface ResearchOpsStatus {
+  event?: string;
+  phase?: string;
+  title?: string;
+  body?: string;
+  approval?: string | null;
+  at?: string;
+  source?: string;
+}
+
+export interface ResearchOpsInboxItem {
+  id: string;
+  at: string;
+  text: string;
+  action: string;
+  acked: boolean;
+  source: string;
+}
+
+export interface ResearchOps {
+  status: ResearchOpsStatus | null;
+  inbox: ResearchOpsInboxItem[];
+  writable: boolean;
+}
+
 export interface AlgoOnboard {
   id: string;
   name: string;

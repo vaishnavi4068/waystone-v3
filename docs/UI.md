@@ -11,12 +11,13 @@ KPI / compare pages. Algo onboarding on **Compare** writes the registry on the r
 | Piece | What | Run |
 |---|---|---|
 | **API** (`src/waystone3/api/`) | FastAPI, read-only, per-user auth, reads the live competition DB | `uv run waystone3 api-serve` (port 9200) |
-| **Frontend** (`frontend/`) | Next.js 16 + React 19 + Tailwind + TanStack Query + Lightweight Charts | `npm run dev` (port **3001**) |
+| **Frontend** (`frontend/`) | Next.js 16 + React 19 + Tailwind + TanStack Query + Lightweight Charts | `npm run dev` (port **3001**, IPv4 + IPv6) |
 
 ## Screens (per user)
 
 | Screen | Shows |
 |---|---|
+| **Strategies** (`/strategies`) | Research sleeves by book + dated Mac Studio backtest results from GCS |
 | **Daily** (`/ibkr`) | IBKR blotter: NLV, day P&L, futures vs options, fills (GCS dump) |
 | **Compare** (`/compare`) | Per-algo live paper vs same-day replay; onboard more algos |
 | **Options KPIs** (`/options-kpis`) | Strategy 5 weekly paper scorecard (stages 1–5 + slippage) |
@@ -43,16 +44,22 @@ paper algos (live + replay folder prefixes).
 ## Run locally
 
 ```sh
+# One command (API :9200 + UI :3001, staged IBKR sample week)
+./scripts/run-dashboard-local.sh
+# Open http://127.0.0.1:3001
+
+# Or two terminals:
 # 1) Seed players + start the API against that DB (stub data if no POLYGON_API_KEY)
 export WAYSTONE_DB=./arena.db WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
-uv run waystone3 api-serve                                            # http://localhost:9200
+export IBKR_STAGED=1
+uv run waystone3 api-serve                                            # http://127.0.0.1:9200
 # The five users are created on first start with their default passwords.
 
 # 2) Frontend
 cd frontend
-cp .env.example .env.local        # NEXT_PUBLIC_API_BASE=http://localhost:9200
+cp .env.example .env.local        # NEXT_PUBLIC_API_BASE=http://127.0.0.1:9200
 npm install
-npm run dev                       # http://localhost:3001  (proxies /api to :9200)
+npm run dev                       # http://127.0.0.1:3001  (proxies /api to :9200)
 ```
 
 For live market data, set `POLYGON_API_KEY` before `api-serve` (the API uses the same

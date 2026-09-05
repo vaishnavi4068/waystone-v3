@@ -375,7 +375,7 @@ def algo_list() -> None:
 def algo_register(
     algo_id: str = typer.Option(..., "--id", help="Lowercase id, e.g. nq_futures."),
     name: str = typer.Option(..., help="Display name."),
-    book: str = typer.Option("futures", help="futures | options | other"),
+    book: str = typer.Option("futures", help="futures | options | equities | other"),
     live_prefix: str = typer.Option("", help="GCS/local prefix for IBKR daily logs."),
     replay_prefix: str = typer.Option("", help="GCS/local prefix for same-day replay."),
     client_id: int | None = typer.Option(None, help="Optional IBKR clientId filter."),
@@ -392,7 +392,7 @@ def algo_register(
     try:
         book_enum = Book(book)
     except ValueError as exc:
-        raise typer.BadParameter("book must be futures, options, or other") from exc
+        raise typer.BadParameter("book must be futures, options, equities, or other") from exc
     registry = ensure_registry(store)
     try:
         algo = registry.upsert(
@@ -414,6 +414,189 @@ def algo_register(
         f"Live {algo.resolved_live()}/dt=YYYY-MM-DD/  "
         f"Replay {algo.resolved_replay()}/dt=YYYY-MM-DD/"
     )
+
+
+@app.command("research-fetch")
+def research_fetch(
+    strategy: str | None = typer.Option(None, "--strategy", help="One catalog id, or all."),
+    years: float = typer.Option(
+        5, "--years", help="Maximum lookback (clamped to available GCS history, 2-5)."
+    ),
+    min_years: float = typer.Option(
+        2, "--min-years", help="Skip a sleeve if overlap is shorter than this."
+    ),
+    no_api: bool = typer.Option(
+        False, "--no-api", help="NSDQ250 only; do not call Massive S3, Massive API, or Yahoo."
+    ),
+    flatfiles: bool = typer.Option(
+        False, "--flatfiles", help="Also sync Massive S3 flatfiles (Mac Studio keys only)."
+    ),
+) -> None:
+    """Fill waystone_backtests/data from GCS NSDQ250, then Massive S3/API, then Yahoo.
+
+    Mac Studio only. Do not put Massive or GCP keys on GKE.
+    """
+    from waystone3.research.fetch import fetch_market_data
+    from waystone3.research.ops import post_status
+
+    post_status("fetch", "Research fetch started", f"strategy={strategy or 'all'} years<={years:g}")
+    report = fetch_market_data(
+        strategy_id=strategy,
+        allow_api=not no_api,
+        years=years,
+        min_years=min_years,
+        sync_flatfiles=flatfiles,
+    )
+    if report.window_start:
+        console.print(
+            f"Window: {report.window_start} → {report.window_end} ({report.window_years}y)"
+        )
+    console.print(f"NSDQ250: {', '.join(report.from_nsdq250) or '—'}")
+    console.print(f"Massive S3: {', '.join(report.from_s3) or '—'}")
+    console.print(f"API/Yahoo: {', '.join(report.from_api) or '—'}")
+    if report.missing:
+        console.print(f"Missing: {', '.join(report.missing)}")
+    for note in report.notes:
+        console.print(f"  {note}")
+    post_status(
+        "fetch_done",
+        "Research fetch finished",
+        f"nsdq={len(report.from_nsdq250)} api={len(report.from_api)} missing={len(report.missing)}",
+    )
+
+
+@app.command("research-run")
+def research_run(
+    strategy: str | None = typer.Option(None, "--strategy", help="One catalog id, or all."),
+    years: float = typer.Option(
+        5, "--years", help="Maximum window. Actual years follow GCS/local overlap (2-5)."
+    ),
+    min_years: float = typer.Option(
+        2, "--min-years", help="Skip a sleeve if overlap is shorter than this."
+    ),
+    synthetic: bool = typer.Option(False, "--synthetic", help="Mechanics-only generated data."),
+) -> None:
+    """Run research backtests on this machine (Mac Studio).
+
+    Uses 2-5 years depending on NSDQ250 / local CSV overlap. Four years on GCS
+    means a four-year run, not a forced five-year window.
+    """
+    from waystone3.research.ops import post_status
+    from waystone3.research.run import run_strategies
+
+    post_status(
+        "run",
+        "Research backtests started",
+        f"strategy={strategy or 'all'} years={min_years:g}-{years:g}",
+    )
+    report = run_strategies(
+        strategy_id=strategy, synthetic=synthetic, years=years, min_years=min_years
+    )
+    failed = 0
+    for row in report.results:
+        if row.skipped:
+            console.print(f"skip {row.strategy_id}: {row.output}")
+            continue
+        mark = "ok" if row.ok else "FAIL"
+        win = ""
+        if row.window is not None:
+            win = f"  {row.window.start}→{row.window.end} ({row.window.years:.1f}y)"
+        console.print(f"{mark} {row.strategy_id}:{win} {' '.join(row.command[-6:])}")
+        if not row.ok:
+            failed += 1
+            console.print(row.output[-800:])
+    post_status(
+        "run_done" if not failed else "run_failed",
+        "Research backtests finished",
+        f"ok={len(report.results) - failed} fail={failed}",
+        approval="publish" if not failed else None,
+    )
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command("research-publish")
+def research_publish(
+    run_id: str | None = typer.Option(None, "--run-id", help="Defaults to NY timestamp."),
+    synthetic: bool = typer.Option(False, "--synthetic"),
+) -> None:
+    """Upload dated results to gs://$IBKR_REPORTS_BUCKET/research/v1/{id}/dt=YYYY-MM-DD/."""
+    from waystone3.research.ops import post_status
+    from waystone3.research.publish import publish_results
+
+    post_status("publish", "Publishing dated results to GCS")
+    try:
+        published = publish_results(run_id=run_id, synthetic=synthetic)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if not published:
+        console.print("No results/<id>*/metrics.json to publish.")
+        raise typer.Exit(code=1)
+    for row in published:
+        console.print(f"  {row['id']}  dt={row['date']}  {row['variant']}")
+    post_status("publish_done", "Published dated research results", f"{len(published)} run(s)")
+
+
+@app.command("research-status")
+def research_status(
+    title: str = typer.Option(..., "--title", help="Status title to post to Grok Bot + GCS."),
+    body: str = typer.Option("", "--body"),
+    phase: str = typer.Option("note", "--phase"),
+    approval: str | None = typer.Option(None, "--approval", help="Optional approval id requested."),
+) -> None:
+    """Post a status line to GCS ops and wake the Grok Bot webhook."""
+    from waystone3.research.ops import post_status, read_status
+
+    posted = post_status(phase, title, body, approval=approval)
+    console.print(posted)
+    latest = read_status()
+    if latest:
+        console.print(f"latest phase={latest.get('phase')} at={latest.get('at')}")
+
+
+@app.command("research-inbox")
+def research_inbox(
+    pending: bool = typer.Option(True, "--pending/--all"),
+) -> None:
+    """Show instructions Grok Bot (or ops) dropped into the GCS inbox."""
+    from waystone3.research.ops import list_inbox
+
+    rows = list_inbox(pending_only=pending)
+    if not rows:
+        console.print("inbox empty")
+        return
+    for row in rows:
+        console.print(f"{row.get('id')}  {row.get('action') or '-'}  {row.get('text')}")
+
+
+@app.command("research-inbox-add")
+def research_inbox_add(
+    text: str = typer.Argument(..., help="Instruction text from Grok Bot / ops."),
+    action: str = typer.Option(
+        "", "--action", help="approve-fetch, approve-run, or approve-publish"
+    ),
+    source: str = typer.Option("cli", "--source"),
+) -> None:
+    """Record an instruction so the Mac/cloud agent can pick it up."""
+    from waystone3.research.ops import add_instruction
+
+    try:
+        row = add_instruction(text, action=action, source=source)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"queued {row['id']}")
+
+
+@app.command("research-inbox-ack")
+def research_inbox_ack(
+    item_id: str = typer.Argument(..., help="Inbox id from research-inbox."),
+) -> None:
+    """Mark a Grok Bot / HQ instruction as handled."""
+    from waystone3.research.ops import ack_instruction
+
+    if not ack_instruction(item_id):
+        raise typer.BadParameter(f"inbox item {item_id} not found")
+    console.print(f"acked {item_id}")
 
 
 if __name__ == "__main__":

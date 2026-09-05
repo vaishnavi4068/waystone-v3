@@ -1,0 +1,7 @@
+pandas>=2.2
+numpy>=1.26
+scipy>=1.11
+pytest>=7
+requests>=2.31       # tools/fetch_polygon.py
+yfinance>=0.2.40      # tools/fetch_yf.py only
+# ib_async            # tools/ib_*.py only — already in /root/Oxygen on the VM

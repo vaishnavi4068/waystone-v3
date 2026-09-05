@@ -13,6 +13,7 @@ SCHEMA_VERSION = 1
 class Book(StrEnum):
     FUTURES = "futures"
     OPTIONS = "options"
+    EQUITIES = "equities"
     OTHER = "other"
 
 

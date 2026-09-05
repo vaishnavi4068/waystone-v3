@@ -1,0 +1,11 @@
+# Generated market data and local runs — keep directory placeholders
+data/daily/*
+!data/daily/.keep
+data/intraday/*
+!data/intraday/.keep
+data/chains/*
+!data/chains/.keep
+data/earnings/*
+!data/earnings/.keep
+results/
+__pycache__/
