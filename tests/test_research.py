@@ -143,6 +143,9 @@ def test_api_strategies_preview_without_bucket() -> None:
     detail = client.get(f"/api/strategies/{first['id']}", headers=headers).json()
     assert detail["rule_sketch"]
     assert detail["latest"]["stats"]["sharpe"] is not None
+    runs = client.get(f"/api/strategies/{first['id']}/runs", headers=headers).json()
+    assert runs["strategy_id"] == first["id"]
+    assert runs["runs"][0]["date"] == "2026-08-14"
     ops = client.get("/api/research/ops", headers=headers).json()
     assert ops["writable"] is False
     assert ops["inbox"] == []

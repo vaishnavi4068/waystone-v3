@@ -11,13 +11,17 @@ dist/
 
 reports/
 
-# Secrets — Mac Studio only; never commit
+# Secrets — Mac Studio only; never commit the waystone-data SA JSON
 microdrive-dev-*.json
 **/*iam.gserviceaccount.com*.json
 **/*service-account*.json
 .env
 .env.local
 secrets/
+
+# Local workspace / generated
+arena.db
+waystone_backtests/results/
 
 
 # Node / Next (frontend has its own .gitignore too)

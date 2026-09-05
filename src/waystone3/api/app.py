@@ -35,7 +35,7 @@ from waystone3.research.ops import (
     list_inbox,
     read_status,
 )
-from waystone3.research.reader import get_strategy_payload, list_strategy_payloads
+from waystone3.research.reader import get_strategy_payload, list_runs, list_strategy_payloads
 from waystone3.research.staged import research_store
 from waystone3.runner.backtest import run_backtest
 from waystone3.runner.config import default_contributors, default_weights
@@ -410,6 +410,17 @@ def build_app(
         if payload is None:
             raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
         return payload
+
+    @app.get("/api/strategies/{strategy_id}/runs")
+    async def strategy_runs(
+        strategy_id: str,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        payload = get_strategy_payload(strategies, strategy_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
+        return {"strategy_id": strategy_id, "runs": list_runs(strategies, strategy_id)}
 
     @app.get("/api/research/ops")
     async def research_ops(

@@ -1,0 +1,21 @@
+name: test
+
+on:
+  push:
+    branches: [main, "cursor/**"]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install waystone3 + research extras
+        run: uv sync --group dev --extra research
+      - name: API and catalog tests
+        run: uv run pytest tests -q
+      - name: Toolkit look-ahead tests
+        run: uv run pytest waystone_backtests/tests -q

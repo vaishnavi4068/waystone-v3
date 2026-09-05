@@ -3,20 +3,38 @@
 Eight research sleeves live in `waystone_backtests/`. **Compute and keys stay on the Mac Studio.**
 HQCapital only reads dated objects from GCS.
 
+## GCP auth (Mac Studio only)
+
+Identity:
+
+- Project: `microdrive-dev`
+- Bucket: `gs://waystone-data`
+- Service account: `waystone-data@microdrive-dev.iam.gserviceaccount.com`
+
+Copy the SA JSON onto the Mac (not into git, not into `waystone_backtests/`, not into the GKE image):
+
+```sh
+mkdir -p "$HOME/.config/gcloud"
+# save the downloaded key as:
+#   $HOME/.config/gcloud/waystone-data.json
+export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/waystone-data.json"
+export GOOGLE_CLOUD_PROJECT=microdrive-dev
+export IBKR_REPORTS_BUCKET=waystone-data
+```
+
+`GcsStore` uses Application Default Credentials (`storage.Client()`). Fetch and publish pick up that env.
+
+**Never commit** `microdrive-dev-*.json`, `*iam.gserviceaccount.com*.json`, or any SA key. Root `.gitignore` already blocks those patterns. GKE dashboard reads stay Workload Identity / `objectViewer` later — not this JSON key. Local/GKE preview without ADC uses the staged fixture (`2026-08-14`).
+
 ## Data order (do not invert)
 
 1. `gs://waystone-data/NSDQ250` (Polygon dumps already on GCS: daily OHLC + MNQ/NQ 1-min)
 2. Massive flat-file S3 (`https://files.massive.com`, bucket `flatfiles`) — optional, `--flatfiles`
-3. Massive REST API, then Yahoo
-
-GCP and Massive credentials are **Mac Studio only**. Never bake them into GKE, the dashboard image, or git.
+3. Massive REST API (`MASSIVE_API_KEY` or `POLYGON_API_KEY`), then Yahoo
 
 ```sh
 # Mac Studio — local files, not committed
-export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/waystone-data.json"
-export GOOGLE_CLOUD_PROJECT=microdrive-dev
-export IBKR_REPORTS_BUCKET=waystone-data
-export MASSIVE_API_KEY=...                 # REST
+export MASSIVE_API_KEY=...                 # REST (also accepted as POLYGON_API_KEY)
 export MASSIVE_S3_ACCESS_KEY_ID=...        # S3
 export MASSIVE_S3_SECRET_ACCESS_KEY=...    # S3 (often the same as the REST key)
 export MASSIVE_S3_ENDPOINT=https://files.massive.com
@@ -28,11 +46,13 @@ export MASSIVE_S3_BUCKET=flatfiles
 Fetch and run default to **5 years** (or whatever NSDQ250 already holds — many names are ~2021–2026).
 
 ```sh
-uv sync
+uv sync --extra research
 uv run waystone3 research-fetch --years 5          # NSDQ250 first
 uv run waystone3 research-run --years 5            # local CPU
 uv run waystone3 research-publish                  # dated GCS objects
 ```
+
+`research-run` invokes each `strategies/*/backtest.py` from `catalog.json` (same jobs as `waystone_backtests/run_all.sh`).
 
 ## GCS layout (dashboard reads this)
 
@@ -47,9 +67,11 @@ gs://waystone-data/research/v1/<id>/dt=YYYY-MM-DD/<variant>/
   _SUCCESS
 ```
 
-`dt=` is the last equity date (NY). HQ **Strategies** lists sleeves by book and shows Sharpe / CAGR / DD for that date.
+`dt=` is the last equity date (NY). `run_id` is recorded in `_manifest.json`. HQ **Strategies** lists sleeves by book and shows Sharpe / CAGR / DD for that date.
 
-Preview without a published run: `IBKR_STAGED=1` serves a dated fixture (`2026-08-14`).
+Read APIs (bearer): `GET /api/strategies`, `GET /api/strategies/{id}`, `GET /api/strategies/{id}/runs`.
+
+Preview without a published run: staged fixture date `2026-08-14` (also used when `IBKR_STAGED=1` / no bucket).
 
 ## Mac worker + Grok Bot
 

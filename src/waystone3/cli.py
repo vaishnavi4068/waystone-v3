@@ -375,7 +375,7 @@ def algo_list() -> None:
 def algo_register(
     algo_id: str = typer.Option(..., "--id", help="Lowercase id, e.g. nq_futures."),
     name: str = typer.Option(..., help="Display name."),
-    book: str = typer.Option("futures", help="futures | options | other"),
+    book: str = typer.Option("futures", help="futures | options | equities | other"),
     live_prefix: str = typer.Option("", help="GCS/local prefix for IBKR daily logs."),
     replay_prefix: str = typer.Option("", help="GCS/local prefix for same-day replay."),
     client_id: int | None = typer.Option(None, help="Optional IBKR clientId filter."),
@@ -392,7 +392,7 @@ def algo_register(
     try:
         book_enum = Book(book)
     except ValueError as exc:
-        raise typer.BadParameter("book must be futures, options, or other") from exc
+        raise typer.BadParameter("book must be futures, options, equities, or other") from exc
     registry = ensure_registry(store)
     try:
         algo = registry.upsert(

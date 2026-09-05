@@ -141,6 +141,8 @@ export const getStrategy = (id: string, date?: string, variant?: string) => {
   const suffix = q.toString() ? `?${q}` : "";
   return get<ResearchStrategy>(`/api/strategies/${id}${suffix}`);
 };
+export const getStrategyRuns = (id: string) =>
+  get<{ strategy_id: string; runs: ResearchRun[] }>(`/api/strategies/${id}/runs`);
 export const getCompareDays = () => get<CompareDays>("/api/algos/compare-days");
 export const getAlgoCompare = (algoId: string, date?: string) =>
   get<AlgoCompare>(`/api/algos/${algoId}/compare${date ? `?date=${date}` : ""}`);

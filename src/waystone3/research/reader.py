@@ -134,6 +134,27 @@ def strategy_payload(store: ReportStore | None, row: dict[str, Any]) -> dict[str
     }
 
 
+def list_runs(store: ReportStore | None, strategy_id: str) -> list[dict[str, Any]]:
+    """Published dated runs for GET /api/strategies/{id}/runs."""
+    if store is None:
+        return []
+    rows: list[dict[str, Any]] = []
+    for day, variant in list_run_refs(store, strategy_id):
+        run = load_run(store, strategy_id, day, variant)
+        if run is None:
+            continue
+        rows.append(
+            {
+                "date": run["date"],
+                "variant": run["variant"],
+                "run_id": run.get("run_id"),
+                "synthetic": run["synthetic"],
+                "stats": run["stats"],
+            }
+        )
+    return rows
+
+
 def list_strategy_payloads(store: ReportStore | None) -> list[dict[str, Any]]:
     return [strategy_payload(store, row) for row in list_strategies()]
 

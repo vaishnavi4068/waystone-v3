@@ -17,7 +17,9 @@ cd /path/to/waystone-v3
 Leave that process running (or install it as a LaunchAgent). The worker should
 appear as **mac-studio** under Cursor → Cloud Agents → My Machines.
 
-Keep Massive / GCP keys only in the Mac environment (never GKE):
+Keep Massive / GCP keys only in the Mac environment (never GKE, never git).
+The SA JSON is `waystone-data@microdrive-dev.iam.gserviceaccount.com` —
+save it as `$HOME/.config/gcloud/waystone-data.json`, not in the repo.
 
 ```sh
 export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/waystone-data.json"
