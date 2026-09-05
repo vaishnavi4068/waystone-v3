@@ -1,5 +1,6 @@
-# Dashboard-only GKE stack: API (:9200) + Next.js UI. No MCP, no trader.
-# Replace __IMAGE__, __FRONTEND_IMAGE__, __DASH_DOMAIN__, __IBKR_BUCKET__.
+# Dashboard-only GKE stack: API (:9200) + Next.js UI. No MCP, no trader, no GCS required.
+# Preview uses built-in staged sample (IBKR_STAGED=1). Point a bucket later.
+# Replace __IMAGE__, __FRONTEND_IMAGE__, __DASH_DOMAIN__.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -52,9 +53,9 @@ spec:
             - name: IBKR_PAPER
               value: "true"
             - name: IBKR_REPORTS_BUCKET
-              value: __IBKR_BUCKET__
+              value: ""
             - name: IBKR_STAGED
-              value: "0"
+              value: "1"
           envFrom:
             - secretRef: { name: waystone-dash-secrets }
           volumeMounts:

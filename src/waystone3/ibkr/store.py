@@ -91,10 +91,17 @@ def build_report_store_from_env() -> ReportStore | None:
     else:
         bucket = os.getenv("IBKR_REPORTS_BUCKET", "").strip()
         store = GcsStore(bucket) if bucket else None
+    raw = os.getenv("IBKR_STAGED")
+    flag = (raw or "1").strip().lower()
+    staged_on = flag not in {"0", "false", "no"}
     if store is None:
-        return None
-    flag = os.getenv("IBKR_STAGED", "1").strip().lower()
-    if flag in {"0", "false", "no"}:
+        # Preview without GCS only when explicitly requested (IBKR_STAGED=1).
+        if raw is None or not staged_on:
+            return None
+        from waystone3.ibkr.staged import staged_fixture_store
+
+        return staged_fixture_store()
+    if not staged_on:
         return store
     from waystone3.ibkr.staged import OverlayStore, staged_fixture_store
 
