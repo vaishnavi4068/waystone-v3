@@ -7,27 +7,40 @@ exists.
 
 ## Local KPI UI (no TWS)
 
-From the repo root:
+From the repo root (this branch). Fastest path:
 
 ```sh
 uv sync
-uv run waystone3 ibkr-seed-demo --out ./reports/demo
+./scripts/run-dashboard-local.sh
+```
+
+Open **http://127.0.0.1:3001** (prefer IPv4). `localhost` also works now — the UI
+listens on IPv6 as well. The script starts FastAPI on `:9200` with `IBKR_STAGED=1`
+(built-in sample week; no GCS needed) and Next on `:3001`.
+
+Or two terminals:
+
+```sh
+uv sync
+uv run waystone3 ibkr-seed-demo --out ./reports/demo   # optional; overlay on top of staged
 
 export WAYSTONE_DB=./arena.db
 export WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
-export IBKR_REPORTS_LOCAL_DIR=$PWD/reports/demo
-uv run waystone3 arena-seed --players "Manoj"    # optional; API also creates the five users
-uv run waystone3 api-serve                       # http://localhost:9200
+export IBKR_STAGED=1
+export IBKR_REPORTS_LOCAL_DIR=$PWD/reports/demo        # optional
+uv run waystone3 arena-seed --players "Manoj"          # optional; API also creates the five users
+uv run waystone3 api-serve --host ::                   # http://127.0.0.1:9200
 
 # other terminal
 cd frontend
-cp .env.example .env.local     # NEXT_PUBLIC_API_BASE=http://localhost:9200
+cp .env.example .env.local     # NEXT_PUBLIC_API_BASE=http://127.0.0.1:9200
 npm install
-npm run dev                    # http://localhost:3001 — UI proxies /api to :9200
+npm run dev                    # http://127.0.0.1:3001 — UI proxies /api to :9200
 ```
 
 `ibkr-seed-demo` writes **staged** sample data for **10–14 Aug 2026** (banner on Daily,
 Compare, Options KPIs, Futures KPIs). Source labels stay COMPUTED / DERIVED / MANUAL.
+`IBKR_STAGED=1` with no local dir and no bucket still serves that sample week.
 Set `IBKR_STAGED=0` to turn the staged overlay off.
 
 Sign in with a team username and password. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
@@ -163,6 +176,7 @@ replay writer already use different folders.
 | `IBKR_LEDGER_DIR` | VM dump | local execId JSONL (TWS history is session-scoped) |
 | `IBKR_REPORTS_BUCKET` | VM write, laptop/GKE read | GCS bucket |
 | `IBKR_REPORTS_LOCAL_DIR` | laptop API | local tree with the same keys (demo / tests) |
+| `IBKR_STAGED` | laptop/GKE API | `1` (default when a store exists) overlays the 10–14 Aug 2026 sample week; with no store, set `1` to serve that week anyway |
 | `IBKR_PAPER` | API | `true` only if this IBKR account is paper |
 | `IBKR_KPI_NAV` | API | Assumed account size for the options scorecard (default 100000) |
 | `IBKR_KPI_MULTIPLIER` | API | Option $/pt/contract (default 100) |
