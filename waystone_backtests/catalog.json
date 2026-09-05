@@ -129,7 +129,9 @@
       "daily_symbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL"],
       "intraday_roots": [],
       "modes": ["default"],
-      "scripts": [{}]
+      "scripts": [
+        {"args": ["--symbols", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL"]}
+      ]
     }
   ]
 }
