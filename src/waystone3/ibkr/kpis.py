@@ -17,6 +17,12 @@ from typing import Any, Literal
 from waystone3.ibkr.models import Book, DailyReport, Execution
 from waystone3.ibkr.reader import list_published_days, load_report
 from waystone3.ibkr.settings import IbkrSettings
+from waystone3.ibkr.staged import (
+    STAGED_OPTIONS_MANUAL,
+    STAGED_WEEK_END,
+    apply_staged_manual,
+    staged_meta,
+)
 from waystone3.ibkr.store import ReportStore
 
 Direction = Literal["ge", "le"]
@@ -727,6 +733,9 @@ def compute_options_kpis(
         "avg_slippage_pct": None,
         "slippage_ratio": None,
     }
+    has_staged = any(report.manifest.staged for report in reports)
+    if has_staged:
+        values = apply_staged_manual(values, STAGED_OPTIONS_MANUAL)
 
     by_stage: dict[str, list[dict[str, Any]]] = defaultdict(list)
     names: dict[str, str] = {}
@@ -779,7 +788,7 @@ def compute_options_kpis(
         for (year, week) in sorted(weekly)
     ][-8:]
 
-    as_of = days[-1].isoformat() if days else None
+    as_of = STAGED_WEEK_END.isoformat() if has_staged else (days[-1].isoformat() if days else None)
     return {
         "as_of": as_of,
         "days": len(reports),
@@ -794,4 +803,5 @@ def compute_options_kpis(
         "weeks": week_series,
         "trade_count": len(trades),
         "span_days": span_days,
+        **staged_meta(as_of, any_staged=has_staged),
     }

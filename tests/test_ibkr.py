@@ -16,6 +16,7 @@ from waystone3.ibkr.classify import book_for, parse_client_books
 from waystone3.ibkr.convert import execution_from_fill
 from waystone3.ibkr.demo import demo_report, seed_demo
 from waystone3.ibkr.export import assemble_report, publish_report
+from waystone3.ibkr.futures_kpis import FUTURES_SPECS, compute_futures_kpis
 from waystone3.ibkr.kpis import SPECS, KpiStatus, compute_options_kpis, evaluate
 from waystone3.ibkr.ledger import ExecutionLedger
 from waystone3.ibkr.models import Book
@@ -229,3 +230,60 @@ def test_api_options_kpis(tmp_path: Path) -> None:
     data = client.get("/api/ibkr/options-kpis", headers={"Authorization": f"Bearer {token}"}).json()
     assert data["assumptions"]["option_multiplier"] == 100
     assert any(s["name"].startswith("Stage 1") for s in data["stages"])
+
+
+def test_futures_kpis_history_computes_tiers(tmp_path: Path) -> None:
+    seed_demo(tmp_path, datetime(2026, 9, 1, tzinfo=NY).date(), history_days=40)
+    payload = compute_futures_kpis(LocalFsStore(tmp_path))
+    assert payload["days"] == 41
+    assert payload["assumptions"]["point_value"] == 20
+    assert payload["trade_count"] >= 40
+    ids = {s["id"] for s in payload["stages"]}
+    assert ids == {"t0", "t1", "t2", "t3", "t4"}
+    t1 = next(s for s in payload["stages"] if s["id"] == "t1")
+    by_key = {row["key"]: row for row in t1["kpis"]}
+    assert by_key["sharpe"]["value"] is not None
+    ir = next(
+        row
+        for stage in payload["stages"]
+        if stage["id"] == "t1"
+        for row in stage["kpis"]
+        if row["key"] == "information_ratio"
+    )
+    assert ir["status"] == "—"
+    t0 = next(s for s in payload["stages"] if s["id"] == "t0")
+    assert any(row["key"] == "trade_count" and row["status"] != "—" for row in t0["kpis"])
+    assert {s.key for s in FUTURES_SPECS} >= {"sharpe", "max_dd", "cost_drag"}
+
+
+def test_staged_week_is_flagged(tmp_path: Path) -> None:
+    seed_demo(tmp_path, datetime(2026, 8, 14, tzinfo=NY).date())
+    store = LocalFsStore(tmp_path)
+    days = latest_published_day(store)
+    assert days == datetime(2026, 8, 14, tzinfo=NY).date()
+    loaded = load_report(store, datetime(2026, 8, 10, tzinfo=NY).date())
+    assert loaded is not None
+    assert loaded.manifest.staged is True
+    kpis = compute_options_kpis(store)
+    assert kpis["staged"] is True
+    assert kpis["staged_week"] == "week of 10 Aug 2026"
+    exec_stage = next(s for s in kpis["stages"] if s["id"] == "exec")
+    assert all(row["source"] == "MANUAL" and row["value"] is not None for row in exec_stage["kpis"])
+    fut = compute_futures_kpis(store)
+    assert fut["staged"] is True
+    ir = next(
+        row
+        for stage in fut["stages"]
+        if stage["id"] == "t1"
+        for row in stage["kpis"]
+        if row["key"] == "information_ratio"
+    )
+    assert ir["source"] == "MANUAL"
+    assert ir["value"] is not None
+
+
+def test_api_futures_kpis(tmp_path: Path) -> None:
+    client, token, _ = _ibkr_client(tmp_path)
+    data = client.get("/api/ibkr/futures-kpis", headers={"Authorization": f"Bearer {token}"}).json()
+    assert data["assumptions"]["point_value"] == 20
+    assert any(s["name"].startswith("Tier 0") for s in data["stages"])

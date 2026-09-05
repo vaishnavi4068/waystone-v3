@@ -6,7 +6,12 @@ import pytest
 
 from waystone3.brokers.paper import PaperBroker
 from waystone3.data.stub import StubDataSource
-from waystone3.workspace.runtime import DEFAULT_DASHBOARD_USERS, seed_members
+from waystone3.workspace.runtime import (
+    DEFAULT_DASHBOARD_PASSWORDS,
+    DEFAULT_DASHBOARD_USERS,
+    ensure_default_members,
+    seed_members,
+)
 from waystone3.workspace.service import AuthError, WorkspaceService
 from waystone3.workspace.workspace import TradingWorkspace
 
@@ -33,6 +38,23 @@ def test_add_member_requires_admin() -> None:
 
 def test_default_dashboard_usernames() -> None:
     assert DEFAULT_DASHBOARD_USERS == ("Mark", "Manoj", "Brent", "Akash", "Kole")
+    assert DEFAULT_DASHBOARD_PASSWORDS["Manoj"] == "manoj1234"
+
+
+def test_register_uses_default_password() -> None:
+    svc = _service()
+    out = svc.register("ADMIN", "Manoj")
+    assert out["password"] == "manoj1234"
+    assert svc.login("Manoj", "manoj1234")["token"] == out["token"]
+
+
+def test_ensure_default_members_creates_and_resets() -> None:
+    svc = _service()
+    svc.register("ADMIN", "Manoj", password="old-manoj-pass")
+    ensure_default_members(svc.ws)
+    assert set(svc.ws.members()) == set(DEFAULT_DASHBOARD_USERS)
+    assert svc.login("Manoj", "manoj1234")["name"] == "Manoj"
+    assert svc.login("Kole", "kole1234")["name"] == "Kole"
 
 
 def test_seed_five_unique_passwords() -> None:

@@ -24,6 +24,7 @@ from waystone3.signals.base import SignalContributor
 from waystone3.signals.registry import build_contributor
 from waystone3.workspace.passwords import (
     MIN_PASSWORD_LENGTH,
+    default_password_for,
     generate_password,
     hash_password,
     verify_password,
@@ -97,7 +98,7 @@ class TradingWorkspace:
         if len(self._members) >= self.max_members:
             raise WorkspaceError(f"team is full ({self.max_members} members)")
         if password is None:
-            password = generate_password()
+            password = default_password_for(cleaned) or generate_password()
         elif len(password) < MIN_PASSWORD_LENGTH:
             raise WorkspaceError(
                 f"password must be at least {MIN_PASSWORD_LENGTH} characters"
@@ -109,6 +110,22 @@ class TradingWorkspace:
         if self.store is not None:
             self.store.add_member(token, cleaned, next(self._ord), password_hash)
         return Member(name=cleaned, token=token, password=password)
+
+    def reset_password(self, name: str, password: str) -> None:
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise WorkspaceError(
+                f"password must be at least {MIN_PASSWORD_LENGTH} characters"
+            )
+        needle = name.strip().lower()
+        for token, member_name in self._members.items():
+            if member_name.lower() != needle:
+                continue
+            hashed = hash_password(password)
+            self._password_hashes[token] = hashed
+            if self.store is not None:
+                self.store.update_password_hash(token, hashed)
+            return
+        raise WorkspaceError(f"unknown member {name!r}")
 
     def authenticate(self, token: str) -> str | None:
         return self._members.get(token)

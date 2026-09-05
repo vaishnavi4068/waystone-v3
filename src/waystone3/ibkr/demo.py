@@ -8,6 +8,7 @@ from pathlib import Path
 from waystone3.ibkr.export import assemble_report, publish_report
 from waystone3.ibkr.models import AccountSnapshot, Book, DailyReport, Execution, PositionSnapshot
 from waystone3.ibkr.settings import IbkrSettings
+from waystone3.ibkr.staged import STAGED_WEEK_DAYS, STAGED_WEEK_END, is_staged_day
 from waystone3.ibkr.store import LocalFsStore
 from waystone3.ibkr.timeutil import NY, today_ny
 
@@ -154,6 +155,29 @@ def demo_report(day: date | None = None, settings: IbkrSettings | None = None) -
         cfg,
         tws_connected=False,
         generated_at=datetime(target.year, target.month, target.day, 18, 0, tzinfo=NY),
+        staged=is_staged_day(target),
+    )
+
+
+def _history_future_fill(day: date, pnl: float, seq: int) -> Execution:
+    noon = datetime(day.year, day.month, day.day, 12, 30, tzinfo=NY)
+    return Execution(
+        exec_id=f"hist-fut-{day.isoformat()}-{seq}",
+        time=noon,
+        account="U1234567",
+        sec_type="FUT",
+        symbol="NQ",
+        local_symbol="NQU6",
+        exchange="CME",
+        expiry="20260918",
+        multiplier="20",
+        side="SLD" if pnl >= 0 else "BOT",
+        qty=1,
+        price=18_200.0,
+        commission=2.25,
+        realized_pnl=pnl,
+        client_id=1,
+        book=Book.FUTURES,
     )
 
 
@@ -182,25 +206,79 @@ def _history_option_fill(day: date, pnl: float, seq: int) -> Execution:
 
 
 def seed_demo(out: Path, day: date | None = None, history_days: int = 0) -> DailyReport:
-    """Write a published daily prefix plus prior weekdays so options KPIs have history."""
+    """Write a published daily prefix plus prior weekdays so KPI pages have history.
+
+    With no ``day``, seeds the staged week of 10 Aug 2026 (Mon–Fri) and 40 weekdays
+    of history ending that Friday. MANUAL KPI sources stay blank.
+    """
     from waystone3.ibkr.kpis import prior_weekdays
 
-    target = day or today_ny()
+    target = day or STAGED_WEEK_END
     store = LocalFsStore(out)
     cfg = IbkrSettings()
     pattern = [240.0, -80.0, 190.0, -45.0, 310.0, 95.0, -130.0, 275.0]
     for i, hist in enumerate(prior_weekdays(target, history_days)):
         pnl = pattern[i % len(pattern)]
+        fut = pattern[(i + 3) % len(pattern)] * 1.15
         report = assemble_report(
             hist,
-            [_history_option_fill(hist, pnl, 1)],
+            [_history_option_fill(hist, pnl, 1), _history_future_fill(hist, fut, 1)],
             [],
             demo_account(),
             cfg,
             tws_connected=False,
             generated_at=datetime(hist.year, hist.month, hist.day, 18, 0, tzinfo=NY),
+            staged=False,
         )
         publish_report(store, report)
+    if is_staged_day(target):
+        for mid in STAGED_WEEK_DAYS:
+            if mid == target:
+                continue
+            mid_report = demo_report(mid, cfg)
+            publish_report(store, mid_report)
+            seed_compare_demo(store, mid, mid_report.executions)
     latest = demo_report(target, cfg)
     publish_report(store, latest)
+    seed_compare_demo(store, target, latest.executions)
     return latest
+
+
+def seed_compare_demo(store: LocalFsStore, day: date, fills: list[Execution]) -> None:
+    """Write live + replay blotters for the three default algos (replay slightly off)."""
+    from waystone3.ibkr.algo_registry import ensure_registry
+    from waystone3.ibkr.compare import publish_blotter
+
+    registry = ensure_registry(store)
+    by_book = {
+        "s5_options": [e for e in fills if e.book is Book.OPTIONS],
+        "es_futures": [e for e in fills if e.book is Book.FUTURES and e.symbol == "ES"],
+        "nq_futures": [e for e in fills if e.book is Book.FUTURES and e.symbol == "NQ"],
+    }
+    if not by_book["nq_futures"]:
+        by_book["nq_futures"] = [_history_future_fill(day, 210.0, 9)]
+    for algo in registry.algos:
+        live = list(by_book.get(algo.id, []))
+        replay = [
+            row.model_copy(
+                update={
+                    "exec_id": f"replay-{row.exec_id}",
+                    "price": round(row.price * (1.001 if i % 2 == 0 else 0.998), 4),
+                    "realized_pnl": (
+                        None if row.realized_pnl is None else round(row.realized_pnl * 0.92, 2)
+                    ),
+                }
+            )
+            for i, row in enumerate(live)
+        ]
+        if live and algo.id == "s5_options":
+            extra = live[0].model_copy(
+                update={
+                    "exec_id": f"replay-extra-{live[0].exec_id}",
+                    "price": live[0].price + 0.15,
+                    "realized_pnl": 12.0,
+                }
+            )
+            replay.append(extra)
+        publish_blotter(store, algo.resolved_live(), day, live)
+        publish_blotter(store, algo.resolved_replay(), day, replay)

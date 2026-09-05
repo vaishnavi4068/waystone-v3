@@ -3,9 +3,15 @@ import axios, { isAxiosError } from "axios";
 import type {
   Account,
   ActivityEntry,
+  AlgoCompare,
+  AlgoConfig,
+  AlgoList,
+  AlgoOnboard,
   BacktestResult,
   Bar,
+  CompareDays,
   IbkrDays,
+  IbkrFuturesKpis,
   IbkrOptionsKpis,
   IbkrReport,
   NewsItem,
@@ -82,6 +88,21 @@ async function get<T>(path: string): Promise<T> {
   return data;
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const { data } = await client.post<T>(path, body);
+  return data;
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const { data } = await client.put<T>(path, body);
+  return data;
+}
+
+async function del<T>(path: string): Promise<T> {
+  const { data } = await client.delete<T>(path);
+  return data;
+}
+
 export async function login(
   username: string,
   password: string,
@@ -102,6 +123,15 @@ export const getIbkrDays = () => get<IbkrDays>("/api/ibkr/days");
 export const getIbkrReport = (date?: string) =>
   get<IbkrReport>(`/api/ibkr/report${date ? `?date=${date}` : ""}`);
 export const getIbkrOptionsKpis = () => get<IbkrOptionsKpis>("/api/ibkr/options-kpis");
+export const getIbkrFuturesKpis = () => get<IbkrFuturesKpis>("/api/ibkr/futures-kpis");
+export const getAlgos = () => get<AlgoList>("/api/algos");
+export const getCompareDays = () => get<CompareDays>("/api/algos/compare-days");
+export const getAlgoCompare = (algoId: string, date?: string) =>
+  get<AlgoCompare>(`/api/algos/${algoId}/compare${date ? `?date=${date}` : ""}`);
+export const createAlgo = (body: AlgoOnboard) => post<AlgoConfig>("/api/algos", body);
+export const updateAlgo = (algoId: string, body: AlgoOnboard) =>
+  put<AlgoConfig>(`/api/algos/${algoId}`, body);
+export const deleteAlgo = (algoId: string) => del<{ ok: boolean }>(`/api/algos/${algoId}`);
 export const getSignals = (symbols = "") =>
   get<Signal[]>(`/api/signals${symbols ? `?symbols=${symbols}` : ""}`);
 export const getBars = (symbol: string, lookback = 200) =>

@@ -216,10 +216,10 @@ def arena_seed(
     ),
     passwords: str = typer.Option(
         "",
-        help="Optional comma-separated unique passwords, one per player. Generated if omitted.",
+        help="Optional comma-separated passwords. Omitting uses each user's default.",
     ),
 ) -> None:
-    """Add team members to the shared workspace (writes to WAYSTONE_DB) and print credentials."""
+    """Add team members (default password is lowercase name + 1234) and print credentials."""
     import os
 
     from waystone3.workspace.runtime import build_service_from_env, seed_members
@@ -320,10 +320,12 @@ def ibkr_seed_demo(
         help="Local directory mirroring GCS keys (set IBKR_REPORTS_LOCAL_DIR to this).",
     ),
     date: str | None = typer.Option(
-        None, "--date", help="America/New_York day YYYY-MM-DD (default: today)."
+        None,
+        "--date",
+        help="America/New_York day YYYY-MM-DD (default: staged week ending 2026-08-14).",
     ),
 ) -> None:
-    """Write a sample futures+options dump so the KPI dashboard works locally (no TWS)."""
+    """Write staged sample dumps (week of 10 Aug 2026) so dashboards render locally."""
     from datetime import date as date_cls
     from pathlib import Path
 
@@ -332,9 +334,85 @@ def ibkr_seed_demo(
     day = date_cls.fromisoformat(date) if date else None
     report = seed_demo(Path(out), day, history_days=40)
     console.print(
-        f"Wrote demo dump for {report.date} (+ 40 weekdays) under {out}.\n"
+        f"Wrote STAGED dump for {report.date} (+ 40 weekdays) under {out}.\n"
+        f"  Week of 10 Aug 2026 is marked staged on Daily, Compare, Options KPIs, Futures KPIs.\n"
+        f"  Also seeded 3 algos (s5_options, nq_futures, es_futures) live vs replay.\n"
         f"  export IBKR_REPORTS_LOCAL_DIR={out}\n"
         f"  uv run waystone3 api-serve"
+    )
+
+
+@app.command("algo-list")
+def algo_list() -> None:
+    """List onboarded paper algos from the report store (GCS or local)."""
+    from waystone3.ibkr.algo_registry import ensure_registry
+    from waystone3.ibkr.store import build_report_store_from_env
+
+    store = build_report_store_from_env()
+    if store is None:
+        raise typer.BadParameter("set IBKR_REPORTS_BUCKET or IBKR_REPORTS_LOCAL_DIR")
+    registry = ensure_registry(store)
+    table = Table(title="Paper algos")
+    table.add_column("Id")
+    table.add_column("Name")
+    table.add_column("Book")
+    table.add_column("Live prefix")
+    table.add_column("Replay prefix")
+    table.add_column("On")
+    for row in registry.algos:
+        table.add_row(
+            row.id,
+            row.name,
+            row.book.value,
+            row.resolved_live(),
+            row.resolved_replay(),
+            "yes" if row.enabled else "no",
+        )
+    console.print(table)
+
+
+@app.command("algo-register")
+def algo_register(
+    algo_id: str = typer.Option(..., "--id", help="Lowercase id, e.g. nq_futures."),
+    name: str = typer.Option(..., help="Display name."),
+    book: str = typer.Option("futures", help="futures | options | other"),
+    live_prefix: str = typer.Option("", help="GCS/local prefix for IBKR daily logs."),
+    replay_prefix: str = typer.Option("", help="GCS/local prefix for same-day replay."),
+    client_id: int | None = typer.Option(None, help="Optional IBKR clientId filter."),
+    notes: str = typer.Option("", help="Optional description."),
+) -> None:
+    """Onboard a new algo so Daily Compare can join its live log and replay."""
+    from waystone3.ibkr.algo_registry import AlgoConfig, ensure_registry, save_registry
+    from waystone3.ibkr.models import Book
+    from waystone3.ibkr.store import build_report_store_from_env
+
+    store = build_report_store_from_env()
+    if store is None:
+        raise typer.BadParameter("set IBKR_REPORTS_BUCKET or IBKR_REPORTS_LOCAL_DIR")
+    try:
+        book_enum = Book(book)
+    except ValueError as exc:
+        raise typer.BadParameter("book must be futures, options, or other") from exc
+    registry = ensure_registry(store)
+    try:
+        algo = registry.upsert(
+            AlgoConfig(
+                id=algo_id,
+                name=name,
+                book=book_enum,
+                live_prefix=live_prefix,
+                replay_prefix=replay_prefix,
+                client_id=client_id,
+                notes=notes,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    save_registry(store, registry)
+    console.print(
+        f"Onboarded {algo.id} ({algo.name}). "
+        f"Live {algo.resolved_live()}/dt=YYYY-MM-DD/  "
+        f"Replay {algo.resolved_replay()}/dt=YYYY-MM-DD/"
     )
 
 

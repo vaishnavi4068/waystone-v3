@@ -20,14 +20,28 @@ import structlog
 from waystone3.brokers.base import Broker
 from waystone3.data.base import MarketDataSource
 from waystone3.data.stub import StubDataSource
+from waystone3.workspace.passwords import (
+    DEFAULT_DASHBOARD_PASSWORDS,
+    DEFAULT_DASHBOARD_USERS,
+    default_password_for,
+)
 from waystone3.workspace.service import WorkspaceService
 from waystone3.workspace.store import WorkspaceStore
 from waystone3.workspace.workspace import TradingWorkspace
 
 log = structlog.get_logger()
 
-# Fixed dashboard roster — usernames for the 5 team members.
-DEFAULT_DASHBOARD_USERS = ("Mark", "Manoj", "Brent", "Akash", "Kole")
+__all__ = [
+    "DEFAULT_DASHBOARD_PASSWORDS",
+    "DEFAULT_DASHBOARD_USERS",
+    "build_broker_from_env",
+    "build_data_from_env",
+    "build_service_from_env",
+    "build_workspace_from_env",
+    "default_password_for",
+    "ensure_default_members",
+    "seed_members",
+]
 
 
 def build_data_from_env() -> MarketDataSource:
@@ -71,7 +85,21 @@ def build_broker_from_env() -> Broker:
 def build_workspace_from_env() -> TradingWorkspace:
     db = os.getenv("WAYSTONE_DB")
     store = WorkspaceStore(db) if db else None
-    return TradingWorkspace(build_data_from_env(), build_broker_from_env(), store=store)
+    ws = TradingWorkspace(build_data_from_env(), build_broker_from_env(), store=store)
+    ensure_default_members(ws)
+    return ws
+
+
+def ensure_default_members(ws: TradingWorkspace) -> None:
+    """Create the five users (or reset them) to the known default passwords."""
+    existing = {name.lower() for name in ws.members()}
+    for name, password in DEFAULT_DASHBOARD_PASSWORDS.items():
+        if name.lower() in existing:
+            ws.reset_password(name, password)
+            continue
+        if len(ws.members()) >= ws.max_members:
+            break
+        ws.register_member(name, password=password)
 
 
 def build_service_from_env() -> WorkspaceService:
@@ -85,7 +113,7 @@ def seed_members(
     names: list[str],
     passwords: list[str | None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Register up to ``max_members`` dashboard users with unique passwords."""
+    """Register up to ``max_members`` dashboard users (default passwords if omitted)."""
     if not names:
         raise ValueError("at least one player name is required")
     if len(names) > service.ws.max_members:
@@ -96,10 +124,11 @@ def seed_members(
     pws = list(passwords) if passwords is not None else [None] * len(names)
     if len(pws) != len(names):
         raise ValueError("passwords count must match players")
-    provided = [p for p in pws if p]
+    resolved = [pw or default_password_for(name) for name, pw in zip(names, pws, strict=True)]
+    provided = [p for p in resolved if p]
     if len(provided) != len(set(provided)):
         raise ValueError("passwords must be unique")
     return [
         service.register(service.admin_token, name, password=pw)
-        for name, pw in zip(names, pws, strict=True)
+        for name, pw in zip(names, resolved, strict=True)
     ]

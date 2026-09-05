@@ -28,7 +28,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
       <form onSubmit={submit} className="card w-full max-w-md p-8">
-        <h1 className="text-2xl font-semibold">Waystone</h1>
+        <h1 className="text-2xl font-semibold">HQCapital</h1>
         <p className="mt-1 text-sm text-slate-400">
           Sign in with your team username and password to view the IBKR daily dashboard.
         </p>
@@ -50,7 +50,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Your unique password"
+            placeholder="Your password"
             className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500"
           />
         </label>

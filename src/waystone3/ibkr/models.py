@@ -105,6 +105,7 @@ class Manifest(BaseModel):
     ib_client_id: int
     fill_count: int
     tws_connected: bool
+    staged: bool = False
 
 
 class DailyReport(BaseModel):

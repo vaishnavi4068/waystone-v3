@@ -1,10 +1,10 @@
 # Read-only dashboard UI
 
 A per-user, read-only web dashboard for the Arena. Each of the **5 team members** signs
-in with **their own username and unique password**. After login the browser stores the
+in with **their name and password**. After login the browser stores the
 same bearer token used for the MCP connector. Everyone sees the **shared** account,
-positions, and strategy — plus signals, charts, backtests, and news. Nothing here
-mutates state.
+positions, and strategy — plus signals, charts, backtests, news, and the IBKR daily /
+KPI / compare pages. Algo onboarding on **Compare** writes the registry on the report store.
 
 ## Two pieces
 
@@ -18,7 +18,9 @@ mutates state.
 | Screen | Shows |
 |---|---|
 | **Daily** (`/ibkr`) | IBKR blotter: NLV, day P&L, futures vs options, fills (GCS dump) |
+| **Compare** (`/compare`) | Per-algo live paper vs same-day replay; onboard more algos |
 | **Options KPIs** (`/options-kpis`) | Strategy 5 weekly paper scorecard (stages 1–5 + slippage) |
+| **Futures KPIs** (`/futures-kpis`) | NQ v5.1 scorecard (tiers 0–4, GREEN/AMBER/RED) |
 | **Leaderboard** (`/leaderboard`) | all players ranked by paper-account return |
 | **Signals** (`/signals`) | composite momentum score (−10…+10) + contributor breakdown per symbol |
 | **Charts** (`/charts`) | candlesticks for any symbol |
@@ -28,19 +30,23 @@ mutates state.
 ## API endpoints
 
 `/api/health` is open. `POST /api/login` accepts `{username, password}` and returns
-`{name, token}`. All other routes are GET and require `Authorization: Bearer <token>`:
+`{name, token}`. Other routes require `Authorization: Bearer <token>`:
 
 `/api/account` · `/api/positions` · `/api/orders` · `/api/activity` · `/api/ibkr/days` ·
-`/api/ibkr/report` · `/api/ibkr/options-kpis` · `/api/signals` · `/api/bars` ·
+`/api/ibkr/report` · `/api/ibkr/options-kpis` · `/api/ibkr/futures-kpis` · `/api/algos` ·
+`/api/algos/compare-days` · `/api/algos/{id}/compare` · `/api/signals` · `/api/bars` ·
 `/api/backtest` · `/api/news`
+
+`POST /api/algos`, `PUT /api/algos/{id}`, and `DELETE /api/algos/{id}` onboard or edit
+paper algos (live + replay folder prefixes).
 
 ## Run locally
 
 ```sh
 # 1) Seed players + start the API against that DB (stub data if no POLYGON_API_KEY)
 export WAYSTONE_DB=./arena.db WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
-uv run waystone3 arena-seed --players "Mark,Manoj,Brent,Akash,Kole"   # copy a password
 uv run waystone3 api-serve                                            # http://localhost:9200
+# The five users are created on first start with their default passwords.
 
 # 2) Frontend
 cd frontend
@@ -54,8 +60,8 @@ env-driven data source as the rest of the platform).
 
 ## Auth model
 
-The dashboard is limited to **5 members**. Each signs in with their **name + unique
-password** (`POST /api/login`). A successful login returns the member's bearer token,
+The dashboard is limited to **5 members**. Each signs in with their **name + password**
+(`POST /api/login`). A successful login returns the member's bearer token,
 which is stored only in the browser's `localStorage` and sent as
 `Authorization: Bearer <token>` on later API calls. Claude MCP still uses that same
 token directly. Always serve over HTTPS in production.

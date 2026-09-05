@@ -4,7 +4,7 @@ import "./globals.css";
 import Providers from "./providers";
 
 export const metadata: Metadata = {
-  title: "Waystone",
+  title: "HQCapital",
   description: "Read-only IBKR daily reporting dashboard",
 };
 

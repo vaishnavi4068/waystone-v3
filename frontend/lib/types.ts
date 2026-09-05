@@ -41,6 +41,8 @@ export interface Account {
   as_of?: string | null;
   published?: boolean;
   today_published?: boolean;
+  staged?: boolean;
+  staged_week?: string | null;
 }
 
 export interface Order {
@@ -135,6 +137,9 @@ export interface IbkrDays {
   latest: string | null;
   today: string;
   today_published: boolean;
+  staged?: boolean;
+  staged_week?: string | null;
+  staged_days?: string[];
 }
 
 export interface IbkrReport {
@@ -162,6 +167,8 @@ export interface IbkrReport {
     other: BookStats;
     totals: BookStats;
   };
+  staged?: boolean;
+  staged_week?: string | null;
 }
 
 export interface OptionsKpiRow {
@@ -200,4 +207,96 @@ export interface IbkrOptionsKpis {
   weeks: { week: string; return_pct: number }[];
   trade_count: number;
   span_days: number;
+  staged?: boolean;
+  staged_week?: string | null;
+  staged_iso_week?: string | null;
+}
+
+export interface IbkrFuturesKpis {
+  as_of: string | null;
+  days: number;
+  instrument: string;
+  assumptions: {
+    nav: number;
+    contracts_per_trade: number;
+    point_value: number;
+  };
+  overall: string;
+  stages: OptionsKpiStage[];
+  weeks: { week: string; return_pct: number }[];
+  trade_count: number;
+  span_days: number;
+  staged?: boolean;
+  staged_week?: string | null;
+  staged_iso_week?: string | null;
+}
+
+export interface AlgoConfig {
+  id: string;
+  name: string;
+  book: string;
+  live_prefix: string;
+  replay_prefix: string;
+  client_id: number | null;
+  enabled: boolean;
+  notes: string;
+}
+
+export interface AlgoList {
+  algos: AlgoConfig[];
+}
+
+export interface CompareDays {
+  days: string[];
+  latest: string | null;
+  staged?: boolean;
+  staged_week?: string | null;
+}
+
+export interface CompareRow {
+  status: "matched" | "live_only" | "replay_only" | string;
+  symbol: string;
+  local_symbol: string;
+  side: string;
+  qty: number;
+  book: string;
+  live_price: number | null;
+  replay_price: number | null;
+  price_delta: number | null;
+  live_pnl: number | null;
+  replay_pnl: number | null;
+  pnl_delta: number | null;
+  live_time: string | null;
+  replay_time: string | null;
+}
+
+export interface AlgoCompare {
+  algo: AlgoConfig;
+  date: string;
+  live_source: string;
+  replay_source: string;
+  live: BookStats;
+  replay: BookStats;
+  deltas: BookStats;
+  matched: number;
+  live_only: number;
+  replay_only: number;
+  avg_price_delta: number | null;
+  avg_pnl_delta: number | null;
+  rows: CompareRow[];
+  live_fills: IbkrExecution[];
+  replay_fills: IbkrExecution[];
+  staged?: boolean;
+  staged_week?: string | null;
+}
+
+export interface AlgoOnboard {
+  id: string;
+  name: string;
+  book: string;
+  live_prefix?: string;
+  replay_prefix?: string;
+  client_id?: number | null;
+  enabled?: boolean;
+  notes?: string;
 }

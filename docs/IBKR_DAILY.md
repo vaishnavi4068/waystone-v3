@@ -16,7 +16,7 @@ uv run waystone3 ibkr-seed-demo --out ./reports/demo
 export WAYSTONE_DB=./arena.db
 export WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
 export IBKR_REPORTS_LOCAL_DIR=$PWD/reports/demo
-uv run waystone3 arena-seed --players "Manoj"    # copy the printed password
+uv run waystone3 arena-seed --players "Manoj"    # optional; API also creates the five users
 uv run waystone3 api-serve                       # http://localhost:9200
 
 # other terminal
@@ -26,9 +26,15 @@ npm install
 npm run dev                    # http://localhost:3001 — UI proxies /api to :9200
 ```
 
-Sign in with the seeded username and password. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
-and futures vs options cards. Open **Options KPIs** (`/options-kpis`) for the Strategy 5
-weekly paper scorecard (Sharpe, Sortino, drawdown, profit factor, expectancy, etc.).
+`ibkr-seed-demo` writes **staged** sample data for **10–14 Aug 2026** (banner on Daily,
+Compare, Options KPIs, Futures KPIs). Source labels stay COMPUTED / DERIVED / MANUAL.
+Set `IBKR_STAGED=0` to turn the staged overlay off.
+
+Sign in with a team username and password. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
+and futures vs options cards. Open **Compare** (`/compare`) for per-algo live paper vs
+same-day replay. Open **Options KPIs** (`/options-kpis`) for the Strategy 5
+weekly paper scorecard. Open **Futures KPIs** (`/futures-kpis`) for the NQ v5.1 tiers
+(trade count, Sharpe, drawdown, cost drag, margin-to-equity).
 After the VM has written a real dump, point the API at GCS
 instead of the demo tree:
 
@@ -116,6 +122,38 @@ gs://$IBKR_REPORTS_BUCKET/ibkr/v1/dt=YYYY-MM-DD/
 
 Date is the America/New_York calendar day. The API lists a day only when `_SUCCESS` exists.
 
+## Live vs replay (per algo)
+
+Each paper algo has its own live IBKR transaction folder and a **different** replay-backtest
+folder. Defaults for the three built-in algos (`s5_options`, `nq_futures`, `es_futures`):
+
+```
+gs://$IBKR_REPORTS_BUCKET/algos/v1/registry.json
+gs://$IBKR_REPORTS_BUCKET/algos/v1/<algo_id>/live/dt=YYYY-MM-DD/
+  executions.jsonl
+  summary.json
+  _SUCCESS
+gs://$IBKR_REPORTS_BUCKET/algos/v1/<algo_id>/replay/dt=YYYY-MM-DD/
+  executions.jsonl
+  summary.json
+  _SUCCESS
+```
+
+If an algo has no live blotter yet, Compare falls back to the shared IBKR dump filtered by
+that algo's book and optional `clientId`. Replay never falls back — missing replay shows as
+empty / `replay_only` gaps.
+
+Onboard another algo from the Compare page, or:
+
+```sh
+export IBKR_REPORTS_BUCKET=waystone-data   # or IBKR_REPORTS_LOCAL_DIR=...
+uv run waystone3 algo-list
+uv run waystone3 algo-register --id cl_futures --name "CL futures" --book futures --client-id 7
+```
+
+Custom prefixes are allowed (`--live-prefix`, `--replay-prefix`) when the IBKR log and the
+replay writer already use different folders.
+
 ## Env reference
 
 | Variable | Where | Purpose |
@@ -130,4 +168,6 @@ Date is the America/New_York calendar day. The API lists a day only when `_SUCCE
 | `IBKR_KPI_MULTIPLIER` | API | Option $/pt/contract (default 100) |
 | `IBKR_KPI_SLIPPAGE` | API | Round-trip slippage as a fraction of premium (default 0.02) |
 | `IBKR_KPI_CONTRACTS` | API | Contracts per trade assumption (default 1) |
+| `IBKR_KPI_POINT_VALUE` | API | Futures $/point (default 20, NQ) |
+| `IBKR_KPI_TRIALS` | API | Optional trial count for the futures Tier 0 row |
 | `WAYSTONE_DB` / `WAYSTONE_ADMIN_TOKEN` | API | existing dashboard login tokens |
