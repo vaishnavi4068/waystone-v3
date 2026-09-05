@@ -76,7 +76,7 @@ export default function Page() {
         Approvals go to the GCS inbox that the Mac worker and Grok Bot share.
       </p>
       <ResearchOpsPanel />
-      <QueryGate query={q}>
+      <QueryGate isLoading={q.isLoading} isError={q.isError} error={q.error}>
         {BOOKS.map((book) => {
           const group = rows.filter((r) => r.book === book.id);
           if (!group.length) return null;

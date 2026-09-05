@@ -60,7 +60,7 @@ export default function Page() {
       <Link href="/strategies" className="mb-4 inline-block text-sm text-slate-400 hover:text-slate-200">
         ← Strategies
       </Link>
-      <QueryGate query={q}>
+      <QueryGate isLoading={q.isLoading} isError={q.isError} error={q.error}>
         {row && (
           <>
             <div className="mb-2 flex flex-wrap items-center gap-3">
