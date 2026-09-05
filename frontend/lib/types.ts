@@ -217,3 +217,69 @@ export interface IbkrFuturesKpis {
   trade_count: number;
   span_days: number;
 }
+
+export interface AlgoConfig {
+  id: string;
+  name: string;
+  book: string;
+  live_prefix: string;
+  replay_prefix: string;
+  client_id: number | null;
+  enabled: boolean;
+  notes: string;
+}
+
+export interface AlgoList {
+  algos: AlgoConfig[];
+}
+
+export interface CompareDays {
+  days: string[];
+  latest: string | null;
+}
+
+export interface CompareRow {
+  status: "matched" | "live_only" | "replay_only" | string;
+  symbol: string;
+  local_symbol: string;
+  side: string;
+  qty: number;
+  book: string;
+  live_price: number | null;
+  replay_price: number | null;
+  price_delta: number | null;
+  live_pnl: number | null;
+  replay_pnl: number | null;
+  pnl_delta: number | null;
+  live_time: string | null;
+  replay_time: string | null;
+}
+
+export interface AlgoCompare {
+  algo: AlgoConfig;
+  date: string;
+  live_source: string;
+  replay_source: string;
+  live: BookStats;
+  replay: BookStats;
+  deltas: BookStats;
+  matched: number;
+  live_only: number;
+  replay_only: number;
+  avg_price_delta: number | null;
+  avg_pnl_delta: number | null;
+  rows: CompareRow[];
+  live_fills: IbkrExecution[];
+  replay_fills: IbkrExecution[];
+}
+
+export interface AlgoOnboard {
+  id: string;
+  name: string;
+  book: string;
+  live_prefix?: string;
+  replay_prefix?: string;
+  client_id?: number | null;
+  enabled?: boolean;
+  notes?: string;
+}

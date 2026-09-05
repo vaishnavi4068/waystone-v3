@@ -27,7 +27,8 @@ npm run dev                    # http://localhost:3001 — UI proxies /api to :9
 ```
 
 Sign in with the seeded username and password. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
-and futures vs options cards. Open **Options KPIs** (`/options-kpis`) for the Strategy 5
+and futures vs options cards. Open **Compare** (`/compare`) for per-algo live paper vs
+same-day replay. Open **Options KPIs** (`/options-kpis`) for the Strategy 5
 weekly paper scorecard. Open **Futures KPIs** (`/futures-kpis`) for the NQ v5.1 tiers
 (trade count, Sharpe, drawdown, cost drag, margin-to-equity).
 After the VM has written a real dump, point the API at GCS
@@ -116,6 +117,38 @@ gs://$IBKR_REPORTS_BUCKET/ibkr/v1/dt=YYYY-MM-DD/
 ```
 
 Date is the America/New_York calendar day. The API lists a day only when `_SUCCESS` exists.
+
+## Live vs replay (per algo)
+
+Each paper algo has its own live IBKR transaction folder and a **different** replay-backtest
+folder. Defaults for the three built-in algos (`s5_options`, `nq_futures`, `es_futures`):
+
+```
+gs://$IBKR_REPORTS_BUCKET/algos/v1/registry.json
+gs://$IBKR_REPORTS_BUCKET/algos/v1/<algo_id>/live/dt=YYYY-MM-DD/
+  executions.jsonl
+  summary.json
+  _SUCCESS
+gs://$IBKR_REPORTS_BUCKET/algos/v1/<algo_id>/replay/dt=YYYY-MM-DD/
+  executions.jsonl
+  summary.json
+  _SUCCESS
+```
+
+If an algo has no live blotter yet, Compare falls back to the shared IBKR dump filtered by
+that algo's book and optional `clientId`. Replay never falls back — missing replay shows as
+empty / `replay_only` gaps.
+
+Onboard another algo from the Compare page, or:
+
+```sh
+export IBKR_REPORTS_BUCKET=waystone-data   # or IBKR_REPORTS_LOCAL_DIR=...
+uv run waystone3 algo-list
+uv run waystone3 algo-register --id cl_futures --name "CL futures" --book futures --client-id 7
+```
+
+Custom prefixes are allowed (`--live-prefix`, `--replay-prefix`) when the IBKR log and the
+replay writer already use different folders.
 
 ## Env reference
 

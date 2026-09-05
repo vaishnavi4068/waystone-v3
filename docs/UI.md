@@ -3,8 +3,8 @@
 A per-user, read-only web dashboard for the Arena. Each of the **5 team members** signs
 in with **their own username and unique password**. After login the browser stores the
 same bearer token used for the MCP connector. Everyone sees the **shared** account,
-positions, and strategy — plus signals, charts, backtests, and news. Nothing here
-mutates state.
+positions, and strategy — plus signals, charts, backtests, news, and the IBKR daily /
+KPI / compare pages. Algo onboarding on **Compare** writes the registry on the report store.
 
 ## Two pieces
 
@@ -18,6 +18,7 @@ mutates state.
 | Screen | Shows |
 |---|---|
 | **Daily** (`/ibkr`) | IBKR blotter: NLV, day P&L, futures vs options, fills (GCS dump) |
+| **Compare** (`/compare`) | Per-algo live paper vs same-day replay; onboard more algos |
 | **Options KPIs** (`/options-kpis`) | Strategy 5 weekly paper scorecard (stages 1–5 + slippage) |
 | **Futures KPIs** (`/futures-kpis`) | NQ v5.1 scorecard (tiers 0–4, GREEN/AMBER/RED) |
 | **Leaderboard** (`/leaderboard`) | all players ranked by paper-account return |
@@ -29,11 +30,15 @@ mutates state.
 ## API endpoints
 
 `/api/health` is open. `POST /api/login` accepts `{username, password}` and returns
-`{name, token}`. All other routes are GET and require `Authorization: Bearer <token>`:
+`{name, token}`. Other routes require `Authorization: Bearer <token>`:
 
 `/api/account` · `/api/positions` · `/api/orders` · `/api/activity` · `/api/ibkr/days` ·
-`/api/ibkr/report` · `/api/ibkr/options-kpis` · `/api/ibkr/futures-kpis` · `/api/signals` · `/api/bars` ·
+`/api/ibkr/report` · `/api/ibkr/options-kpis` · `/api/ibkr/futures-kpis` · `/api/algos` ·
+`/api/algos/compare-days` · `/api/algos/{id}/compare` · `/api/signals` · `/api/bars` ·
 `/api/backtest` · `/api/news`
+
+`POST /api/algos`, `PUT /api/algos/{id}`, and `DELETE /api/algos/{id}` onboard or edit
+paper algos (live + replay folder prefixes).
 
 ## Run locally
 

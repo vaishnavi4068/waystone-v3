@@ -226,4 +226,45 @@ def seed_demo(out: Path, day: date | None = None, history_days: int = 0) -> Dail
         publish_report(store, report)
     latest = demo_report(target, cfg)
     publish_report(store, latest)
+    seed_compare_demo(store, target, latest.executions)
     return latest
+
+
+def seed_compare_demo(store: LocalFsStore, day: date, fills: list[Execution]) -> None:
+    """Write live + replay blotters for the three default algos (replay slightly off)."""
+    from waystone3.ibkr.algo_registry import ensure_registry
+    from waystone3.ibkr.compare import publish_blotter
+
+    registry = ensure_registry(store)
+    by_book = {
+        "s5_options": [e for e in fills if e.book is Book.OPTIONS],
+        "es_futures": [e for e in fills if e.book is Book.FUTURES and e.symbol == "ES"],
+        "nq_futures": [e for e in fills if e.book is Book.FUTURES and e.symbol == "NQ"],
+    }
+    if not by_book["nq_futures"]:
+        by_book["nq_futures"] = [_history_future_fill(day, 210.0, 9)]
+    for algo in registry.algos:
+        live = list(by_book.get(algo.id, []))
+        replay = [
+            row.model_copy(
+                update={
+                    "exec_id": f"replay-{row.exec_id}",
+                    "price": round(row.price * (1.001 if i % 2 == 0 else 0.998), 4),
+                    "realized_pnl": (
+                        None if row.realized_pnl is None else round(row.realized_pnl * 0.92, 2)
+                    ),
+                }
+            )
+            for i, row in enumerate(live)
+        ]
+        if live and algo.id == "s5_options":
+            extra = live[0].model_copy(
+                update={
+                    "exec_id": f"replay-extra-{live[0].exec_id}",
+                    "price": live[0].price + 0.15,
+                    "realized_pnl": 12.0,
+                }
+            )
+            replay.append(extra)
+        publish_blotter(store, algo.resolved_live(), day, live)
+        publish_blotter(store, algo.resolved_replay(), day, replay)

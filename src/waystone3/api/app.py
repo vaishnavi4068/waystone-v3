@@ -4,7 +4,7 @@ Every team member signs in with their unique password (`POST /api/login`) and th
 authenticates with the issued bearer token. When ``IBKR_REPORTS_BUCKET`` (or
 ``IBKR_REPORTS_LOCAL_DIR``) is set, account / positions / orders and the IBKR daily
 report are served from published dumps. Otherwise the broker (Alpaca in prod,
-PaperBroker in tests) is read live. GET-only after login.
+PaperBroker in tests) is read live. Algo onboarding is POST/PUT/DELETE on ``/api/algos``.
 """
 
 from __future__ import annotations
@@ -19,9 +19,11 @@ from pydantic import BaseModel, Field
 
 from waystone3.core.types import Timeframe
 from waystone3.fusion.fuse import fuse
+from waystone3.ibkr.algo_registry import AlgoConfig, ensure_registry, save_registry
+from waystone3.ibkr.compare import compare_algo_day, list_compare_days
 from waystone3.ibkr.futures_kpis import compute_futures_kpis
 from waystone3.ibkr.kpis import compute_options_kpis
-from waystone3.ibkr.models import AccountSnapshot
+from waystone3.ibkr.models import AccountSnapshot, Book
 from waystone3.ibkr.reader import load_latest, load_report
 from waystone3.ibkr.settings import IbkrSettings
 from waystone3.ibkr.store import ReportStore, build_report_store_from_env
@@ -76,6 +78,17 @@ class LoginBody(BaseModel):
     password: str = Field(min_length=1)
 
 
+class AlgoBody(BaseModel):
+    id: str = Field(min_length=2, max_length=48)
+    name: str = Field(min_length=1)
+    book: Book = Book.OTHER
+    live_prefix: str = ""
+    replay_prefix: str = ""
+    client_id: int | None = None
+    enabled: bool = True
+    notes: str = ""
+
+
 def build_app(
     workspace_factory: Callable[[], TradingWorkspace] | None = None,
     report_store: ReportStore | None = None,
@@ -99,7 +112,7 @@ def build_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
 
@@ -260,6 +273,99 @@ def build_app(
         if store is None:
             raise HTTPException(status_code=404, detail="IBKR reports not configured")
         return compute_futures_kpis(store)
+
+    def _reports() -> ReportStore:
+        if store is None:
+            raise HTTPException(status_code=404, detail="IBKR reports not configured")
+        return store
+
+    @app.get("/api/algos")
+    async def algo_list(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        registry = ensure_registry(_reports())
+        return {"algos": [row.model_dump(mode="json") for row in registry.algos]}
+
+    @app.post("/api/algos")
+    async def algo_create(
+        body: AlgoBody, ctx: tuple[TradingWorkspace, str] = Depends(_session)
+    ) -> dict[str, Any]:
+        del ctx
+        reports = _reports()
+        registry = ensure_registry(reports)
+        if registry.get(body.id) is not None:
+            raise HTTPException(status_code=409, detail=f"algo {body.id} already exists")
+        try:
+            algo = registry.upsert(AlgoConfig.model_validate(body.model_dump()))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        save_registry(reports, registry)
+        return algo.model_dump(mode="json")
+
+    @app.put("/api/algos/{algo_id}")
+    async def algo_update(
+        algo_id: str,
+        body: AlgoBody,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        if body.id != algo_id:
+            raise HTTPException(status_code=400, detail="id in body must match path")
+        reports = _reports()
+        registry = ensure_registry(reports)
+        try:
+            algo = registry.upsert(AlgoConfig.model_validate(body.model_dump()))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        save_registry(reports, registry)
+        return algo.model_dump(mode="json")
+
+    @app.delete("/api/algos/{algo_id}")
+    async def algo_delete(
+        algo_id: str, ctx: tuple[TradingWorkspace, str] = Depends(_session)
+    ) -> dict[str, bool]:
+        del ctx
+        reports = _reports()
+        registry = ensure_registry(reports)
+        if not registry.remove(algo_id):
+            raise HTTPException(status_code=404, detail=f"unknown algo {algo_id}")
+        save_registry(reports, registry)
+        return {"ok": True}
+
+    @app.get("/api/algos/compare-days")
+    async def algo_compare_days(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        reports = _reports()
+        registry = ensure_registry(reports)
+        days = list_compare_days(reports, registry)
+        return {"days": days, "latest": days[-1] if days else None}
+
+    @app.get("/api/algos/{algo_id}/compare")
+    async def algo_compare(
+        algo_id: str,
+        date: str | None = None,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        reports = _reports()
+        registry = ensure_registry(reports)
+        algo = registry.get(algo_id)
+        if algo is None:
+            raise HTTPException(status_code=404, detail=f"unknown algo {algo_id}")
+        days = list_compare_days(reports, registry)
+        if date:
+            try:
+                day = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD") from exc
+        elif days:
+            day = datetime.strptime(days[-1], "%Y-%m-%d").date()
+        else:
+            raise HTTPException(status_code=404, detail="no compare days published")
+        return compare_algo_day(reports, algo, day)
 
     @app.get("/api/activity")
     async def activity(

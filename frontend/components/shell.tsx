@@ -7,6 +7,7 @@ import {
   CalendarDays,
   CandlestickChart,
   Gauge,
+  GitCompare,
   LineChart,
   ListOrdered,
   LogOut,
@@ -20,6 +21,7 @@ import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
 
 const NAV = [
   { href: "/ibkr", label: "Daily", icon: CalendarDays },
+  { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/options-kpis", label: "Options KPIs", icon: Gauge },
   { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
   { href: "/", label: "Account", icon: Wallet },
