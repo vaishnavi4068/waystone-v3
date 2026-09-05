@@ -416,5 +416,74 @@ def algo_register(
     )
 
 
+@app.command("research-fetch")
+def research_fetch(
+    strategy: str | None = typer.Option(None, "--strategy", help="One catalog id, or all."),
+    years: int = typer.Option(5, "--years", help="Lookback when falling back to Massive/Yahoo."),
+    no_api: bool = typer.Option(
+        False, "--no-api", help="NSDQ250 only; do not call Massive S3, Massive API, or Yahoo."
+    ),
+    flatfiles: bool = typer.Option(
+        False, "--flatfiles", help="Also sync Massive S3 flatfiles (Mac Studio keys only)."
+    ),
+) -> None:
+    """Fill waystone_backtests/data from GCS NSDQ250, then Massive S3/API, then Yahoo.
+
+    Mac Studio only. Do not put Massive or GCP keys on GKE.
+    """
+    from waystone3.research.fetch import fetch_market_data
+
+    report = fetch_market_data(
+        strategy_id=strategy, allow_api=not no_api, years=years, sync_flatfiles=flatfiles
+    )
+    console.print(f"NSDQ250: {', '.join(report.from_nsdq250) or '—'}")
+    console.print(f"Massive S3: {', '.join(report.from_s3) or '—'}")
+    console.print(f"API/Yahoo: {', '.join(report.from_api) or '—'}")
+    if report.missing:
+        console.print(f"Missing: {', '.join(report.missing)}")
+    for note in report.notes:
+        console.print(f"  {note}")
+
+
+@app.command("research-run")
+def research_run(
+    strategy: str | None = typer.Option(None, "--strategy", help="One catalog id, or all."),
+    years: int = typer.Option(5, "--years", help="Window when the script accepts --start."),
+    synthetic: bool = typer.Option(False, "--synthetic", help="Mechanics-only generated data."),
+) -> None:
+    """Run research backtests on this machine (Mac Studio), default 5 years."""
+    from waystone3.research.run import run_strategies
+
+    report = run_strategies(strategy_id=strategy, synthetic=synthetic, years=years)
+    failed = 0
+    for row in report.results:
+        mark = "ok" if row.ok else "FAIL"
+        console.print(f"{mark} {row.strategy_id}: {' '.join(row.command[-6:])}")
+        if not row.ok:
+            failed += 1
+            console.print(row.output[-800:])
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command("research-publish")
+def research_publish(
+    run_id: str | None = typer.Option(None, "--run-id", help="Defaults to NY timestamp."),
+    synthetic: bool = typer.Option(False, "--synthetic"),
+) -> None:
+    """Upload dated results to gs://$IBKR_REPORTS_BUCKET/research/v1/{id}/dt=YYYY-MM-DD/."""
+    from waystone3.research.publish import publish_results
+
+    try:
+        published = publish_results(run_id=run_id, synthetic=synthetic)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if not published:
+        console.print("No results/<id>*/metrics.json to publish.")
+        raise typer.Exit(code=1)
+    for row in published:
+        console.print(f"  {row['id']}  dt={row['date']}  {row['variant']}")
+
+
 if __name__ == "__main__":
     app()

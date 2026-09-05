@@ -28,6 +28,8 @@ from waystone3.ibkr.reader import load_latest, load_report
 from waystone3.ibkr.settings import IbkrSettings
 from waystone3.ibkr.store import ReportStore, build_report_store_from_env
 from waystone3.ibkr.views import account_dict, days_dict, order_dict, position_dict, report_dict
+from waystone3.research.reader import get_strategy_payload, list_strategy_payloads
+from waystone3.research.staged import research_store
 from waystone3.runner.backtest import run_backtest
 from waystone3.runner.config import default_contributors, default_weights
 from waystone3.runner.cycle import score_all
@@ -106,6 +108,7 @@ def build_app(
     else:
         factory = workspace_factory
     store = report_store if report_store is not None else build_report_store_from_env()
+    strategies = research_store(store)
     paper = IbkrSettings().ibkr_paper if ibkr_paper is None else ibkr_paper
 
     app = FastAPI(title="Waystone v3 — read-only dashboard API")
@@ -375,6 +378,26 @@ def build_app(
         else:
             raise HTTPException(status_code=404, detail="no compare days published")
         return compare_algo_day(reports, algo, day)
+
+    @app.get("/api/strategies")
+    async def strategy_list(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        return {"strategies": list_strategy_payloads(strategies)}
+
+    @app.get("/api/strategies/{strategy_id}")
+    async def strategy_detail(
+        strategy_id: str,
+        date: str | None = None,
+        variant: str | None = None,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        payload = get_strategy_payload(strategies, strategy_id, date, variant)
+        if payload is None:
+            raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
+        return payload
 
     @app.get("/api/activity")
     async def activity(

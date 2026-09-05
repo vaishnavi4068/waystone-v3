@@ -17,6 +17,7 @@ import type {
   NewsItem,
   Order,
   Position,
+  ResearchStrategy,
   Signal,
 } from "./types";
 
@@ -125,6 +126,14 @@ export const getIbkrReport = (date?: string) =>
 export const getIbkrOptionsKpis = () => get<IbkrOptionsKpis>("/api/ibkr/options-kpis");
 export const getIbkrFuturesKpis = () => get<IbkrFuturesKpis>("/api/ibkr/futures-kpis");
 export const getAlgos = () => get<AlgoList>("/api/algos");
+export const getStrategies = () => get<{ strategies: ResearchStrategy[] }>("/api/strategies");
+export const getStrategy = (id: string, date?: string, variant?: string) => {
+  const q = new URLSearchParams();
+  if (date) q.set("date", date);
+  if (variant) q.set("variant", variant);
+  const suffix = q.toString() ? `?${q}` : "";
+  return get<ResearchStrategy>(`/api/strategies/${id}${suffix}`);
+};
 export const getCompareDays = () => get<CompareDays>("/api/algos/compare-days");
 export const getAlgoCompare = (algoId: string, date?: string) =>
   get<AlgoCompare>(`/api/algos/${algoId}/compare${date ? `?date=${date}` : ""}`);

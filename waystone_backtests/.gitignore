@@ -1,0 +1,6 @@
+data/daily/
+data/intraday/
+data/chains/
+data/earnings/
+results/
+__pycache__/
