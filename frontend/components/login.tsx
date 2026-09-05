@@ -2,16 +2,27 @@
 
 import { useState } from "react";
 
-import { setToken } from "@/lib/api";
+import { login } from "@/lib/api";
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
-  const [value, setValue] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!value.trim()) return;
-    setToken(value.trim());
-    onLogin();
+    if (!username.trim() || !password) return;
+    setBusy(true);
+    setError("");
+    try {
+      await login(username.trim(), password);
+      onLogin();
+    } catch {
+      setError("Invalid username or password.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -19,23 +30,40 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
       <form onSubmit={submit} className="card w-full max-w-md p-8">
         <h1 className="text-2xl font-semibold">Waystone Arena</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Paste your access token to view your dashboard.
+          Sign in with your team username and password. Access is limited to 5 members.
         </p>
-        <input
-          type="password"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="Bearer token"
-          className="mt-6 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 outline-none focus:border-emerald-500"
-        />
+        <label className="mt-6 block text-xs uppercase tracking-wide text-slate-500">
+          Username
+          <input
+            type="text"
+            autoComplete="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Your name"
+            className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500"
+          />
+        </label>
+        <label className="mt-4 block text-xs uppercase tracking-wide text-slate-500">
+          Password
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Your unique password"
+            className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500"
+          />
+        </label>
+        {error ? <p className="mt-3 text-sm text-rose-400">{error}</p> : null}
         <button
           type="submit"
-          className="mt-4 w-full rounded-lg bg-emerald-600 px-3 py-2 font-medium hover:bg-emerald-500"
+          disabled={busy || !username.trim() || !password}
+          className="mt-4 w-full rounded-lg bg-emerald-600 px-3 py-2 font-medium hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Enter
+          {busy ? "Signing in…" : "Sign in"}
         </button>
         <p className="mt-4 text-xs text-slate-500">
-          Your token is stored only in this browser. Everything here is read-only,
+          Your session is stored only in this browser. Everything here is read-only,
           paper money.
         </p>
       </form>

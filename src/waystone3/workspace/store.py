@@ -20,26 +20,33 @@ class WorkspaceStore:
         self._conn = sqlite3.connect(path)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS members "
-            "(token TEXT PRIMARY KEY, name TEXT NOT NULL, ord INTEGER NOT NULL)"
+            "(token TEXT PRIMARY KEY, name TEXT NOT NULL, ord INTEGER NOT NULL, "
+            "password_hash TEXT NOT NULL DEFAULT '')"
         )
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
         )
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(members)").fetchall()}
+        if "password_hash" not in cols:
+            self._conn.execute(
+                "ALTER TABLE members ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''"
+            )
         self._conn.commit()
 
     # members
-    def add_member(self, token: str, name: str, ord_: int) -> None:
+    def add_member(self, token: str, name: str, ord_: int, password_hash: str = "") -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO members (token, name, ord) VALUES (?, ?, ?)",
-            (token, name, ord_),
+            "INSERT OR REPLACE INTO members (token, name, ord, password_hash) "
+            "VALUES (?, ?, ?, ?)",
+            (token, name, ord_, password_hash),
         )
         self._conn.commit()
 
-    def load_members(self) -> list[tuple[str, str]]:
+    def load_members(self) -> list[tuple[str, str, str]]:
         rows = self._conn.execute(
-            "SELECT token, name FROM members ORDER BY ord"
+            "SELECT token, name, COALESCE(password_hash, '') FROM members ORDER BY ord"
         ).fetchall()
-        return [(t, n) for t, n in rows]
+        return [(t, n, h) for t, n, h in rows]
 
     # meta (strategy + flags)
     def _set(self, key: str, value: str) -> None:

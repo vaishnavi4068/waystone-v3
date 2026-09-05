@@ -37,6 +37,15 @@ async function get<T>(path: string): Promise<T> {
   return data;
 }
 
+export async function login(username: string, password: string): Promise<{ name: string; token: string }> {
+  const { data } = await axios.post<{ name: string; token: string }>(`${BASE}/api/login`, {
+    username,
+    password,
+  });
+  setToken(data.token);
+  return data;
+}
+
 export const getAccount = () => get<Account>("/api/account");
 export const getPositions = () => get<Position[]>("/api/positions");
 export const getOrders = () => get<Order[]>("/api/orders");

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import Login from "@/components/login";
 import Shell from "@/components/shell";
-import { getToken } from "@/lib/api";
+import { clearToken, getAccount, getToken } from "@/lib/api";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchInterval: 15000, retry: 1 } },
@@ -16,8 +16,15 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
-    setAuthed(!!getToken());
-    setReady(true);
+    const token = getToken();
+    if (!token) {
+      setReady(true);
+      return;
+    }
+    getAccount()
+      .then(() => setAuthed(true))
+      .catch(() => clearToken())
+      .finally(() => setReady(true));
   }, []);
 
   if (!ready) return null;

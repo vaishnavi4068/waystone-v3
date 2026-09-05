@@ -35,6 +35,22 @@ def test_health_open(client_and_token) -> None:
     assert client.get("/api/health").json() == {"ok": True}
 
 
+def test_login_issues_token() -> None:
+    ws = TradingWorkspace(StubDataSource(), PaperBroker())
+    member = ws.register_member("Manoj", password="unique-pass-1")
+    client = TestClient(build_app(workspace_factory=lambda: ws))
+
+    denied = client.post("/api/login", json={"username": "Manoj", "password": "nope"})
+    assert denied.status_code == 401
+
+    ok = client.post("/api/login", json={"username": "Manoj", "password": "unique-pass-1"})
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["name"] == "Manoj"
+    assert body["token"] == member.token
+    assert client.get("/api/account", headers=_auth(body["token"])).json()["you"] == "Manoj"
+
+
 def test_auth_required(client_and_token) -> None:
     client, _ = client_and_token
     assert client.get("/api/account").status_code == 401
