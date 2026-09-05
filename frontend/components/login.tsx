@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { login } from "@/lib/api";
+import { apiErrorMessage, login } from "@/lib/api";
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const [username, setUsername] = useState("");
@@ -12,14 +12,14 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!username.trim() || !password) return;
+    if (!username.trim() || !password || busy) return;
     setBusy(true);
     setError("");
     try {
       await login(username.trim(), password);
       onLogin();
-    } catch {
-      setError("Invalid username or password.");
+    } catch (err) {
+      setError(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -28,9 +28,9 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
       <form onSubmit={submit} className="card w-full max-w-md p-8">
-        <h1 className="text-2xl font-semibold">Waystone Arena</h1>
+        <h1 className="text-2xl font-semibold">Waystone</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Sign in with your team username and password. Access is limited to 5 members.
+          Sign in with your team username and password to view the IBKR daily dashboard.
         </p>
         <label className="mt-6 block text-xs uppercase tracking-wide text-slate-500">
           Username
@@ -54,7 +54,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500"
           />
         </label>
-        {error ? <p className="mt-3 text-sm text-rose-400">{error}</p> : null}
+        {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
         <button
           type="submit"
           disabled={busy || !username.trim() || !password}
@@ -63,8 +63,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
           {busy ? "Signing in…" : "Sign in"}
         </button>
         <p className="mt-4 text-xs text-slate-500">
-          Your session is stored only in this browser. Everything here is read-only,
-          paper money.
+          Your session is stored only in this browser. Everything here is read-only.
         </p>
       </form>
     </div>

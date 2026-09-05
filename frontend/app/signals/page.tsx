@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import QueryGate from "@/components/query-gate";
 import { getSignals } from "@/lib/api";
 import { tone } from "@/lib/format";
 
@@ -23,9 +24,15 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 export default function Page() {
-  const { data, isLoading } = useQuery({ queryKey: ["signals"], queryFn: () => getSignals() });
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["signals"],
+    queryFn: () => getSignals(),
+  });
 
-  if (isLoading || !data) return <div className="text-slate-400">Loading…</div>;
+  if (isLoading) return <QueryGate isLoading isError={false} />;
+  if (isError || !data) {
+    return <QueryGate isLoading={false} isError error={error} />;
+  }
 
   return (
     <div>

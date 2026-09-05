@@ -1,10 +1,10 @@
 """Read-only API backing the dashboard — shared-account model.
 
 Every team member signs in with their unique password (`POST /api/login`) and then
-authenticates with the issued bearer token. They see the **one shared account**:
-balances, positions, orders, the shared strategy, the activity log, plus live signals /
-charts / backtests / news. Reads are GET-only. The broker (Alpaca in prod) and Polygon
-data source use the same env-driven assembly as the MCP server.
+authenticates with the issued bearer token. When ``IBKR_REPORTS_BUCKET`` (or
+``IBKR_REPORTS_LOCAL_DIR``) is set, account / positions / orders and the IBKR daily
+report are served from published dumps. Otherwise the broker (Alpaca in prod,
+PaperBroker in tests) is read live. GET-only after login.
 """
 
 from __future__ import annotations
@@ -19,6 +19,12 @@ from pydantic import BaseModel, Field
 
 from waystone3.core.types import Timeframe
 from waystone3.fusion.fuse import fuse
+from waystone3.ibkr.kpis import compute_options_kpis
+from waystone3.ibkr.models import AccountSnapshot
+from waystone3.ibkr.reader import load_latest, load_report
+from waystone3.ibkr.settings import IbkrSettings
+from waystone3.ibkr.store import ReportStore, build_report_store_from_env
+from waystone3.ibkr.views import account_dict, days_dict, order_dict, position_dict, report_dict
 from waystone3.runner.backtest import run_backtest
 from waystone3.runner.config import default_contributors, default_weights
 from waystone3.runner.cycle import score_all
@@ -51,6 +57,19 @@ def _watchlist(ws: TradingWorkspace, raw: str) -> list[str]:
     return list(ws.strategy.watchlist) if ws.strategy else []
 
 
+def _strategy_payload(ws: TradingWorkspace) -> dict[str, Any] | None:
+    cfg = ws.strategy
+    if cfg is None:
+        return None
+    return {
+        "weights": cfg.weights,
+        "watchlist": cfg.watchlist,
+        "bullish_threshold": float(cfg.bullish_threshold),
+        "bearish_threshold": float(cfg.bearish_threshold),
+        "notional_per_trade": float(cfg.notional_per_trade),
+    }
+
+
 class LoginBody(BaseModel):
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
@@ -58,11 +77,22 @@ class LoginBody(BaseModel):
 
 def build_app(
     workspace_factory: Callable[[], TradingWorkspace] | None = None,
+    report_store: ReportStore | None = None,
+    *,
+    ibkr_paper: bool | None = None,
 ) -> FastAPI:
-    # Default: build a fresh workspace per request from env. Correct in prod because the
-    # broker (Alpaca) and the SQLite DB are the shared sources of truth across processes.
+    # Default: one workspace for the process. Building Alpaca/Polygon clients on every
+    # request (the old per-call factory) made the dashboard feel hung under 15s polling.
     # Tests inject a single shared instance (the in-process PaperBroker isn't cross-process).
-    factory = workspace_factory or build_workspace_from_env
+    if workspace_factory is None:
+        _workspace = build_workspace_from_env()
+
+        def factory() -> TradingWorkspace:
+            return _workspace
+    else:
+        factory = workspace_factory
+    store = report_store if report_store is not None else build_report_store_from_env()
+    paper = IbkrSettings().ibkr_paper if ibkr_paper is None else ibkr_paper
 
     app = FastAPI(title="Waystone v3 — read-only dashboard API")
     app.add_middleware(
@@ -101,26 +131,41 @@ def build_app(
     @app.get("/api/account")
     async def account(ctx: tuple[TradingWorkspace, str] = Depends(_session)) -> dict[str, Any]:
         ws, name = ctx
-        acct = await ws.broker.get_account()
-        cfg = ws.strategy
+        if store is not None:
+            report = load_latest(store)
+            acct = report.account if report else AccountSnapshot()
+            extra = account_dict(acct) if report else {}
+            days = days_dict(store)
+            return {
+                "you": name,
+                "team": ws.members(),
+                "broker": "ibkr",
+                "is_paper": paper,
+                "trading_enabled": ws.trading_enabled,
+                "cash": acct.cash,
+                "equity": acct.nlv,
+                "buying_power": acct.buying_power,
+                "nlv": extra.get("nlv", acct.nlv),
+                "excess_liquidity": extra.get("excess_liquidity", 0.0),
+                "maint_margin": extra.get("maint_margin", 0.0),
+                "currency": extra.get("currency", "USD"),
+                "report_date": report.date if report else None,
+                "as_of": report.generated_at.isoformat() if report else None,
+                "published": report is not None,
+                "today_published": bool(days["today_published"]),
+                "strategy": _strategy_payload(ws),
+            }
+        broker_acct = await ws.broker.get_account()
         return {
             "you": name,
             "team": ws.members(),
             "broker": ws.broker.name,
             "is_paper": ws.broker.is_paper,
             "trading_enabled": ws.trading_enabled,
-            "cash": float(acct.cash),
-            "equity": float(acct.equity),
-            "buying_power": float(acct.buying_power),
-            "strategy": None
-            if cfg is None
-            else {
-                "weights": cfg.weights,
-                "watchlist": cfg.watchlist,
-                "bullish_threshold": float(cfg.bullish_threshold),
-                "bearish_threshold": float(cfg.bearish_threshold),
-                "notional_per_trade": float(cfg.notional_per_trade),
-            },
+            "cash": float(broker_acct.cash),
+            "equity": float(broker_acct.equity),
+            "buying_power": float(broker_acct.buying_power),
+            "strategy": _strategy_payload(ws),
         }
 
     @app.get("/api/positions")
@@ -128,6 +173,9 @@ def build_app(
         ctx: tuple[TradingWorkspace, str] = Depends(_session),
     ) -> list[dict[str, Any]]:
         ws, _ = ctx
+        if store is not None:
+            report = load_latest(store)
+            return [position_dict(p) for p in (report.positions if report else [])]
         rows = await ws.broker.get_positions()
         return [
             {
@@ -145,6 +193,11 @@ def build_app(
         limit: int = 20, ctx: tuple[TradingWorkspace, str] = Depends(_session)
     ) -> list[dict[str, Any]]:
         ws, _ = ctx
+        if store is not None:
+            report = load_latest(store)
+            fills = report.executions if report else []
+            fills = sorted(fills, key=lambda e: e.time, reverse=True)[:limit]
+            return [order_dict(e) for e in fills]
         rows = await ws.broker.list_orders(limit)
         return [
             {
@@ -157,6 +210,46 @@ def build_app(
             }
             for o in rows
         ]
+
+    @app.get("/api/ibkr/days")
+    async def ibkr_days(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        if store is None:
+            raise HTTPException(status_code=404, detail="IBKR reports not configured")
+        return days_dict(store)
+
+    @app.get("/api/ibkr/report")
+    async def ibkr_report(
+        date: str | None = None,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        if store is None:
+            raise HTTPException(status_code=404, detail="IBKR reports not configured")
+        if date:
+            try:
+                day = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD") from exc
+            report = load_report(store, day)
+            if report is None:
+                raise HTTPException(status_code=404, detail=f"no published IBKR report for {date}")
+            return report_dict(report, store)
+        report = load_latest(store)
+        if report is None:
+            raise HTTPException(status_code=404, detail="no published IBKR report")
+        return report_dict(report, store)
+
+    @app.get("/api/ibkr/options-kpis")
+    async def ibkr_options_kpis(
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        if store is None:
+            raise HTTPException(status_code=404, detail="IBKR reports not configured")
+        return compute_options_kpis(store)
 
     @app.get("/api/activity")
     async def activity(

@@ -11,13 +11,14 @@ mutates state.
 | Piece | What | Run |
 |---|---|---|
 | **API** (`src/waystone3/api/`) | FastAPI, read-only, per-user auth, reads the live competition DB | `uv run waystone3 api-serve` (port 9200) |
-| **Frontend** (`frontend/`) | Next.js 16 + React 19 + Tailwind + TanStack Query + Lightweight Charts | `npm run dev` (port 3000) |
+| **Frontend** (`frontend/`) | Next.js 16 + React 19 + Tailwind + TanStack Query + Lightweight Charts | `npm run dev` (port **3001**) |
 
 ## Screens (per user)
 
 | Screen | Shows |
 |---|---|
-| **My Dashboard** (`/`) | your equity, cash, return, rank, open positions, your submitted strategy |
+| **Daily** (`/ibkr`) | IBKR blotter: NLV, day P&L, futures vs options, fills (GCS dump) |
+| **Options KPIs** (`/options-kpis`) | Strategy 5 weekly paper scorecard (stages 1–5 + slippage) |
 | **Leaderboard** (`/leaderboard`) | all players ranked by paper-account return |
 | **Signals** (`/signals`) | composite momentum score (−10…+10) + contributor breakdown per symbol |
 | **Charts** (`/charts`) | candlesticks for any symbol |
@@ -29,8 +30,9 @@ mutates state.
 `/api/health` is open. `POST /api/login` accepts `{username, password}` and returns
 `{name, token}`. All other routes are GET and require `Authorization: Bearer <token>`:
 
-`/api/account` · `/api/positions` · `/api/orders` · `/api/activity` · `/api/signals` ·
-`/api/bars` · `/api/backtest` · `/api/news`
+`/api/account` · `/api/positions` · `/api/orders` · `/api/activity` · `/api/ibkr/days` ·
+`/api/ibkr/report` · `/api/ibkr/options-kpis` · `/api/signals` · `/api/bars` ·
+`/api/backtest` · `/api/news`
 
 ## Run locally
 
@@ -44,7 +46,7 @@ uv run waystone3 api-serve                                            # http://l
 cd frontend
 cp .env.example .env.local        # NEXT_PUBLIC_API_BASE=http://localhost:9200
 npm install
-npm run dev                       # http://localhost:3000  -> sign in with name + password
+npm run dev                       # http://localhost:3001  (proxies /api to :9200)
 ```
 
 For live market data, set `POLYGON_API_KEY` before `api-serve` (the API uses the same

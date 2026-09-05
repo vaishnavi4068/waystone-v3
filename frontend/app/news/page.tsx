@@ -2,12 +2,19 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import QueryGate from "@/components/query-gate";
 import { getNews } from "@/lib/api";
 
 export default function Page() {
-  const { data, isLoading } = useQuery({ queryKey: ["news"], queryFn: () => getNews() });
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["news"],
+    queryFn: () => getNews(),
+  });
 
-  if (isLoading || !data) return <div className="text-slate-400">Loading…</div>;
+  if (isLoading) return <QueryGate isLoading isError={false} />;
+  if (isError || !data) {
+    return <QueryGate isLoading={false} isError error={error} />;
+  }
 
   return (
     <div>
