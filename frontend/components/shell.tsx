@@ -47,7 +47,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       <aside className="flex w-60 flex-col border-r border-slate-800 p-4">
         <div className="mb-6">
-          <div className="text-lg font-semibold">Waystone</div>
+          <div className="text-lg font-semibold">HQCapital</div>
           <div className="text-xs text-slate-500">IBKR live</div>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
