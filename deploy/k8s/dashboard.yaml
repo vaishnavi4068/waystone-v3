@@ -1,0 +1,160 @@
+# Dashboard-only GKE stack: API (:9200) + Next.js UI. No MCP, no trader.
+# Replace __IMAGE__, __FRONTEND_IMAGE__, __DASH_DOMAIN__, __IBKR_BUCKET__.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: waystone-dash
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: waystone-dash
+  namespace: waystone-dash
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: waystone-dash-data
+  namespace: waystone-dash
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waystone-dash-api
+  namespace: waystone-dash
+  labels: { app: waystone-dash-api }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: waystone-dash-api }
+  template:
+    metadata:
+      labels: { app: waystone-dash-api }
+    spec:
+      serviceAccountName: waystone-dash
+      containers:
+        - name: api
+          image: __IMAGE__
+          command: ["uv", "run", "waystone3", "api-serve", "--host", "0.0.0.0", "--port", "9200"]
+          ports:
+            - containerPort: 9200
+          env:
+            - name: WAYSTONE_DB
+              value: /data/arena.db
+            - name: WAYSTONE_BROKER
+              value: paper
+            - name: IBKR_PAPER
+              value: "true"
+            - name: IBKR_REPORTS_BUCKET
+              value: __IBKR_BUCKET__
+            - name: IBKR_STAGED
+              value: "0"
+          envFrom:
+            - secretRef: { name: waystone-dash-secrets }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /api/health, port: 9200 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: waystone-dash-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waystone-dash-api
+  namespace: waystone-dash
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: ClusterIP
+  selector: { app: waystone-dash-api }
+  ports:
+    - port: 80
+      targetPort: 9200
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waystone-dash-ui
+  namespace: waystone-dash
+  labels: { app: waystone-dash-ui }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: waystone-dash-ui }
+  template:
+    metadata:
+      labels: { app: waystone-dash-ui }
+    spec:
+      containers:
+        - name: frontend
+          image: __FRONTEND_IMAGE__
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waystone-dash-ui
+  namespace: waystone-dash
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: ClusterIP
+  selector: { app: waystone-dash-ui }
+  ports:
+    - port: 80
+      targetPort: 3000
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: waystone-dash-cert
+  namespace: waystone-dash
+spec:
+  domains:
+    - __DASH_DOMAIN__
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: waystone-dash
+  namespace: waystone-dash
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "waystone-dash-ip"
+    networking.gke.io/managed-certificates: "waystone-dash-cert"
+spec:
+  rules:
+    - host: __DASH_DOMAIN__
+      http:
+        paths:
+          - path: /api/*
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: waystone-dash-api, port: { number: 80 } }
+          - path: /*
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: waystone-dash-ui, port: { number: 80 } }
