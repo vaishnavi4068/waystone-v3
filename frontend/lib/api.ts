@@ -19,6 +19,7 @@ import type {
   Position,
   ResearchOps,
   ResearchOpsInboxItem,
+  ResearchRun,
   ResearchStrategy,
   Signal,
 } from "./types";
