@@ -66,8 +66,8 @@ printf '%s' "$(openssl rand -hex 24)" | gcloud secrets create waystone-admin-tok
 ```
 
 Player tokens are created **after seeding** (Step 8) — one secret per user:
-`arena-user-manoj`, `arena-user-mark`, `arena-user-brent`, `arena-user-akash`,
-`arena-user-cole`.
+`arena-user-mark`, `arena-user-manoj`, `arena-user-brent`, `arena-user-akash`,
+`arena-user-kole`.
 
 ### How the pod reads them — pick one
 
@@ -221,33 +221,35 @@ The Ingress fans out by path: `/mcp` → Arena, `/api/*` → API, `/*` → front
 The server loads players from the DB **at startup**, so seed → restart → store tokens.
 
 ```sh
-# 1) Seed (writes to the persistent DB; prints a token per player). -c arena: the pod now
-#    has two containers (arena + api); seed via the arena one.
+# 1) Seed (writes to the persistent DB; prints a unique dashboard password + MCP token
+#    per player). -c arena: the pod now has two containers (arena + api); seed via arena.
+#    Optional: --passwords "p1,p2,p3,p4,p5" to set the five unique passwords yourself.
 kubectl -n waystone-arena exec deploy/waystone-arena -c arena -- \
-  uv run waystone3 arena-seed --players "Manoj,Mark,Brent,Akash,Cole"
+  uv run waystone3 arena-seed --players "Mark,Manoj,Brent,Akash,Kole"
 
 # 2) Reload so BOTH the MCP server and the API pick up the new players (each loads at start).
 kubectl -n waystone-arena rollout restart deploy/waystone-arena
 kubectl -n waystone-arena rollout status deploy/waystone-arena
 
 # 3) Store each printed token in Secret Manager (replace the values with the printed tokens):
-printf '%s' "<manoj-token>" | gcloud secrets create arena-user-manoj --data-file=-
 printf '%s' "<mark-token>"  | gcloud secrets create arena-user-mark  --data-file=-
+printf '%s' "<manoj-token>" | gcloud secrets create arena-user-manoj --data-file=-
 printf '%s' "<brent-token>" | gcloud secrets create arena-user-brent --data-file=-
 printf '%s' "<akash-token>" | gcloud secrets create arena-user-akash --data-file=-
-printf '%s' "<cole-token>"  | gcloud secrets create arena-user-cole  --data-file=-
+printf '%s' "<kole-token>"  | gcloud secrets create arena-user-kole  --data-file=-
 ```
 
-Each player's **bearer token is their secure login** — per-user, never shared, sent only
-over TLS. Hand each user theirs over a private channel.
+Each player gets a **unique dashboard password** (username = their member name) and an
+**MCP bearer token**. Both are per-user, never shared, sent only over TLS. Hand each
+user theirs over a private channel.
 
 ---
 
 ## 9. How players use it
 
-- **Dashboard (read-only):** open `https://$DOMAIN/` in a browser, paste your token — the
-  shared account, positions, orders, the shared strategy, team, activity log, signals,
-  charts, backtests, news. See [docs/UI.md](../docs/UI.md).
+- **Dashboard (read-only):** open `https://$DOMAIN/` and sign in with your **member name
+  + unique password** — the shared account, positions, orders, the shared strategy, team,
+  activity log, signals, charts, backtests, news. See [docs/UI.md](../docs/UI.md).
 - **Claude (operate the account):** add the remote MCP server `https://$DOMAIN/mcp` with
   header `Authorization: Bearer <token>` in **Claude Code / Desktop**. Tools:
   `set_strategy` / `get_strategy`, `run_cycle` (submits real orders to the shared Alpaca
@@ -255,7 +257,8 @@ over TLS. Hand each user theirs over a private channel.
   `activity`. The **claude.ai web** connector needs OAuth (not built) — see
   [CLAUDE_CONNECTOR.md](CLAUDE_CONNECTOR.md).
 
-Same per-member token for both surfaces — never shared, sent only over TLS.
+Dashboard login uses name + password; Claude still uses the per-member bearer token.
+Never share either credential; send only over TLS.
 
 ---
 

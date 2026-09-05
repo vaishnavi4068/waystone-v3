@@ -6,6 +6,7 @@ import pytest
 
 from waystone3.brokers.paper import PaperBroker
 from waystone3.data.stub import StubDataSource
+from waystone3.workspace.runtime import DEFAULT_DASHBOARD_USERS, seed_members
 from waystone3.workspace.service import AuthError, WorkspaceService
 from waystone3.workspace.workspace import TradingWorkspace
 
@@ -23,6 +24,35 @@ def test_add_member_requires_admin() -> None:
         svc.register("wrong", "Manoj")
     out = svc.register("ADMIN", "Manoj")
     assert out["name"] == "Manoj" and len(out["token"]) > 10
+    assert len(out["password"]) >= 8
+    logged_in = svc.login("Manoj", out["password"])
+    assert logged_in["token"] == out["token"]
+    with pytest.raises(AuthError):
+        svc.login("Manoj", "not-the-password")
+
+
+def test_default_dashboard_usernames() -> None:
+    assert DEFAULT_DASHBOARD_USERS == ("Mark", "Manoj", "Brent", "Akash", "Kole")
+
+
+def test_seed_five_unique_passwords() -> None:
+    svc = _service()
+    created = seed_members(
+        svc,
+        list(DEFAULT_DASHBOARD_USERS),
+        ["pass-mark12", "pass-manoj1", "pass-brent1", "pass-akash1", "pass-kole12"],
+    )
+    assert len(created) == 5
+    assert len({row["password"] for row in created}) == 5
+    assert svc.login("Kole", "pass-kole12")["name"] == "Kole"
+    with pytest.raises(ValueError, match="at most"):
+        seed_members(_service(), ["A", "B", "C", "D", "E", "F"])
+    with pytest.raises(ValueError, match="unique"):
+        seed_members(
+            _service(),
+            ["A", "B"],
+            ["same-password", "same-password"],
+        )
 
 
 def test_invalid_token_rejected() -> None:

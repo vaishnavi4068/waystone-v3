@@ -53,7 +53,7 @@ export function apiErrorMessage(error: unknown): string {
       return "The API timed out. Is `waystone3 api-serve` running on port 9200?";
     }
     if (error.response?.status === 401) {
-      return "Token was rejected. Sign out and paste a token from arena-seed.";
+      return "Invalid username or password.";
     }
     if (!error.response) {
       return "Cannot reach the API. Start `uv run waystone3 api-serve` (the UI proxies /api to port 9200).";
@@ -79,6 +79,18 @@ client.interceptors.request.use((cfg) => {
 
 async function get<T>(path: string): Promise<T> {
   const { data } = await client.get<T>(path);
+  return data;
+}
+
+export async function login(
+  username: string,
+  password: string,
+): Promise<{ name: string; token: string }> {
+  const { data } = await client.post<{ name: string; token: string }>("/api/login", {
+    username,
+    password,
+  });
+  setToken(data.token);
   return data;
 }
 

@@ -1,9 +1,10 @@
 """Read-only API backing the dashboard — shared-account model.
 
-Every team member authenticates with their own bearer token. When
-``IBKR_REPORTS_BUCKET`` (or ``IBKR_REPORTS_LOCAL_DIR``) is set, account / positions /
-orders and the IBKR daily report are served from published dumps. Otherwise the broker
-(Alpaca in prod, PaperBroker in tests) is read live. Side-effect-free (all GET).
+Every team member signs in with their unique password (`POST /api/login`) and then
+authenticates with the issued bearer token. When ``IBKR_REPORTS_BUCKET`` (or
+``IBKR_REPORTS_LOCAL_DIR``) is set, account / positions / orders and the IBKR daily
+report are served from published dumps. Otherwise the broker (Alpaca in prod,
+PaperBroker in tests) is read live. GET-only after login.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from waystone3.core.types import Timeframe
 from waystone3.fusion.fuse import fuse
@@ -68,6 +70,11 @@ def _strategy_payload(ws: TradingWorkspace) -> dict[str, Any] | None:
     }
 
 
+class LoginBody(BaseModel):
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
 def build_app(
     workspace_factory: Callable[[], TradingWorkspace] | None = None,
     report_store: ReportStore | None = None,
@@ -89,7 +96,10 @@ def build_app(
 
     app = FastAPI(title="Waystone v3 — read-only dashboard API")
     app.add_middleware(
-        CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"]
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
     )
 
     async def _session(
@@ -106,6 +116,17 @@ def build_app(
     @app.get("/api/health")
     async def health() -> dict[str, bool]:
         return {"ok": True}
+
+    @app.post("/api/login")
+    async def login(body: LoginBody) -> dict[str, str]:
+        ws = factory()
+        token = ws.authenticate_password(body.username, body.password)
+        if token is None:
+            raise HTTPException(status_code=401, detail="invalid username or password")
+        name = ws.authenticate(token)
+        if name is None:
+            raise HTTPException(status_code=401, detail="invalid username or password")
+        return {"name": name, "token": token}
 
     @app.get("/api/account")
     async def account(ctx: tuple[TradingWorkspace, str] = Depends(_session)) -> dict[str, Any]:

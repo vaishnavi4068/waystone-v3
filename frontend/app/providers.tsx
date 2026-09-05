@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import Login from "@/components/login";
 import Shell from "@/components/shell";
-import { getToken } from "@/lib/api";
+import { clearToken, getAccount, getToken } from "@/lib/api";
 
 function makeClient() {
   return new QueryClient({
@@ -27,8 +27,15 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
-    setAuthed(!!getToken());
-    setReady(true);
+    const token = getToken();
+    if (!token) {
+      setReady(true);
+      return;
+    }
+    getAccount()
+      .then(() => setAuthed(true))
+      .catch(() => clearToken())
+      .finally(() => setReady(true));
   }, []);
 
   if (!ready) return <div className="p-8 text-slate-400">Loading…</div>;

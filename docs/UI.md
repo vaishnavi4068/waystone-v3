@@ -1,9 +1,10 @@
 # Read-only dashboard UI
 
-A per-user, read-only web dashboard for the Arena. Each player signs in with **their own
-token** (the same bearer token they use for the MCP connector) and sees **their own**
-account, positions, and strategy — plus the shared leaderboard, signals, charts,
-backtests, and news. Nothing here mutates state.
+A per-user, read-only web dashboard for the Arena. Each of the **5 team members** signs
+in with **their own username and unique password**. After login the browser stores the
+same bearer token used for the MCP connector. Everyone sees the **shared** account,
+positions, and strategy — plus signals, charts, backtests, and news. Nothing here
+mutates state.
 
 ## Two pieces
 
@@ -24,9 +25,13 @@ backtests, and news. Nothing here mutates state.
 | **Backtests** (`/backtests`) | run a config (weights + dates) → metrics + equity curve |
 | **News** (`/news`) | Polygon headlines (empty unless a Polygon key is configured) |
 
-## API endpoints (all GET, all require `Authorization: Bearer <player-token>` except health)
+## API endpoints
 
-`/api/health` · `/api/me` · `/api/standings` · `/api/signals` · `/api/bars` ·
+`/api/health` is open. `POST /api/login` accepts `{username, password}` and returns
+`{name, token}`. All other routes are GET and require `Authorization: Bearer <token>`:
+
+`/api/account` · `/api/positions` · `/api/orders` · `/api/activity` · `/api/ibkr/days` ·
+`/api/ibkr/report` · `/api/ibkr/options-kpis` · `/api/signals` · `/api/bars` ·
 `/api/backtest` · `/api/news`
 
 ## Run locally
@@ -34,7 +39,7 @@ backtests, and news. Nothing here mutates state.
 ```sh
 # 1) Seed players + start the API against that DB (stub data if no POLYGON_API_KEY)
 export WAYSTONE_DB=./arena.db WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
-uv run waystone3 arena-seed --players "Manoj,Mark,Brent,Akash,Cole"   # copy a token
+uv run waystone3 arena-seed --players "Mark,Manoj,Brent,Akash,Kole"   # copy a password
 uv run waystone3 api-serve                                            # http://localhost:9200
 
 # 2) Frontend
@@ -49,10 +54,11 @@ env-driven data source as the rest of the platform).
 
 ## Auth model
 
-The dashboard authenticates with the **per-user bearer token** — the same credential used
-for the MCP connector. `/api/me` and the leaderboard are scoped/visible only to a valid
-token; one player cannot see another's private positions. The token is stored only in the
-browser's `localStorage`. Always serve over HTTPS in production.
+The dashboard is limited to **5 members**. Each signs in with their **name + unique
+password** (`POST /api/login`). A successful login returns the member's bearer token,
+which is stored only in the browser's `localStorage` and sent as
+`Authorization: Bearer <token>` on later API calls. Claude MCP still uses that same
+token directly. Always serve over HTTPS in production.
 
 ## Deploying (notes)
 

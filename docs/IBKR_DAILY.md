@@ -16,7 +16,7 @@ uv run waystone3 ibkr-seed-demo --out ./reports/demo
 export WAYSTONE_DB=./arena.db
 export WAYSTONE_ADMIN_TOKEN=$(openssl rand -hex 16)
 export IBKR_REPORTS_LOCAL_DIR=$PWD/reports/demo
-uv run waystone3 arena-seed --players "Manoj"    # copy the printed token
+uv run waystone3 arena-seed --players "Manoj"    # copy the printed password
 uv run waystone3 api-serve                       # http://localhost:9200
 
 # other terminal
@@ -26,7 +26,7 @@ npm install
 npm run dev                    # http://localhost:3001 — UI proxies /api to :9200
 ```
 
-Sign in with the seed token. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
+Sign in with the seeded username and password. Open **Daily** (`/ibkr`) for NLV, cash, day P&L, commissions,
 and futures vs options cards. Open **Options KPIs** (`/options-kpis`) for the Strategy 5
 weekly paper scorecard (Sharpe, Sortino, drawdown, profit factor, expectancy, etc.).
 After the VM has written a real dump, point the API at GCS
