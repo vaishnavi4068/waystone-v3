@@ -122,7 +122,9 @@ def collect_spans(
     spans: list[tuple[date, date]] = []
     daily = data_dir / "daily"
     for symbol in symbols:
-        local = csv_date_span(daily / f"{symbol.upper()}.csv")
+        raw = symbol.upper()
+        safe = raw.replace("^", "_").replace(":", "_").replace("/", "_")
+        local = csv_date_span(daily / f"{raw}.csv") or csv_date_span(daily / f"{safe}.csv")
         if local is not None:
             spans.append(local)
             continue

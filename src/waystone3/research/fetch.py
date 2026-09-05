@@ -30,8 +30,15 @@ class FetchReport:
     window_end: str | None = None
 
 
+def _daily_names(symbol: str) -> list[str]:
+    raw = symbol.upper()
+    safe = raw.replace("^", "_").replace(":", "_").replace("/", "_")
+    return [f"{raw}.csv", f"{safe}.csv"]
+
+
 def _has_daily(data_dir: Path, symbol: str) -> bool:
-    return (data_dir / "daily" / f"{symbol.upper()}.csv").is_file()
+    daily = data_dir / "daily"
+    return any((daily / name).is_file() for name in _daily_names(symbol))
 
 
 def _has_intraday(data_dir: Path, root: str) -> bool:
@@ -152,7 +159,7 @@ def _fetch_daily_via_api(symbol: str, root: Path, *, years: int) -> bool:
                 ["indices", "--symbols", symbol, "--start", start],
                 root,
             )
-            if (root / "data" / "daily" / f"{symbol}.csv").is_file():
+            if _has_daily(root / "data", symbol):
                 return True
         with contextlib.suppress(subprocess.CalledProcessError, FileNotFoundError):
             _run_tool(
@@ -160,9 +167,11 @@ def _fetch_daily_via_api(symbol: str, root: Path, *, years: int) -> bool:
                 ["indices", "--symbols", symbol.removeprefix("I:"), "--start", start],
                 root,
             )
+            if _has_daily(root / "data", symbol):
+                return True
     try:
         _run_tool("fetch_yf.py", ["--symbols", symbol, "--start", start], root)
-        return (root / "data" / "daily" / f"{symbol}.csv").is_file()
+        return _has_daily(root / "data", symbol)
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 

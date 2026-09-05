@@ -72,8 +72,12 @@ def run_strategies(
             )
             continue
         window: list[str] = []
-        if not synthetic and "--start" in script.read_text() and tuned is not None:
-            window = tuned.args
+        if not synthetic and tuned is not None:
+            text = script.read_text()
+            if "--start" in text:
+                window.extend(["--start", tuned.start])
+            if "--end" in text:
+                window.extend(["--end", tuned.end])
         for spec in row.get("scripts") or [{}]:
             args = [sys.executable, str(script), *list(spec.get("args") or []), *window, *extra]
             proc = subprocess.run(
