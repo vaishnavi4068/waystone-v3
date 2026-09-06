@@ -614,6 +614,8 @@ def build_scorecard(
                 verdict = "reduces the loss, but the primary itself is not tradable — no overlay fixes a losing sleeve"
             elif auc is not None and auc < 0.52:
                 verdict = f"AUC {auc:.3f} ≈ coin flip: any P&L change is sizing/leverage, not skill — does NOT earn its keep"
+            elif uplift <= 0:
+                verdict = "negative uplift: the primary is better ungated — does NOT earn its keep"
             elif uplift < 0.1:
                 verdict = "uplift within noise (< 0.1 Sharpe) — does NOT earn its keep"
             else:
