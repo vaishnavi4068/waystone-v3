@@ -526,12 +526,33 @@ def build_scorecard(
         "runbook": True,
     }
 
+    notes: list[str] = []
+    profile = strategy.get("gate_profile")
+    if profile == "regime_filter":
+        # A regime switch is not a trade generator: its P&L is the gated index held while ON, so the
+        # trade-count / payoff KPIs are not meaningful. Judge it on the uplift over the ungated base.
+        for key in ("ntrades", "pf", "payoff", "expect"):
+            values[key] = None
+        comp = extra.get("comparison") if isinstance(extra.get("comparison"), dict) else {}
+        base_s = _f(comp.get("base"))
+        chosen_mode = str(params.get("mode") or "")
+        filt_s = _f(comp.get(chosen_mode)) if chosen_mode else None
+        uplift = None
+        if base_s is not None and filt_s is not None:
+            uplift = filt_s - base_s
+            values["filter_uplift"] = round(uplift, 3)
+        msg = "Regime-filter profile: trade count, profit factor, payoff and expectancy are N/A (P&L = SPY held while ON)."
+        if uplift is not None:
+            msg += f" Filtered Sharpe {filt_s:.2f} vs base SMA200 {base_s:.2f} (uplift {uplift:+.2f})."
+        if extra.get("base_max_dd_pct") is not None and maxdd is not None:
+            msg += f" MaxDD {maxdd:.1f}% vs base {float(extra['base_max_dd_pct']):.1f}%."
+        notes.append(msg)
+
     stages = [_stage_verdict(stage, values) for stage in STAGES]
     # The research gate is what a backtest can decide (Stages 1-2). Stages 3-5 need attribution,
     # incubation and live logs, so they stay WARN/N/A here and are rolled up separately.
     overall = _overall(stages, only={"s1", "s2"})
     overall_all = _overall(stages)
-    notes: list[str] = []
     if int(stats.get("days") or 0) < 30 or (stats.get("years") or 0) < 2:
         notes.append(
             "Window is shorter than the 2-year research floor — treat gates as diagnostic, not a stage-gate pass."
