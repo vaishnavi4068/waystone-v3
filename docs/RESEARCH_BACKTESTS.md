@@ -70,13 +70,22 @@ gs://waystone-data/research/v1/<id>/dt=YYYY-MM-DD/<variant>/
   metrics.json
   equity.csv
   trades.csv
+  scorecard.json
+  scorecard.html
   _manifest.json
   _SUCCESS
+gs://waystone-data/research/v1/scorecards/dt=YYYY-MM-DD/index.html
+gs://waystone-data/research/v1/scorecards/latest.html
 ```
 
-`dt=` is the last equity date (NY). `run_id` is recorded in `_manifest.json`. HQ **Strategies** lists sleeves by book and shows Sharpe / CAGR / DD for that date.
+`dt=` is the last equity date (NY). `run_id` is recorded in `_manifest.json`. HQ **Strategies** lists sleeves by book and shows Sharpe / CAGR / DD plus the stage-gate verdict for that date. Each sleeve detail page renders the full KPI scorecard (same gates as the options dashboard HTML).
 
-Read APIs (bearer): `GET /api/strategies`, `GET /api/strategies/{id}`, `GET /api/strategies/{id}/runs`.
+```sh
+uv run waystone3 research-scorecard          # local HTML next to results/
+uv run waystone3 research-publish            # dated GCS objects + scorecards
+```
+
+Read APIs (bearer): `GET /api/strategies`, `GET /api/strategies/{id}`, `GET /api/strategies/{id}/runs`, `GET /api/strategies/{id}/scorecard`, `GET /api/strategies/{id}/scorecard.html`.
 
 Preview without a published run: staged fixture date `2026-08-14` (also used when `IBKR_STAGED=1` / no bucket).
 

@@ -3,10 +3,11 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import QueryGate from "@/components/query-gate";
-import { getStrategy } from "@/lib/api";
+import ResearchScorecardView, { GateChip } from "@/components/research-scorecard";
+import { getStrategy, getStrategyRuns, getStrategyScorecard, openStrategyScorecardHtml } from "@/lib/api";
 
 function EquityCurve({ points }: { points: number[] }) {
   if (points.length < 2) return null;
@@ -48,12 +49,27 @@ export default function Page() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [date, setDate] = useState("");
+  const [variant, setVariant] = useState("");
   const q = useQuery({
-    queryKey: ["strategy", id, date],
-    queryFn: () => getStrategy(id, date || undefined),
+    queryKey: ["strategy", id, date, variant],
+    queryFn: () => getStrategy(id, date || undefined, variant || undefined),
+  });
+  const runs = useQuery({
+    queryKey: ["strategy-runs", id],
+    queryFn: () => getStrategyRuns(id),
+  });
+  const score = useQuery({
+    queryKey: ["strategy-scorecard", id, date, variant],
+    queryFn: () => getStrategyScorecard(id, date || undefined, variant || undefined),
+    enabled: Boolean(q.data?.latest),
   });
   const row = q.data;
   const stats = row?.latest?.stats;
+  const variants = useMemo(() => {
+    const fromRow = row?.variants ?? [];
+    const fromRuns = (runs.data?.runs ?? []).map((r) => r.variant);
+    return Array.from(new Set([...fromRow, ...fromRuns])).filter(Boolean);
+  }, [row?.variants, runs.data?.runs]);
 
   return (
     <div>
@@ -66,6 +82,7 @@ export default function Page() {
             <div className="mb-2 flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold">{row.name}</h1>
               <span className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300">{row.book}</span>
+              <GateChip overall={score.data?.overall ?? row.scorecard?.overall} />
             </div>
             <p className="mb-4 text-slate-400">{row.summary}</p>
             <div className="mb-6 text-sm text-slate-500">
@@ -75,22 +92,55 @@ export default function Page() {
               <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">Rule sketch</div>
               <p className="text-sm text-slate-300">{row.rule_sketch}</p>
             </div>
-            {row.days.length > 0 && (
-              <label className="mb-6 block text-sm">
-                <span className="text-slate-500">Published as-of date</span>
-                <select
-                  value={date || row.latest?.date || ""}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="mt-1 w-full max-w-xs rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+            <div className="mb-6 flex flex-wrap gap-4">
+              {row.days.length > 0 && (
+                <label className="block text-sm">
+                  <span className="text-slate-500">Published as-of date</span>
+                  <select
+                    value={date || row.latest?.date || ""}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="mt-1 w-full min-w-40 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+                  >
+                    {row.days.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {variants.length > 0 && (
+                <label className="block text-sm">
+                  <span className="text-slate-500">Variant</span>
+                  <select
+                    value={variant || row.latest?.variant || ""}
+                    onChange={(e) => setVariant(e.target.value)}
+                    className="mt-1 w-full min-w-40 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+                  >
+                    {variants.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {row.latest && (
+                <button
+                  type="button"
+                  className="self-end rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:border-slate-500"
+                  onClick={() =>
+                    openStrategyScorecardHtml(
+                      id,
+                      date || row.latest?.date,
+                      variant || row.latest?.variant,
+                    )
+                  }
                 >
-                  {row.days.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+                  Open HTML scorecard
+                </button>
+              )}
+            </div>
             {row.latest ? (
               <>
                 <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -103,10 +153,20 @@ export default function Page() {
                   <Metric label="As of" value={row.latest.date} />
                   <Metric label="Variant" value={row.latest.variant} />
                 </div>
-                <div className="card p-5">
+                <div className="card mb-8 p-5">
                   <div className="mb-3 text-xs uppercase tracking-wide text-slate-500">Equity</div>
                   <EquityCurve points={row.latest.equity} />
                 </div>
+                <h2 className="mb-3 text-lg font-semibold">Stage-gate scorecard</h2>
+                <p className="mb-4 text-sm text-slate-400">
+                  Same sequential gates as the options KPI dashboard. Stages 3–5 stay N/A until
+                  attribution, incubation, or live logs exist.
+                </p>
+                {score.data ? (
+                  <ResearchScorecardView card={score.data} />
+                ) : (
+                  <div className="text-sm text-slate-500">Building scorecard…</div>
+                )}
               </>
             ) : (
               <div className="text-sm text-slate-500">No dated run published for this sleeve yet.</div>

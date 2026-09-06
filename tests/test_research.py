@@ -22,7 +22,8 @@ from waystone3.research.ops import (
 )
 from waystone3.research.paths import success_key
 from waystone3.research.publish import publish_results
-from waystone3.research.reader import list_days, load_run
+from waystone3.research.reader import list_days, load_run, load_scorecard
+from waystone3.research.scorecard import build_scorecard, eval_kpi, render_scorecard_html
 from waystone3.research.window import (
     clamp_span,
     default_window,
@@ -122,9 +123,18 @@ def test_publish_writes_dated_success(tmp_path: Path, monkeypatch) -> None:
     assert run is not None
     assert run["stats"]["sharpe"] == 1.1
     assert run["date"] == "2026-08-14"
+    assert store.exists("research/v1/01_mean_reversion/dt=2026-08-14/bb/scorecard.html")
+    card = load_scorecard(store, "01_mean_reversion", "2026-08-14", "bb")
+    assert card is not None
+    assert card["overall"] in {"PASS", "WARN", "FAIL", "N/A"}
+    assert "Stage 1" in (store.get("research/v1/01_mean_reversion/dt=2026-08-14/bb/scorecard.html") or b"").decode()
 
 
-def _client() -> tuple[TestClient, str]:
+def _client(monkeypatch=None) -> tuple[TestClient, str]:
+    if monkeypatch is not None:
+        monkeypatch.delenv("IBKR_REPORTS_BUCKET", raising=False)
+        monkeypatch.delenv("IBKR_REPORTS_LOCAL_DIR", raising=False)
+        monkeypatch.setenv("IBKR_STAGED", "0")
     ws = TradingWorkspace(StubDataSource(), PaperBroker())
     member = ws.register_member("Manoj")
     app = build_app(workspace_factory=lambda: ws, report_store=None)
@@ -183,8 +193,8 @@ def test_api_grok_inbox(tmp_path: Path, monkeypatch) -> None:
     assert acked.status_code == 200
 
 
-def test_api_strategies_preview_without_bucket() -> None:
-    client, token = _client()
+def test_api_strategies_preview_without_bucket(monkeypatch) -> None:
+    client, token = _client(monkeypatch)
     headers = {"Authorization": f"Bearer {token}"}
     data = client.get("/api/strategies", headers=headers).json()
     assert len(data["strategies"]) == 8
@@ -196,6 +206,62 @@ def test_api_strategies_preview_without_bucket() -> None:
     runs = client.get(f"/api/strategies/{first['id']}/runs", headers=headers).json()
     assert runs["strategy_id"] == first["id"]
     assert runs["runs"][0]["date"] == "2026-08-14"
+    assert first.get("scorecard") is not None
+    card = client.get(f"/api/strategies/{first['id']}/scorecard", headers=headers).json()
+    assert card["overall"] in {"PASS", "WARN", "FAIL", "N/A"}
+    assert card["stages"]
+    html = client.get(f"/api/strategies/{first['id']}/scorecard.html", headers=headers)
+    assert html.status_code == 200
+    assert "Stage-Gate Scorecard" in html.text
     ops = client.get("/api/research/ops", headers=headers).json()
     assert ops["writable"] is False
     assert ops["inbox"] == []
+
+
+def test_scorecard_gates_from_equity_and_trades() -> None:
+    assert eval_kpi("gte", 1.6, 1.5, 1.0) == "pass"
+    assert eval_kpi("lte", 20, 15, 25) == "warn"
+    assert eval_kpi("bool", True, None, None) == "pass"
+    metrics = {
+        "stats": {
+            "sharpe": 1.2,
+            "sortino": 1.4,
+            "max_drawdown_pct": -8.0,
+            "cagr_pct": 10.0,
+            "calmar": 1.25,
+            "trades": 12,
+            "win_rate_pct": 58.0,
+            "profit_factor": 1.8,
+            "expectancy_per_trade": 40.0,
+            "final_equity": 110000,
+            "years": 3.0,
+            "days": 750,
+            "exposure_pct": 40.0,
+        }
+    }
+    equity = "date,equity,daily_ret\n" + "".join(
+        f"2023-01-{(i % 28) + 1:02d},100000,{0.001 if i % 3 else -0.0005}\n" for i in range(80)
+    )
+    trades = "exit_date,pnl\n2023-01-10,120\n2023-01-20,-40\n2023-06-01,80\n"
+    card = build_scorecard(
+        strategy={
+            "id": "01_mean_reversion",
+            "name": "Mean reversion",
+            "book": "equities",
+            "summary": "test",
+            "rule_sketch": "fade",
+            "instruments": "SPY",
+            "holding_period": "days",
+        },
+        variant="bb",
+        day="2023-01-28",
+        metrics=metrics,
+        equity_csv=equity,
+        trades_csv=trades,
+    )
+    assert card["values"]["ntrades"] == 12
+    assert card["values"]["maxdd"] == 8.0
+    assert card["banner"]["trades"] == 12
+    html = render_scorecard_html(card)
+    assert "Mean reversion" in html
+    assert "Stage 1" in html

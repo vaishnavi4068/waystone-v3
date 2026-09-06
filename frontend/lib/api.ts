@@ -20,6 +20,7 @@ import type {
   ResearchOps,
   ResearchOpsInboxItem,
   ResearchRun,
+  ResearchScorecard,
   ResearchStrategy,
   Signal,
 } from "./types";
@@ -144,6 +145,25 @@ export const getStrategy = (id: string, date?: string, variant?: string) => {
 };
 export const getStrategyRuns = (id: string) =>
   get<{ strategy_id: string; runs: ResearchRun[] }>(`/api/strategies/${id}/runs`);
+export const getStrategyScorecard = (id: string, date?: string, variant?: string) => {
+  const q = new URLSearchParams();
+  if (date) q.set("date", date);
+  if (variant) q.set("variant", variant);
+  const suffix = q.toString() ? `?${q}` : "";
+  return get<ResearchScorecard>(`/api/strategies/${id}/scorecard${suffix}`);
+};
+export async function openStrategyScorecardHtml(id: string, date?: string, variant?: string) {
+  const q = new URLSearchParams();
+  if (date) q.set("date", date);
+  if (variant) q.set("variant", variant);
+  const suffix = q.toString() ? `?${q}` : "";
+  const { data } = await client.get(`/api/strategies/${id}/scorecard.html${suffix}`, {
+    responseType: "text",
+  });
+  const blob = new Blob([data], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener,noreferrer");
+}
 export const getCompareDays = () => get<CompareDays>("/api/algos/compare-days");
 export const getAlgoCompare = (algoId: string, date?: string) =>
   get<AlgoCompare>(`/api/algos/${algoId}/compare${date ? `?date=${date}` : ""}`);

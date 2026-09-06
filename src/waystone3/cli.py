@@ -515,6 +515,55 @@ def research_run(
         raise typer.Exit(code=1)
 
 
+@app.command("research-scorecard")
+def research_scorecard(
+    strategy: str | None = typer.Option(None, "--strategy", help="One catalog id, or all."),
+) -> None:
+    """Build stage-gate HTML/JSON next to each local results/<id>*/ folder."""
+    from waystone3.research.catalog import get_strategy, list_strategies
+    from waystone3.research.publish import _results_dir, result_folders, variant_name
+    from waystone3.research.scorecard import build_scorecard, write_local_scorecard
+
+    results = _results_dir()
+    rows = [get_strategy(strategy)] if strategy else list_strategies()
+    written = 0
+    for row in rows:
+        if not row:
+            continue
+        sid = str(row["id"])
+        for folder in result_folders(results, sid):
+            metrics_path = folder / "metrics.json"
+            if not metrics_path.is_file():
+                continue
+            import json as _json
+
+            metrics = _json.loads(metrics_path.read_text())
+            day = "local"
+            if (folder / "equity.csv").is_file():
+                from waystone3.research.publish import as_of_from_equity
+                from datetime import date as date_cls
+
+                day = as_of_from_equity(folder / "equity.csv", date_cls.today()).isoformat()
+            card = build_scorecard(
+                strategy=row,
+                variant=variant_name(sid, folder),
+                day=day,
+                metrics=metrics if isinstance(metrics, dict) else {},
+                equity_csv=(folder / "equity.csv").read_text()
+                if (folder / "equity.csv").is_file()
+                else "",
+                trades_csv=(folder / "trades.csv").read_text()
+                if (folder / "trades.csv").is_file()
+                else "",
+            )
+            path = write_local_scorecard(folder, card)
+            console.print(f"  {sid} {card.get('overall')} {path}")
+            written += 1
+    if not written:
+        console.print("No results/<id>*/metrics.json to score.")
+        raise typer.Exit(code=1)
+
+
 @app.command("research-publish")
 def research_publish(
     run_id: str | None = typer.Option(None, "--run-id", help="Defaults to NY timestamp."),

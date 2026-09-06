@@ -53,6 +53,22 @@ def success_key(strategy_id: str, day: date | str, variant: str = "default") -> 
     return f"{strategy_day_prefix(strategy_id, day, variant)}/_SUCCESS"
 
 
+def scorecard_key(strategy_id: str, day: date | str, variant: str = "default") -> str:
+    return f"{strategy_day_prefix(strategy_id, day, variant)}/scorecard.json"
+
+
+def scorecard_html_key(strategy_id: str, day: date | str, variant: str = "default") -> str:
+    return f"{strategy_day_prefix(strategy_id, day, variant)}/scorecard.html"
+
+
+def scorecards_index_key(day: date | str) -> str:
+    return f"{RESEARCH_PREFIX}/scorecards/dt={_day(day)}/index.html"
+
+
+def scorecards_latest_index_key() -> str:
+    return f"{RESEARCH_PREFIX}/scorecards/latest.html"
+
+
 def latest_key(strategy_id: str) -> str:
     return f"{RESEARCH_PREFIX}/{strategy_id}/latest.json"
 

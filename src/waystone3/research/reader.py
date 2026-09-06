@@ -15,8 +15,12 @@ from waystone3.research.paths import (
     latest_key,
     manifest_key,
     metrics_key,
+    scorecard_html_key,
+    scorecard_key,
     success_key,
+    trades_key,
 )
+from waystone3.research.scorecard import build_scorecard, render_scorecard_html
 
 _SUCCESS = re.compile(
     rf"^{re.escape(RESEARCH_PREFIX)}/([^/]+)/dt=(\d{{4}}-\d{{2}}-\d{{2}})/([^/]+)/_SUCCESS$"
@@ -102,6 +106,8 @@ def load_run(
     metrics = _json(store, metrics_key(strategy_id, use_day, use_variant)) or {}
     manifest = _json(store, manifest_key(strategy_id, use_day, use_variant)) or {}
     stats = metrics.get("stats") if isinstance(metrics.get("stats"), dict) else {}
+    if stats.get("trade_count") is None and stats.get("trades") is not None:
+        stats = {**stats, "trade_count": stats.get("trades")}
     return {
         "date": use_day,
         "variant": use_variant,
@@ -115,10 +121,86 @@ def load_run(
     }
 
 
+def _scorecard_summary(card: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "overall": card.get("overall"),
+        "date": card.get("date"),
+        "variant": card.get("variant"),
+        "window": card.get("window") or {},
+        "banner": card.get("banner") or {},
+        "notes": card.get("notes") or [],
+        "stages": [
+            {
+                "id": stage.get("id"),
+                "name": stage.get("name"),
+                "verdict": stage.get("verdict"),
+                "filled": stage.get("filled"),
+                "total": stage.get("total"),
+            }
+            for stage in card.get("stages") or []
+        ],
+    }
+
+
+def load_scorecard(
+    store: ReportStore,
+    strategy_id: str,
+    day: str | date | None = None,
+    variant: str | None = None,
+) -> dict[str, Any] | None:
+    run = load_run(store, strategy_id, day, variant)
+    if run is None:
+        return None
+    use_day = str(run["date"])
+    use_variant = str(run["variant"])
+    cached = _json(store, scorecard_key(strategy_id, use_day, use_variant))
+    if cached and cached.get("stages"):
+        return cached
+    catalog = get_strategy(strategy_id) or {"id": strategy_id, "name": strategy_id}
+    metrics = _json(store, metrics_key(strategy_id, use_day, use_variant)) or {
+        "stats": run.get("stats") or {},
+        "extra": run.get("extra") or {},
+        "params": run.get("params") or {},
+    }
+    equity_raw = store.get(equity_key(strategy_id, use_day, use_variant))
+    trades_raw = store.get(trades_key(strategy_id, use_day, use_variant))
+    return build_scorecard(
+        strategy=catalog,
+        variant=use_variant,
+        day=use_day,
+        metrics=metrics,
+        equity_csv=equity_raw.decode(errors="replace") if equity_raw else "",
+        trades_csv=trades_raw.decode(errors="replace") if trades_raw else "",
+    )
+
+
+def load_scorecard_html(
+    store: ReportStore,
+    strategy_id: str,
+    day: str | date | None = None,
+    variant: str | None = None,
+) -> str | None:
+    run = load_run(store, strategy_id, day, variant)
+    if run is None:
+        return None
+    raw = store.get(scorecard_html_key(strategy_id, str(run["date"]), str(run["variant"])))
+    if raw:
+        return raw.decode(errors="replace")
+    card = load_scorecard(store, strategy_id, day, variant)
+    if card is None:
+        return None
+    return render_scorecard_html(card)
+
+
 def strategy_payload(store: ReportStore | None, row: dict[str, Any]) -> dict[str, Any]:
     sid = str(row["id"])
     latest = load_run(store, sid) if store is not None else None
     days = list_days(store, sid) if store is not None else []
+    variants = sorted({v for _, v in list_run_refs(store, sid)}) if store is not None else []
+    scorecard = None
+    if store is not None and latest is not None:
+        card = load_scorecard(store, sid, latest.get("date"), latest.get("variant"))
+        scorecard = _scorecard_summary(card) if card else None
     return {
         "id": sid,
         "name": row.get("name"),
@@ -130,7 +212,9 @@ def strategy_payload(store: ReportStore | None, row: dict[str, Any]) -> dict[str
         "data_sources": row.get("data_sources") or [],
         "modes": row.get("modes") or [],
         "days": days,
+        "variants": variants,
         "latest": latest,
+        "scorecard": scorecard,
     }
 
 
@@ -143,6 +227,7 @@ def list_runs(store: ReportStore | None, strategy_id: str) -> list[dict[str, Any
         run = load_run(store, strategy_id, day, variant)
         if run is None:
             continue
+        card = load_scorecard(store, strategy_id, day, variant)
         rows.append(
             {
                 "date": run["date"],
@@ -150,6 +235,7 @@ def list_runs(store: ReportStore | None, strategy_id: str) -> list[dict[str, Any
                 "run_id": run.get("run_id"),
                 "synthetic": run["synthetic"],
                 "stats": run["stats"],
+                "overall": (card or {}).get("overall"),
             }
         )
     return rows
@@ -171,4 +257,9 @@ def get_strategy_payload(
     payload = strategy_payload(store, row)
     if store is not None and (day or variant):
         payload["latest"] = load_run(store, strategy_id, day, variant)
+        if payload["latest"] is not None:
+            card = load_scorecard(
+                store, strategy_id, payload["latest"].get("date"), payload["latest"].get("variant")
+            )
+            payload["scorecard"] = _scorecard_summary(card) if card else None
     return payload

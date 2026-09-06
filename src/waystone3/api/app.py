@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from waystone3.core.types import Timeframe
@@ -35,7 +36,13 @@ from waystone3.research.ops import (
     list_inbox,
     read_status,
 )
-from waystone3.research.reader import get_strategy_payload, list_runs, list_strategy_payloads
+from waystone3.research.reader import (
+    get_strategy_payload,
+    list_runs,
+    list_strategy_payloads,
+    load_scorecard,
+    load_scorecard_html,
+)
 from waystone3.research.staged import research_store
 from waystone3.runner.backtest import run_backtest
 from waystone3.runner.config import default_contributors, default_weights
@@ -421,6 +428,37 @@ def build_app(
         if payload is None:
             raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
         return {"strategy_id": strategy_id, "runs": list_runs(strategies, strategy_id)}
+
+    @app.get("/api/strategies/{strategy_id}/scorecard")
+    async def strategy_scorecard(
+        strategy_id: str,
+        date: str | None = None,
+        variant: str | None = None,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> dict[str, Any]:
+        del ctx
+        payload = get_strategy_payload(strategies, strategy_id, date, variant)
+        if payload is None:
+            raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
+        card = load_scorecard(strategies, strategy_id, date, variant)
+        if card is None:
+            raise HTTPException(status_code=404, detail="no published run for scorecard")
+        return card
+
+    @app.get("/api/strategies/{strategy_id}/scorecard.html")
+    async def strategy_scorecard_html(
+        strategy_id: str,
+        date: str | None = None,
+        variant: str | None = None,
+        ctx: tuple[TradingWorkspace, str] = Depends(_session),
+    ) -> HTMLResponse:
+        del ctx
+        if get_strategy_payload(strategies, strategy_id) is None:
+            raise HTTPException(status_code=404, detail=f"unknown strategy {strategy_id}")
+        html = load_scorecard_html(strategies, strategy_id, date, variant)
+        if html is None:
+            raise HTTPException(status_code=404, detail="no published run for scorecard")
+        return HTMLResponse(html)
 
     @app.get("/api/research/ops")
     async def research_ops(

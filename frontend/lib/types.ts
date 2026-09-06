@@ -315,6 +315,46 @@ export interface ResearchRun {
   equity: number[];
 }
 
+export interface ResearchScorecardKpi {
+  id: string;
+  name: string;
+  definition: string;
+  unit: string;
+  type: string;
+  pass?: number | null;
+  warn?: number | null;
+  critical: boolean;
+  value: number | boolean | string | null;
+  status: string;
+}
+
+export interface ResearchScorecardStage {
+  id: string;
+  name: string;
+  desc?: string;
+  verdict: string;
+  filled: number;
+  total: number;
+  kpis?: ResearchScorecardKpi[];
+}
+
+export interface ResearchScorecard {
+  strategy_id?: string;
+  name?: string;
+  book?: string;
+  variant?: string;
+  date?: string;
+  overall: string;
+  window?: { start?: string | null; end?: string | null };
+  banner?: Record<string, number | string | null | undefined>;
+  notes?: string[];
+  stages: ResearchScorecardStage[];
+  rule_sketch?: string;
+  instruments?: string;
+  holding_period?: string;
+  pnl_by_year?: { year: string; trades: number; pnl_usd: number }[];
+}
+
 export interface ResearchStrategy {
   id: string;
   name: string;
@@ -326,7 +366,9 @@ export interface ResearchStrategy {
   data_sources: string[];
   modes: string[];
   days: string[];
+  variants?: string[];
   latest: ResearchRun | null;
+  scorecard?: ResearchScorecard | null;
 }
 
 export interface ResearchOpsStatus {

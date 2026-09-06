@@ -12,16 +12,26 @@ from typing import Any
 
 from waystone3.ibkr.store import ReportStore, build_report_store_from_env
 from waystone3.ibkr.timeutil import NY
-from waystone3.research.catalog import list_strategies, load_catalog
+from waystone3.research.catalog import get_strategy, list_strategies, load_catalog
 from waystone3.research.paths import (
     CATALOG_KEY,
     equity_key,
     latest_key,
     manifest_key,
     metrics_key,
+    scorecard_html_key,
+    scorecard_key,
+    scorecards_index_key,
+    scorecards_latest_index_key,
     success_key,
     toolkit_root,
     trades_key,
+)
+from waystone3.research.scorecard import (
+    build_scorecard,
+    render_index_html,
+    render_scorecard_html,
+    write_local_scorecard,
 )
 from waystone3.research.window import years_from_equity
 
@@ -90,6 +100,7 @@ def publish_results(
         raise ValueError("set IBKR_REPORTS_BUCKET or IBKR_REPORTS_LOCAL_DIR")
     rid = run_id or datetime.now(NY).strftime("%Y%m%dT%H%M%S")
     published: list[dict[str, str]] = []
+    cards: list[dict[str, Any]] = []
     reports.put(CATALOG_KEY, json.dumps(load_catalog(), indent=2).encode(), "application/json")
     root = toolkit_root()
     repo = root.parent if root.name == "waystone_backtests" else root
@@ -122,6 +133,31 @@ def publish_results(
                     (folder / "trades.csv").read_bytes(),
                     "text/csv",
                 )
+            metrics = json.loads((folder / "metrics.json").read_text())
+            catalog = get_strategy(sid) or {"id": sid, "name": sid}
+            card = build_scorecard(
+                strategy=catalog,
+                variant=variant,
+                day=day.isoformat(),
+                metrics=metrics if isinstance(metrics, dict) else {},
+                equity_csv=(folder / "equity.csv").read_text()
+                if (folder / "equity.csv").is_file()
+                else "",
+                trades_csv=(folder / "trades.csv").read_text()
+                if (folder / "trades.csv").is_file()
+                else "",
+            )
+            write_local_scorecard(folder, card)
+            reports.put(
+                scorecard_key(sid, day, variant),
+                json.dumps(card, indent=2, default=str).encode(),
+                "application/json",
+            )
+            reports.put(
+                scorecard_html_key(sid, day, variant),
+                render_scorecard_html(card).encode(),
+                "text/html",
+            )
             payload: dict[str, Any] = {
                 "strategy_id": sid,
                 "variant": variant,
@@ -140,7 +176,15 @@ def publish_results(
             )
             reports.put(success_key(sid, day, variant), b"ok\n", "text/plain")
             latest_day, latest_variant = day, variant
-            published.append({"id": sid, "date": day.isoformat(), "variant": variant})
+            cards.append(card)
+            published.append(
+                {
+                    "id": sid,
+                    "date": day.isoformat(),
+                    "variant": variant,
+                    "overall": str(card.get("overall") or ""),
+                }
+            )
         reports.put(
             latest_key(sid),
             json.dumps(
@@ -153,4 +197,9 @@ def publish_results(
             ).encode(),
             "application/json",
         )
+    if cards:
+        index_day = max(str(c.get("date") or today.isoformat()) for c in cards)
+        index_html = render_index_html(cards, day=index_day).encode()
+        reports.put(scorecards_index_key(index_day), index_html, "text/html")
+        reports.put(scorecards_latest_index_key(), index_html, "text/html")
     return published

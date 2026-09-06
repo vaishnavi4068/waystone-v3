@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import QueryGate from "@/components/query-gate";
 import ResearchOpsPanel from "@/components/research-ops";
+import { GateChip } from "@/components/research-scorecard";
 import { getStrategies } from "@/lib/api";
 import type { ResearchStrategy } from "@/lib/types";
 
@@ -31,7 +32,10 @@ function Card({ row }: { row: ResearchStrategy }) {
     <Link href={`/strategies/${row.id}`} className="card block p-5 hover:border-slate-600">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="font-medium">{row.name}</div>
-        <span className={`rounded px-2 py-0.5 text-xs ${bookClass(row.book)}`}>{bookLabel(row.book)}</span>
+        <div className="flex items-center gap-2">
+          <GateChip overall={row.scorecard?.overall} />
+          <span className={`rounded px-2 py-0.5 text-xs ${bookClass(row.book)}`}>{bookLabel(row.book)}</span>
+        </div>
       </div>
       <p className="mb-4 text-sm text-slate-400">{row.summary}</p>
       <div className="mb-3 text-xs text-slate-500">
@@ -72,8 +76,8 @@ export default function Page() {
     <div>
       <h1 className="mb-2 text-2xl font-semibold">Strategies</h1>
       <p className="mb-6 text-sm text-slate-400">
-        Research sleeves. Mac Studio publishes dated runs to GCS; this page only reads them.
-        Approvals go to the GCS inbox that the Mac worker and Grok Bot share.
+        Research sleeves with dated stage-gate scorecards (same KPI gates as the options
+        dashboard). Published as-of dates come from GCS; pick a sleeve for the full report.
       </p>
       <ResearchOpsPanel />
       <QueryGate isLoading={q.isLoading} isError={q.isError} error={q.error}>
