@@ -12,6 +12,7 @@ from waystone3.research.catalog import get_strategy, list_strategies
 from waystone3.research.paths import (
     RESEARCH_PREFIX,
     equity_key,
+    kpi_key,
     latest_key,
     manifest_key,
     metrics_key,
@@ -19,6 +20,7 @@ from waystone3.research.paths import (
     scorecard_key,
     success_key,
     trades_key,
+    tuning_key,
 )
 from waystone3.research.scorecard import build_scorecard, render_scorecard_html
 
@@ -142,6 +144,18 @@ def _scorecard_summary(card: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _scorecard_stale(cached: dict[str, Any]) -> bool:
+    """Older publishes omitted trade rows and avg monthly KPI — rebuild from raw CSVs."""
+    if not cached.get("stages"):
+        return True
+    if "trade_details" not in cached:
+        return True
+    values = cached.get("values") if isinstance(cached.get("values"), dict) else {}
+    if "avgmonth" not in values:
+        return True
+    return False
+
+
 def load_scorecard(
     store: ReportStore,
     strategy_id: str,
@@ -154,7 +168,7 @@ def load_scorecard(
     use_day = str(run["date"])
     use_variant = str(run["variant"])
     cached = _json(store, scorecard_key(strategy_id, use_day, use_variant))
-    if cached and cached.get("stages"):
+    if cached and not _scorecard_stale(cached):
         return cached
     catalog = get_strategy(strategy_id) or {"id": strategy_id, "name": strategy_id}
     metrics = _json(store, metrics_key(strategy_id, use_day, use_variant)) or {
@@ -164,6 +178,8 @@ def load_scorecard(
     }
     equity_raw = store.get(equity_key(strategy_id, use_day, use_variant))
     trades_raw = store.get(trades_key(strategy_id, use_day, use_variant))
+    tuning = _json(store, tuning_key(strategy_id, use_day, use_variant))
+    kpi = _json(store, kpi_key(strategy_id, use_day, use_variant))
     return build_scorecard(
         strategy=catalog,
         variant=use_variant,
@@ -171,6 +187,8 @@ def load_scorecard(
         metrics=metrics,
         equity_csv=equity_raw.decode(errors="replace") if equity_raw else "",
         trades_csv=trades_raw.decode(errors="replace") if trades_raw else "",
+        tuning=tuning,
+        kpi=kpi,
     )
 
 
@@ -184,7 +202,7 @@ def load_scorecard_html(
     if run is None:
         return None
     raw = store.get(scorecard_html_key(strategy_id, str(run["date"]), str(run["variant"])))
-    if raw:
+    if raw and b"Trade log" in raw and b"Avg month" in raw:
         return raw.decode(errors="replace")
     card = load_scorecard(store, strategy_id, day, variant)
     if card is None:

@@ -176,6 +176,15 @@ def publish_results(
                 kpi=kpi,
             )
             write_local_scorecard(folder, card)
+            if card.get("avg_monthly_net_usd") is not None:
+                stats = metrics.setdefault("stats", {})
+                if isinstance(stats, dict):
+                    stats["avg_monthly_net_profit"] = card["avg_monthly_net_usd"]
+                reports.put(
+                    metrics_key(sid, day, variant),
+                    json.dumps(metrics, indent=2, default=str).encode(),
+                    "application/json",
+                )
             reports.put(
                 scorecard_key(sid, day, variant),
                 json.dumps(card, indent=2, default=str).encode(),

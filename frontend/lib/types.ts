@@ -353,6 +353,23 @@ export interface ResearchScorecard {
   instruments?: string;
   holding_period?: string;
   pnl_by_year?: { year: string; trades: number; pnl_usd: number }[];
+  pnl_by_month?: { month: string; pnl_usd: number }[];
+  trade_details?: ResearchTradeDetail[];
+  trade_count_total?: number;
+  trade_details_truncated?: boolean;
+  avg_monthly_net_usd?: number | null;
+}
+
+export interface ResearchTradeDetail {
+  entry_time?: string;
+  exit_time?: string;
+  symbol?: string;
+  side?: string;
+  qty?: number | null;
+  entry_price?: number | null;
+  exit_price?: number | null;
+  pnl?: number;
+  hold_days?: number | null;
 }
 
 export interface ResearchStrategy {

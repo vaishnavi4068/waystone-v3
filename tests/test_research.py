@@ -242,10 +242,15 @@ def test_scorecard_gates_from_equity_and_trades() -> None:
             "exposure_pct": 40.0,
         }
     }
-    equity = "date,equity,daily_ret\n" + "".join(
-        f"2023-01-{(i % 28) + 1:02d},100000,{0.001 if i % 3 else -0.0005}\n" for i in range(80)
+    equity = "date,equity,daily_ret,daily_pnl\n" + "".join(
+        f"2023-01-{(i % 28) + 1:02d},100000,{0.001 if i % 3 else -0.0005},{100 if i % 3 else -50}\n" for i in range(80)
     )
-    trades = "exit_date,pnl\n2023-01-10,120\n2023-01-20,-40\n2023-06-01,80\n"
+    trades = (
+        "symbol,entry_date,exit_date,side,units,entry,exit,pnl,days_held\n"
+        "AAPL,2023-01-10,2023-01-12,1,10,150,152,20,2\n"
+        "MSFT,2023-01-20,2023-01-25,-1,5,300,298,10,5\n"
+        "AAPL,2023-06-01,2023-06-05,1,8,160,165,40,4\n"
+    )
     card = build_scorecard(
         strategy={
             "id": "01_mean_reversion",
@@ -264,10 +269,19 @@ def test_scorecard_gates_from_equity_and_trades() -> None:
     )
     assert card["values"]["ntrades"] == 12
     assert card["values"]["maxdd"] == 8.0
+    assert card["values"]["avgmonth"] is not None
     assert card["banner"]["trades"] == 12
+    assert card["trade_count_total"] == 3
+    assert len(card["trade_details"]) == 3
+    assert card["trade_details"][0]["symbol"] == "AAPL"
+    assert card["pnl_by_month"]
+    assert card["avg_monthly_net_usd"] is not None
     html = render_scorecard_html(card)
     assert "Mean reversion" in html
     assert "Stage 1" in html
+    assert "Trade log" in html
+    assert "P&L by month" in html
+    assert "Avg month" in html
 
 
 def test_scorecard_regime_filter_profile_skips_trade_gates() -> None:

@@ -28,6 +28,7 @@ KPI_CALC: dict[str, str] = {
     "pf": "Sum of winning trade P&L ÷ absolute sum of losing trade P&L (closed trades only).",
     "ntrades": "Count of closed round-trips in the trade log (or engine stats.trades).",
     "worstmo": "|Worst calendar-month P&L| / starting NAV × 100.",
+    "avgmonth": "Mean calendar-month net P&L in USD (month buckets from daily_pnl when available, else exit-date trade P&L).",
     "cvar": "Average of the worst 5% of daily returns (P&L/NAV), reported as a positive % loss of NAV.",
     "skew": "Skewness of monthly return series (monthly P&L / NAV).",
     "coststress": "Sharpe of the same config re-run with commission and slippage doubled (research-tune cost2x trial).",
@@ -72,6 +73,7 @@ STAGES: list[dict[str, Any]] = [
             {"id": "pf", "name": "Profit factor", "unit": "ratio", "type": "gte", "pass": 1.5, "warn": 1.25, "critical": False},
             {"id": "ntrades", "name": "Trade count", "unit": "trades", "type": "gte", "pass": 200, "warn": 100, "critical": True},
             {"id": "worstmo", "name": "Worst calendar month loss", "unit": "% NAV", "type": "lte", "pass": 8, "warn": 12, "critical": False},
+            {"id": "avgmonth", "name": "Avg monthly net profit", "unit": "USD", "type": "gte", "pass": 833, "warn": 0, "critical": False},
             {"id": "cvar", "name": "Daily CVaR (95%)", "unit": "% NAV", "type": "lte", "pass": 2, "warn": 3, "critical": False},
             {"id": "skew", "name": "Monthly return skewness", "unit": "skew", "type": "gte", "pass": -1.0, "warn": -2.0, "critical": False},
             {"id": "coststress", "name": "Sharpe under 2× cost stress", "unit": "ratio", "type": "gte", "pass": 1.0, "warn": 0.7, "critical": True},
@@ -218,9 +220,79 @@ def _parse_trades(raw: str) -> list[dict[str, Any]]:
                 break
         if pnl is None:
             continue
-        day = (row.get("exit_date") or row.get("date") or row.get("entry_date") or "").strip()[:10]
+        day = (row.get("exit_date") or row.get("exit_time") or row.get("date") or row.get("entry_date") or "").strip()[:10]
         rows.append({"pnl": pnl, "date": day, "raw": row})
     return rows
+
+
+def _parse_trade_details(raw: str, *, max_rows: int = 500) -> list[dict[str, Any]]:
+    """Normalize strategies/*/trades.csv into the HQ scorecard trade-detail schema."""
+    if not raw.strip():
+        return []
+    out: list[dict[str, Any]] = []
+    for row in csv.DictReader(io.StringIO(raw)):
+        pnl = None
+        for key in ("pnl", "PnL", "net_pnl", "pl"):
+            if key in row and row[key] not in (None, ""):
+                pnl = _f(row[key])
+                break
+        if pnl is None:
+            continue
+        entry = (row.get("entry_time") or row.get("entry_date") or row.get("entry_ts") or "").strip()[:19]
+        exit_ = (row.get("exit_time") or row.get("exit_date") or row.get("exit_ts") or row.get("date") or "").strip()[:19]
+        side_raw = str(row.get("side") or "").strip()
+        if side_raw in ("1", "1.0"):
+            side = "long"
+        elif side_raw in ("-1", "-1.0"):
+            side = "short"
+        else:
+            side = side_raw or "—"
+        qty = _f(row.get("units") or row.get("qty") or row.get("size"))
+        entry_px = _f(row.get("entry") or row.get("entry_price"))
+        exit_px = _f(row.get("exit") or row.get("exit_price"))
+        hold = row.get("days_held") or row.get("hold_days")
+        if hold in (None, "") and entry and exit_:
+            try:
+                d0 = datetime.fromisoformat(entry[:10])
+                d1 = datetime.fromisoformat(exit_[:10])
+                hold = max(0, (d1 - d0).days)
+            except ValueError:
+                hold = None
+        out.append(
+            {
+                "entry_time": entry[:10] if entry else "",
+                "exit_time": exit_[:10] if exit_ else "",
+                "symbol": (row.get("symbol") or row.get("tag") or "").strip(),
+                "side": side,
+                "qty": None if qty is None else round(qty, 4),
+                "entry_price": None if entry_px is None else round(entry_px, 4),
+                "exit_price": None if exit_px is None else round(exit_px, 4),
+                "pnl": round(pnl, 2),
+                "hold_days": int(float(hold)) if hold not in (None, "") else None,
+            }
+        )
+        if len(out) >= max_rows:
+            break
+    return out
+
+
+def _monthly_pnl_usd(equity_csv: str, trades: list[dict[str, Any]]) -> dict[str, float]:
+    """Calendar-month net P&L in USD. Prefer equity daily_pnl; fall back to trade exit dates."""
+    buckets: dict[str, float] = {}
+    if equity_csv.strip():
+        for row in csv.DictReader(io.StringIO(equity_csv)):
+            day = (row.get("date") or row.get("Date") or row.get("") or "").strip()[:10]
+            pnl = _f(row.get("daily_pnl") or row.get("pnl"))
+            if not day or len(day) < 7 or pnl is None:
+                continue
+            key = day[:7]
+            buckets[key] = buckets.get(key, 0.0) + pnl
+    if not buckets and trades:
+        for t in trades:
+            day = (t.get("date") or "")[:7]
+            if len(day) == 7:
+                buckets[day] = buckets.get(day, 0.0) + float(t["pnl"])
+    return dict(sorted(buckets.items()))
 
 
 def _peak_gross_notional(trades: list[dict[str, Any]], nav: float) -> float | None:
@@ -398,6 +470,11 @@ def build_scorecard(
     params = metrics.get("params") if isinstance(metrics.get("params"), dict) else {}
     dates, equity, rets = _parse_equity(equity_csv) if equity_csv else ([], [], [])
     trades = _parse_trades(trades_csv) if trades_csv else []
+    trade_count_total = len(trades) if trades else int(stats.get("trades") or stats.get("trade_count") or 0)
+    trade_details = _parse_trade_details(trades_csv) if trades_csv else []
+    pnl_by_month_map = _monthly_pnl_usd(equity_csv, trades)
+    pnl_by_month = [{"month": month, "pnl_usd": round(pnl, 2)} for month, pnl in pnl_by_month_map.items()]
+    avg_monthly_net = round(sum(pnl_by_month_map.values()) / len(pnl_by_month_map), 2) if pnl_by_month_map else None
 
     sharpe = _f(stats.get("sharpe"))
     sortino = _f(stats.get("sortino")) or _sortino(rets)
@@ -512,6 +589,7 @@ def build_scorecard(
         "pf": None if pf is None else round(pf, 3),
         "ntrades": ntrades or None,
         "worstmo": None if worstmo is None else round(worstmo, 3),
+        "avgmonth": avg_monthly_net,
         "cvar": None if cvar is None else round(cvar, 3),
         "skew": None if (sk := _skew(month_rets)) is None else round(sk, 3),
         "coststress": None if coststress is None else round(coststress, 3),
@@ -683,6 +761,7 @@ def build_scorecard(
         "avg_loss": _f(stats.get("avg_loss")),
         "profit_factor": pf,
         "expectancy_usd": expect,
+        "avg_monthly_net_usd": avg_monthly_net,
     }
     return {
         "strategy_id": strategy.get("id"),
@@ -705,6 +784,11 @@ def build_scorecard(
         "holding_period": strategy.get("holding_period"),
         "notes": notes,
         "pnl_by_year": _yearly_from_trades(trades),
+        "pnl_by_month": pnl_by_month,
+        "trade_details": trade_details,
+        "trade_count_total": trade_count_total,
+        "trade_details_truncated": trade_count_total > len(trade_details),
+        "avg_monthly_net_usd": avg_monthly_net,
         "worst_month": worst_month,
         "equity": equity[:: max(1, len(equity) // 240)][:240] if equity else [],
         "calc": KPI_CALC,
@@ -759,6 +843,25 @@ def render_scorecard_html(card: dict[str, Any]) -> str:
         f"<td>{money(r['pnl_usd'])}</td></tr>"
         for r in card.get("pnl_by_year") or []
     )
+    month_rows = "".join(
+        f"<tr><td class='kname'>{esc(r['month'])}</td><td>{money(r['pnl_usd'])}</td></tr>"
+        for r in card.get("pnl_by_month") or []
+    )
+    trade_rows = "".join(
+        f"<tr>"
+        f"<td>{esc(t.get('entry_time'))}</td><td>{esc(t.get('exit_time'))}</td>"
+        f"<td class='kname'>{esc(t.get('symbol'))}</td><td>{esc(t.get('side'))}</td>"
+        f"<td>{esc(t.get('qty'))}</td><td>{esc(t.get('entry_price'))}</td><td>{esc(t.get('exit_price'))}</td>"
+        f"<td>{money(t.get('pnl'))}</td><td>{esc(t.get('hold_days'))}</td>"
+        f"</tr>"
+        for t in card.get("trade_details") or []
+    )
+    trade_note = ""
+    if card.get("trade_details_truncated"):
+        trade_note = (
+            f"<div class='sec-desc'>Showing first {len(card.get('trade_details') or [])} of "
+            f"{esc(card.get('trade_count_total'))} closed trades.</div>"
+        )
     notes = "".join(f"<li>{esc(n)}</li>" for n in card.get("notes") or [])
     banner = card.get("banner") or {}
     win = card.get("window") or {}
@@ -782,6 +885,7 @@ def render_scorecard_html(card: dict[str, Any]) -> str:
         ("CAGR", None if banner.get("cagr_pct") is None else f"{banner.get('cagr_pct')}%", f"{banner.get('years')} years"),
         ("Max DD", None if banner.get("max_drawdown_pct") is None else f"{banner.get('max_drawdown_pct')}%", "engine signed %"),
         ("Trades", banner.get("trades"), f"Win {banner.get('win_rate_pct')}%"),
+        ("Avg month", money(banner.get("avg_monthly_net_usd")), "mean calendar-month net P&L"),
         ("Calmar", banner.get("calmar"), f"PF {banner.get('profit_factor')}"),
         ("Expectancy", money(banner.get("expectancy_usd")), "per closed trade"),
     ]
@@ -898,6 +1002,7 @@ def render_scorecard_html(card: dict[str, Any]) -> str:
   .chip.na{{background:rgba(75,85,99,.15);color:var(--muted);border:1px solid var(--na);}}
   .curve{{width:100%;height:130px;}}
   .card{{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:16px;}}
+  .scroll{{max-height:420px;overflow:auto;}}
   ul{{margin:0;padding-left:18px;}}
 </style></head><body><div class="wrap">
   <header><h1>{esc(card.get("name"))} — Stage-Gate Scorecard</h1></header>
@@ -910,6 +1015,8 @@ def render_scorecard_html(card: dict[str, Any]) -> str:
   <div class="card"><div class="kname">Equity</div>{path or "<p class='sub'>No equity series</p>"}</div>
   {"<div class='card'><div class='kname'>Notes</div><ul>" + notes + "</ul></div>" if notes else ""}
   {"<section><div class='sec-head'><h2>P&L by year</h2></div><table><thead><tr><th>Year</th><th>Trades</th><th>Net P&L</th></tr></thead><tbody>" + year_rows + "</tbody></table></section>" if year_rows else ""}
+  {"<section><div class='sec-head'><h2>P&L by month</h2></div><table><thead><tr><th>Month</th><th>Net P&L</th></tr></thead><tbody>" + month_rows + "</tbody></table></section>" if month_rows else ""}
+  {"<section><div class='sec-head'><h2>Trade log</h2><span class='sub'>" + esc(card.get('trade_count_total')) + " closed trades</span></div>" + trade_note + "<div class='scroll'><table><thead><tr><th>Entry</th><th>Exit</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry px</th><th>Exit px</th><th>P&L</th><th>Hold days</th></tr></thead><tbody>" + trade_rows + "</tbody></table></div></section>" if trade_rows else ""}
   {"".join(stages_html)}
   {tuning_html}
   {overlay_html}
