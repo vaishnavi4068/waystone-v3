@@ -21,7 +21,9 @@ def save_and_print(name: str, daily_ret: pd.Series, trades: pd.DataFrame | None,
                                                       "stats": stats, "extra": extra or {}}, indent=1, default=str))
     if trades is not None and len(trades):
         trades.to_csv(out_dir / "trades.csv", index=False)
-    pd.DataFrame({"equity": equity, "daily_ret": daily_ret}).to_csv(out_dir / "equity.csv")
+    eq_df = pd.DataFrame({"equity": equity, "daily_ret": daily_ret})
+    eq_df.index.name = "date"
+    eq_df.to_csv(out_dir / "equity.csv")
     title = f"{name}  {'[SYNTHETIC DATA — mechanics only, ignore the numbers]' if synthetic else ''}"
     if not quiet:
         print(M.format_report(title, stats, {"params": params, **(extra or {})}))

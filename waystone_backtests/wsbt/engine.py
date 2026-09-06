@@ -90,7 +90,7 @@ def simulate_positions(bars: pd.DataFrame, target: pd.Series, cost: CostModel, s
 class TradeSpec:
     date: pd.Timestamp                 # the day the ENTRY is attempted (must be > signal day)
     side: int                          # +1 long, -1 short
-    entry: str = "open"                # "open" | "close" | "stop"  (stop: level in entry_level, fill if touched)
+    entry: str = "open"                # "open" | "close" | "stop" | "limit"  (stop/limit: level in entry_level, fill if touched)
     entry_level: float | None = None
     stop: float | None = None          # protective stop (price)
     target: float | None = None        # profit target (price)
@@ -144,6 +144,11 @@ def simulate_trades(bars: pd.DataFrame, specs: list[TradeSpec], cost: CostModel,
                     fill = cost.fill(max(o[i], s.entry_level), 1)
                 elif s.side < 0 and l[i] <= s.entry_level:
                     fill = cost.fill(min(o[i], s.entry_level), -1)
+            elif s.entry == "limit" and s.entry_level is not None:      # passive: filled only if the day trades through
+                if s.side > 0 and l[i] <= s.entry_level:
+                    fill = cost.fill(min(o[i], s.entry_level), 1)
+                elif s.side < 0 and h[i] >= s.entry_level:
+                    fill = cost.fill(max(o[i], s.entry_level), -1)
             if fill is None:
                 continue
             units = _units(size, fill)
@@ -191,6 +196,146 @@ def simulate_trades(bars: pd.DataFrame, specs: list[TradeSpec], cost: CostModel,
     return daily_ret, pd.DataFrame(trades), M.equity_from_returns(daily_ret, capital)
 
 
+def simulate_trades_multi(frames: dict[str, pd.DataFrame], specs: dict[str, list[TradeSpec]], cost: CostModel,
+                          size: dict, capital: float = 100_000.0, max_positions: int = 10, conservative: bool = True,
+                          hedge: tuple[pd.DataFrame, float, CostModel] | None = None):
+    """Portfolio version of `simulate_trades`: one OHLC frame per symbol, a GLOBAL cap of `max_positions`
+    open trades and at most one open trade per symbol.  When more entries compete for a slot on the same
+    day the lowest `spec.meta['rank']` wins (ties: symbol order).  Returns (daily_ret, trades, equity)
+    on the union calendar; each trade row carries its symbol.
+
+    hedge=(index_bars, ratio, index_cost): end-of-day beta hedge.  At every close the short index notional is
+    reset to ratio x the marked long book; its P&L accrues close-to-close and each adjustment pays index costs.
+    Intraday exposure on entry days is unhedged (that is how an EOD-hedged desk actually runs)."""
+    calendar = sorted(set().union(*[set(f.index) for f in frames.values()]))
+    idx = pd.DatetimeIndex(calendar)
+    arr: dict[str, dict] = {}
+    for sym, bars in frames.items():
+        b = bars.sort_index()
+        arr[sym] = {"pos": {d: i for i, d in enumerate(b.index)}, "bars": b,
+                    **{k: b[k].to_numpy() for k in ("open", "high", "low", "close")}}
+    by_day: dict[pd.Timestamp, list[tuple[str, TradeSpec]]] = {}
+    for sym, lst in specs.items():
+        if sym not in arr:
+            continue
+        for s in lst:
+            d = pd.Timestamp(s.date)
+            if d in arr[sym]["pos"] and arr[sym]["pos"][d] > 0:
+                by_day.setdefault(d, []).append((sym, s))
+    n = len(idx)
+    pnl_day = np.zeros(n)
+    hedge_pnl = np.zeros(n)
+    open_trades: list[dict] = []
+    trades = []
+    h_close = h_units = h_prev_close = None
+    if hedge is not None:
+        h_bars, h_ratio, h_cost = hedge
+        h_close = h_bars["close"].reindex(idx).ffill()
+        h_units, h_prev_close = 0.0, float(h_close.iloc[0])
+
+    def close_trade(tr, d, px, reason):
+        fill = cost.fill(px, -tr["side"])
+        gross = (fill - tr["entry_fill"]) * tr["side"] * tr["units"] * cost.multiplier
+        comm = 2 * cost.commission * tr["units"]
+        trades.append({"symbol": tr["sym"], "entry_date": tr["d0"], "exit_date": d, "side": tr["side"], "units": tr["units"],
+                       "entry": tr["entry_fill"], "exit": fill, "pnl": gross - comm, "days_held": tr["held"],
+                       "reason": reason, "tag": tr["spec"].tag, **tr["spec"].meta})
+        return (fill - tr["mark"]) * tr["side"] * tr["units"] * cost.multiplier - comm
+
+    for gi, d in enumerate(idx):
+        day_pnl = 0.0
+        busy = {tr["sym"] for tr in open_trades}
+        cands = sorted(by_day.get(d, []), key=lambda t: (t[1].meta.get("rank", 0), t[0]))
+        for sym, s in cands:
+            if len(open_trades) >= max_positions or sym in busy:
+                continue
+            a = arr[sym]
+            i = a["pos"][d]
+            fill = None
+            if s.entry == "open":
+                fill = cost.fill(a["open"][i], s.side)
+            elif s.entry == "close":
+                fill = cost.fill(a["close"][i], s.side)
+            elif s.entry == "stop" and s.entry_level is not None:
+                if s.side > 0 and a["high"][i] >= s.entry_level:
+                    fill = cost.fill(max(a["open"][i], s.entry_level), 1)
+                elif s.side < 0 and a["low"][i] <= s.entry_level:
+                    fill = cost.fill(min(a["open"][i], s.entry_level), -1)
+            elif s.entry == "limit" and s.entry_level is not None:      # passive: filled only if the day trades through
+                if s.side > 0 and a["low"][i] <= s.entry_level:
+                    fill = cost.fill(min(a["open"][i], s.entry_level), 1)
+                elif s.side < 0 and a["high"][i] >= s.entry_level:
+                    fill = cost.fill(max(a["open"][i], s.entry_level), -1)
+            if fill is None:
+                continue
+            if size.get("per_spec") and "notional" in s.meta:       # spec-level notional (e.g. vol-scaled slot)
+                units = float(s.meta["notional"]) / fill
+            else:
+                units = _units(size, fill)
+            open_trades.append({"spec": s, "sym": sym, "side": s.side, "units": units, "entry_fill": fill, "d0": d, "held": 0,
+                                "mark": fill, "stop": s.stop, "target": s.target, "entered_at_close": s.entry == "close",
+                                "best": fill, "new": True})
+            busy.add(sym)
+        still = []
+        for tr in open_trades:
+            a = arr[tr["sym"]]
+            i = a["pos"].get(d)
+            if i is None:                                   # symbol has no bar today (halt / data gap): carry
+                still.append(tr)
+                continue
+            s, side = tr["spec"], tr["side"]
+            tr["held"] += 1
+            o, h, l, c = a["open"][i], a["high"][i], a["low"][i], a["close"][i]
+            exited = False
+            if not (tr["new"] and tr["entered_at_close"]):
+                if s.trail_atr is not None:
+                    tr["best"] = max(tr["best"], h) if side > 0 else min(tr["best"], l)
+                    trail = tr["best"] - s.trail_atr if side > 0 else tr["best"] + s.trail_atr
+                    tr["stop"] = trail if tr["stop"] is None else (max(tr["stop"], trail) if side > 0 else min(tr["stop"], trail))
+                hit_stop = tr["stop"] is not None and ((side > 0 and l <= tr["stop"]) or (side < 0 and h >= tr["stop"]))
+                hit_tgt = tr["target"] is not None and ((side > 0 and h >= tr["target"]) or (side < 0 and l <= tr["target"]))
+                if hit_stop and (conservative or not hit_tgt):
+                    px = tr["stop"]
+                    if tr["new"]:
+                        px = min(px, o) if side > 0 else max(px, o)
+                    elif (side > 0 and o < tr["stop"]) or (side < 0 and o > tr["stop"]):
+                        px = o
+                    day_pnl += close_trade(tr, d, px, "stop"); exited = True
+                elif hit_tgt:
+                    px = tr["target"]
+                    if (side > 0 and o > px) or (side < 0 and o < px):
+                        px = o
+                    day_pnl += close_trade(tr, d, px, "target"); exited = True
+            if not exited:
+                row = a["bars"].iloc[i]
+                if (s.exit_on is not None and s.exit_on(row, i)) or tr["held"] >= s.max_hold or gi == n - 1:
+                    reason = "time" if tr["held"] >= s.max_hold else ("rule" if s.exit_on is not None else "end")
+                    day_pnl += close_trade(tr, d, c, reason); exited = True
+            if not exited:
+                day_pnl += (c - tr["mark"]) * side * tr["units"] * cost.multiplier
+                tr["mark"] = c
+                tr["new"] = False
+                still.append(tr)
+        open_trades = still
+        if hedge is not None:
+            px = float(h_close.iloc[gi])
+            hp = h_units * (px - h_prev_close)                                   # yesterday's hedge, close -> close
+            long_book = sum(tr["units"] * tr["mark"] * tr["side"] for tr in open_trades)
+            target = -h_ratio * long_book / px if px > 0 else 0.0
+            delta = abs(target - h_units)
+            if delta > 0:
+                hp -= delta * (px * h_cost.slippage_bps / 1e4 + h_cost.slippage_abs + h_cost.commission)
+            h_units, h_prev_close = target, px
+            hedge_pnl[gi] = hp
+            day_pnl += hp
+        pnl_day[gi] = day_pnl
+    daily_ret = pd.Series(pnl_day / capital, index=idx)
+    out = pd.DataFrame(trades)
+    if hedge is not None:
+        out.attrs["hedge_pnl"] = float(hedge_pnl.sum())
+    return daily_ret, out, M.equity_from_returns(daily_ret, capital)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. Portfolio-of-weights simulator
 # ══════════════════════════════════════════════════════════════════════════════
@@ -198,7 +343,11 @@ def simulate_weights(frames: dict[str, pd.DataFrame], weights: pd.DataFrame, cos
                      capital: float = 100_000.0):
     """weights: rows = decision dates (at the close), cols = symbols, values = target weight (sum <= 1).
     Executed at the NEXT open; the first day's return is open->close, later days close->close.
-    Turnover cost = cost_bps x |Δw| on each rebalance."""
+    Turnover cost = cost_bps x |Δw| on each rebalance.
+
+    Returns (daily_ret, trades, equity).  `trades` has one row per REBALANCE (date, turnover) plus
+    `trades.attrs['legs']`: a DataFrame of per-symbol round trips (weight goes 0 -> >0 -> 0) with
+    entry/exit dates and $ P&L net of that symbol's share of the turnover cost."""
     syms = list(weights.columns)
     closes = pd.DataFrame({s: frames[s]["close"] for s in syms}).sort_index()
     opens = pd.DataFrame({s: frames[s]["open"] for s in syms}).sort_index()
@@ -210,20 +359,37 @@ def simulate_weights(frames: dict[str, pd.DataFrame], weights: pd.DataFrame, cos
     turnover = np.zeros(len(idx))
     cc = closes.pct_change().fillna(0.0)
     oc = (closes / opens - 1.0).fillna(0.0)
+    gap = (opens / closes.shift() - 1.0).fillna(0.0)           # previous close -> today's open (old book's overnight)
+    open_leg: dict[str, dict] = {}
+    legs: list[dict] = []
     for i in range(1, len(idx)):
         want = w_target.iloc[i - 1]
         if not want.equals(w_prev):                            # rebalance at today's open
-            delta = (want - held).abs().sum()
+            dw = (want - held).abs()
+            delta = float(dw.sum())
             turnover[i] = delta
-            r = float((want * oc.iloc[i]).sum()) - delta * cost_bps / 1e4
+            contrib = held * gap.iloc[i] + want * oc.iloc[i] - dw * cost_bps / 1e4
+            for s in syms:
+                if held[s] == 0.0 and want[s] > 0.0:
+                    open_leg[s] = {"symbol": s, "entry_date": idx[i], "pnl": 0.0, "max_weight": float(want[s])}
             held = want.copy()
             w_prev = want.copy()
         else:
-            r = float((held * cc.iloc[i]).sum())
+            contrib = held * cc.iloc[i]
+        r = float(contrib.sum())
+        for s, leg in list(open_leg.items()):
+            leg["pnl"] += float(contrib[s]) * capital
+            leg["max_weight"] = max(leg["max_weight"], float(held[s]))
+            if held[s] == 0.0 or i == len(idx) - 1:
+                leg["exit_date"] = idx[i]
+                leg["days_held"] = int((idx[i] - leg["entry_date"]).days)
+                leg["reason"] = "rotation" if held[s] == 0.0 else "end"
+                legs.append(open_leg.pop(s))
         rets[i] = r
     daily_ret = pd.Series(rets, index=idx)
     trades = pd.DataFrame({"date": idx, "turnover": turnover})
     trades = trades[trades["turnover"] > 0]
+    trades.attrs["legs"] = pd.DataFrame(legs, columns=["symbol", "entry_date", "exit_date", "days_held", "max_weight", "pnl", "reason"])
     return daily_ret, trades, M.equity_from_returns(daily_ret, capital)
 
 

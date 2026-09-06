@@ -22,6 +22,11 @@ class CostModel:
         slip = 2 * (price * self.slippage_bps / 1e4 + self.slippage_abs) * self.multiplier
         return units * (2 * self.commission + slip)
 
+    def scaled(self, mult: float) -> "CostModel":
+        """Same instrument with commission and slippage multiplied (2.0 = the stage-gate cost stress)."""
+        return CostModel(commission=self.commission * mult, slippage_bps=self.slippage_bps * mult,
+                         slippage_abs=self.slippage_abs * mult, multiplier=self.multiplier)
+
 
 # Presets — edit to match your IBKR schedule.
 US_STOCK = CostModel(commission=0.005, slippage_bps=2.0, multiplier=1.0)         # IBKR Pro ~$0.005/sh, tight ETF spreads

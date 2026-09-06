@@ -30,12 +30,12 @@ KPI_CALC: dict[str, str] = {
     "worstmo": "|Worst calendar-month P&L| / starting NAV × 100.",
     "cvar": "Average of the worst 5% of daily returns (P&L/NAV), reported as a positive % loss of NAV.",
     "skew": "Skewness of monthly return series (monthly P&L / NAV).",
-    "coststress": "Not recomputed here — needs a 2× slippage re-run of the sleeve.",
+    "coststress": "Sharpe of the same config re-run with commission and slippage doubled (research-tune cost2x trial).",
     "oosis": "First half of the equity window = IS, second half = OOS. Ratio = OOS Sharpe / IS Sharpe.",
-    "wfe": "Approximated as the same OOS/IS Sharpe ratio (no rolling re-optimization loop).",
-    "dsr": "Bailey-style deflated Sharpe approx: P(true SR>0) with n_trials=1 for this published config.",
-    "pbo": "Not computed — needs a combinatorial trial archive of alternate configs (CSCV).",
-    "paramsens": "Not computed — needs re-runs with each free parameter ±20%.",
+    "wfe": "Anchored walk-forward over the trial grid: pick the IS-best config before each fold, trade the fold; stitched OOS Sharpe / mean IS Sharpe. Falls back to the OOS/IS ratio when no trial grid exists.",
+    "dsr": "Bailey & López de Prado deflated Sharpe: P(true SR>0) after the number of distinct configs in the trial log (n_trials=1 when untuned).",
+    "pbo": "CSCV probability of backtest overfitting over the trial grid (8 blocks, all half/half splits). Blank when no trial grid exists.",
+    "paramsens": "Max Sharpe degradation when each numeric parameter of the chosen config is shifted ±20% (research-tune). Blank when untuned.",
     "boot": "200× bootstrap resamples of the daily-return series; 5th percentile Sharpe.",
     "regimes": "Count of distinct calendar years on the equity curve.",
     "triallog": "True when this run is logged with catalog id, metrics.json, and dated GCS keys.",
@@ -45,7 +45,7 @@ KPI_CALC: dict[str, str] = {
     "netdelta": "Not computed — option/future delta not stored on the research trade log.",
     "payoff": "Average winning trade $ ÷ |average losing trade $|.",
     "expect": "Mean P&L per closed trade in USD.",
-    "margin": "Engine exposure_pct when present (time-in-market), used as a coarse utilization proxy.",
+    "margin": "Equity sleeves: peak gross open notional / NAV ÷ 2 (Reg-T 50% initial margin) from the trade log; portfolio-of-weights sleeves: peak gross weight ÷ 2. Options books: not computed here.",
     "stress": "Not computed — no full-book revaluation under spot±10% / vol+10.",
     "incmonths": "Blank until paper/small-live incubation is run.",
     "inctrades": "Blank until an incubation trade log exists.",
@@ -223,6 +223,39 @@ def _parse_trades(raw: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _peak_gross_notional(trades: list[dict[str, Any]], nav: float) -> float | None:
+    """Peak of the summed open notional across the trade log (entry .. exit inclusive)."""
+    events: dict[str, float] = {}
+    found = False
+    for row in trades:
+        raw = row.get("raw") or {}
+        start = (raw.get("entry_date") or "").strip()[:10]
+        end = (raw.get("exit_date") or "").strip()[:10]
+        if not start or not end:
+            continue
+        notional = None
+        if raw.get("max_weight") not in (None, ""):
+            w = _f(raw.get("max_weight"))
+            notional = None if w is None else w * nav
+        else:
+            units, entry = _f(raw.get("units")), _f(raw.get("entry"))
+            if units is not None and entry is not None:
+                notional = abs(units * entry)
+        if notional is None:
+            continue
+        found = True
+        events[start] = events.get(start, 0.0) + notional
+        # the exit day still carries the position; release it the day after
+        events[end + "~"] = events.get(end + "~", 0.0) - notional
+    if not found:
+        return None
+    running = peak = 0.0
+    for key in sorted(events):
+        running += events[key]
+        peak = max(peak, running)
+    return peak
+
+
 def _monthly(dates: list[str], rets: list[float]) -> dict[str, float]:
     buckets: dict[str, float] = {}
     for day, ret in zip(dates, rets, strict=False):
@@ -300,14 +333,16 @@ def _stage_verdict(stage: dict[str, Any], values: dict[str, Any]) -> dict[str, A
                 "status": status,
             }
         )
-    if any_fail_crit or any_fail:
-        verdict = "FAIL"
-    elif filled == 0:
+    # Same roll-up as the Options Strategy KPI Dashboard template: only a CRITICAL fail fails the stage;
+    # a non-critical fail or any warn is WARN; an incomplete stage cannot be PASS.
+    if filled == 0:
         verdict = "N/A"
-    elif any_warn:
+    elif any_fail_crit:
+        verdict = "FAIL"
+    elif any_fail or any_warn:
         verdict = "WARN"
     else:
-        verdict = "PASS"
+        verdict = "PASS" if filled == len(stage["kpis"]) else "WARN"
     return {
         "id": stage["id"],
         "name": stage["name"],
@@ -315,14 +350,17 @@ def _stage_verdict(stage: dict[str, Any], values: dict[str, Any]) -> dict[str, A
         "verdict": verdict,
         "filled": filled,
         "total": len(stage["kpis"]),
+        "incomplete": filled < len(stage["kpis"]),
         "kpis": rows,
     }
 
 
-def _overall(stages: list[dict[str, Any]]) -> str:
+def _overall(stages: list[dict[str, Any]], only: set[str] | None = None) -> str:
     order = {"FAIL": 3, "WARN": 2, "PASS": 1, "N/A": 0}
     worst = "N/A"
     for stage in stages:
+        if only is not None and stage["id"] not in only:
+            continue
         if order.get(stage["verdict"], 0) > order.get(worst, 0):
             worst = stage["verdict"]
     return worst
@@ -336,6 +374,7 @@ def build_scorecard(
     metrics: dict[str, Any],
     equity_csv: str = "",
     trades_csv: str = "",
+    tuning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     stats = metrics.get("stats") if isinstance(metrics.get("stats"), dict) else {}
     extra = metrics.get("extra") if isinstance(metrics.get("extra"), dict) else {}
@@ -406,6 +445,41 @@ def build_scorecard(
             samples.sort()
             boot = samples[max(0, int(len(samples) * 0.05) - 1)]
 
+    tune = tuning if isinstance(tuning, dict) else {}
+    coststress = paramsens = pbo = wfe = None
+    tuning_summary: dict[str, Any] | None = None
+    if tune:
+        cs = tune.get("cost_stress") or {}
+        coststress = _f(cs.get("sharpe")) if cs.get("ok", True) else None
+        paramsens = _f((tune.get("sensitivity") or {}).get("max_degradation_pct"))
+        pbo = _f((tune.get("pbo") or {}).get("pbo_pct"))
+        wfe = _f((tune.get("walk_forward") or {}).get("wfe"))
+        tune_dsr = _f((tune.get("dsr") or {}).get("probability"))
+        if tune_dsr is not None:
+            dsr = tune_dsr
+        chosen = tune.get("chosen") or {}
+        tuning_summary = {
+            "generated_at": tune.get("generated_at"),
+            "n_grid_trials": tune.get("n_grid_trials"),
+            "n_trials_logged": tune.get("n_trials_logged"),
+            "grid": tune.get("grid"),
+            "chosen_params": chosen.get("params"),
+            "chosen_args": chosen.get("args"),
+            "is_sharpe": chosen.get("is_sharpe"),
+            "oos_sharpe": chosen.get("oos_sharpe"),
+            "selection_rule": (tune.get("selection") or {}).get("rule"),
+            "constraints": (tune.get("selection") or {}).get("constraints"),
+            "constraints_relaxed": (tune.get("selection") or {}).get("constraints_relaxed"),
+            "top5": (tune.get("selection") or {}).get("top5"),
+            "cost_stress": cs,
+            "sensitivity": (tune.get("sensitivity") or {}).get("shifts"),
+            "walk_forward": tune.get("walk_forward"),
+            "pbo": tune.get("pbo"),
+            "dsr": tune.get("dsr"),
+        }
+
+    peak_gross = _peak_gross_notional(trades, NAV) if strategy.get("book") == "equities" else None
+
     years_covered = len({d[:4] for d in dates if len(d) >= 4})
     start = dates[0] if dates else None
     end = dates[-1] if dates else None
@@ -423,12 +497,12 @@ def build_scorecard(
         "worstmo": None if worstmo is None else round(worstmo, 3),
         "cvar": None if cvar is None else round(cvar, 3),
         "skew": None if (sk := _skew(month_rets)) is None else round(sk, 3),
-        "coststress": None,
+        "coststress": None if coststress is None else round(coststress, 3),
         "oosis": None if oosis is None else round(oosis, 3),
-        "wfe": None if oosis is None else round(oosis, 3),
+        "wfe": (None if oosis is None else round(oosis, 3)) if wfe is None else round(wfe, 3),
         "dsr": None if dsr is None else round(dsr, 3),
-        "pbo": None,
-        "paramsens": None,
+        "pbo": None if pbo is None else round(pbo, 1),
+        "paramsens": None if paramsens is None else round(paramsens, 1),
         "boot": None if boot is None else round(boot, 3),
         "regimes": years_covered or None,
         "triallog": True,
@@ -438,7 +512,7 @@ def build_scorecard(
         "netdelta": None,
         "payoff": None if payoff is None else round(payoff, 3),
         "expect": None if expect is None else round(expect, 2),
-        "margin": _f(stats.get("exposure_pct")),
+        "margin": None if peak_gross is None else round(peak_gross / NAV / 2.0 * 100.0, 1),
         "stress": None,
         "incmonths": None,
         "inctrades": None,
@@ -453,7 +527,10 @@ def build_scorecard(
     }
 
     stages = [_stage_verdict(stage, values) for stage in STAGES]
-    overall = _overall(stages)
+    # The research gate is what a backtest can decide (Stages 1-2). Stages 3-5 need attribution,
+    # incubation and live logs, so they stay WARN/N/A here and are rolled up separately.
+    overall = _overall(stages, only={"s1", "s2"})
+    overall_all = _overall(stages)
     notes: list[str] = []
     if int(stats.get("days") or 0) < 30 or (stats.get("years") or 0) < 2:
         notes.append(
@@ -463,6 +540,16 @@ def build_scorecard(
         notes.append(str(extra["pricing"]))
     if extra.get("days_with_chain") == 1:
         notes.append("GEX used a live SPX chain snapshot (1 day). gex_z and trades need ≥20 snapshot days.")
+    if tuning_summary:
+        notes.append(
+            f"Tuned by research-tune: {tuning_summary.get('n_trials_logged')} distinct configs in the trial log; "
+            "config chosen on the in-sample 60% by plateau score, OOS 40% untouched by selection. "
+            "DSR / PBO / WFE / ±20% / 2× cost come from that trial archive."
+        )
+        if tuning_summary.get("constraints_relaxed"):
+            notes.append("No grid point met the trade-count / drawdown constraints; selection fell back to the full grid.")
+    for note in extra.get("notes") or []:
+        notes.append(str(note))
 
     banner = {
         "net_pnl_usd": None if net_pnl is None else round(net_pnl, 2),
@@ -491,6 +578,7 @@ def build_scorecard(
         "window": {"start": start, "end": end},
         "generated_at": datetime.now(NY).isoformat(),
         "overall": overall,
+        "overall_all_stages": overall_all,
         "values": values,
         "stages": stages,
         "banner": banner,
@@ -505,6 +593,7 @@ def build_scorecard(
         "worst_month": worst_month,
         "equity": equity[:: max(1, len(equity) // 240)][:240] if equity else [],
         "calc": KPI_CALC,
+        "tuning": tuning_summary,
     }
 
 
@@ -580,6 +669,50 @@ def render_scorecard_html(card: dict[str, Any]) -> str:
         ("Calmar", banner.get("calmar"), f"PF {banner.get('profit_factor')}"),
         ("Expectancy", money(banner.get("expectancy_usd")), "per closed trade"),
     ]
+    tuning_html = ""
+    tune = card.get("tuning") or {}
+    if tune:
+        top_rows = "".join(
+            f"<tr><td class='kname'>{esc(json.dumps(t.get('params'), default=str))}</td><td>{esc(t.get('plateau'))}</td>"
+            f"<td>{esc(t.get('is_sharpe'))}</td><td>{esc(t.get('oos_sharpe'))}</td><td>{esc(t.get('sharpe'))}</td>"
+            f"<td>{esc(t.get('trades'))}</td><td>{esc(t.get('maxdd'))}</td></tr>"
+            for t in tune.get("top5") or []
+        )
+        sens_rows = "".join(
+            f"<tr><td class='kname'>{esc(s.get('purpose'))} {esc(json.dumps(s.get('params'), default=str))}</td>"
+            f"<td>{esc(s.get('sharpe'))}</td><td>{esc(s.get('degradation_pct'))}%</td></tr>"
+            for s in tune.get("sensitivity") or []
+        )
+        wf = tune.get("walk_forward") or {}
+        wf_rows = "".join(
+            f"<tr><td class='kname'>fold {esc(p.get('fold'))} · {esc(p.get('test_start'))} → {esc(p.get('test_end'))}</td>"
+            f"<td>{esc(json.dumps(p.get('params'), default=str))}</td><td>{esc(p.get('is_sharpe'))}</td><td>{esc(p.get('oos_sharpe'))}</td></tr>"
+            for p in wf.get("picks") or []
+        )
+        cs = tune.get("cost_stress") or {}
+        pbo = tune.get("pbo") or {}
+        dsr = tune.get("dsr") or {}
+        tuning_html = (
+            "<section><div class='sec-head'><h2>Tuning audit (research-tune)</h2>"
+            f"<span class='sub'>{esc(tune.get('generated_at'))}</span></div>"
+            f"<div class='sec-desc'>Grid {esc(json.dumps(tune.get('grid'), default=str))} · {esc(tune.get('n_grid_trials'))} grid trials this run, "
+            f"{esc(tune.get('n_trials_logged'))} distinct configs in the cumulative trial log.<br/>"
+            f"Selection: {esc(tune.get('selection_rule'))}. Constraints {esc(json.dumps(tune.get('constraints'), default=str))}"
+            f"{' (relaxed)' if tune.get('constraints_relaxed') else ''}.<br/>"
+            f"Chosen {esc(json.dumps(tune.get('chosen_params'), default=str))} · IS Sharpe {esc(tune.get('is_sharpe'))} · OOS Sharpe {esc(tune.get('oos_sharpe'))} · "
+            f"2× cost Sharpe {esc(cs.get('sharpe'))} (CAGR {esc(cs.get('cagr_pct'))}%) · "
+            f"PBO {esc(pbo.get('pbo_pct'))}% over {esc(pbo.get('combos'))} CSCV splits · "
+            f"DSR {esc(dsr.get('probability'))} with n_trials={esc(dsr.get('n_trials'))} · "
+            f"WFE {esc(wf.get('wfe'))} (stitched OOS Sharpe {esc(wf.get('oos_sharpe'))} / IS mean {esc(wf.get('is_sharpe_mean'))}).</div>"
+            "<table><thead><tr><th>Top plateau candidates</th><th>Plateau</th><th>IS Sharpe</th><th>OOS Sharpe</th><th>Full Sharpe</th><th>Trades</th><th>Max DD</th></tr></thead>"
+            f"<tbody>{top_rows}</tbody></table>"
+            + ("<table><thead><tr><th>±20% parameter shift</th><th>Sharpe</th><th>Degradation</th></tr></thead>"
+               f"<tbody>{sens_rows}</tbody></table>" if sens_rows else "")
+            + ("<table><thead><tr><th>Walk-forward fold</th><th>Config picked on prior data</th><th>IS Sharpe</th><th>OOS Sharpe</th></tr></thead>"
+               f"<tbody>{wf_rows}</tbody></table>" if wf_rows else "")
+            + "</section>"
+        )
+
     overall_cls = (card.get("overall") or "na").lower()
     gate_html = "".join(
         f"<div class='gate {overall_cls if i == 0 else ''}'><h3>{esc(title)}</h3>"
@@ -635,6 +768,7 @@ def render_scorecard_html(card: dict[str, Any]) -> str:
   {"<div class='card'><div class='kname'>Notes</div><ul>" + notes + "</ul></div>" if notes else ""}
   {"<section><div class='sec-head'><h2>P&L by year</h2></div><table><thead><tr><th>Year</th><th>Trades</th><th>Net P&L</th></tr></thead><tbody>" + year_rows + "</tbody></table></section>" if year_rows else ""}
   {"".join(stages_html)}
+  {tuning_html}
   <p class="sub">Work stages in order. A sleeve that passes Stages 1–2 but fails Stage 3 is a research artifact, not a tradable product.</p>
 </div></body></html>
 """

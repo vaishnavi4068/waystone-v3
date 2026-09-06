@@ -515,6 +515,50 @@ def research_run(
         raise typer.Exit(code=1)
 
 
+@app.command("research-tune")
+def research_tune(
+    strategy: str = typer.Option(..., "--strategy", help="Catalog id to tune."),
+    script_index: int = typer.Option(0, "--script", help="Index into catalog scripts[] (variant)."),
+    workers: int | None = typer.Option(None, "--workers", help="Parallel backtest processes."),
+    apply: bool = typer.Option(
+        False, "--apply", help="Write the chosen args into catalog.json and re-run the sleeve."
+    ),
+    years: float = typer.Option(5, "--years"),
+    min_years: float = typer.Option(2, "--min-years"),
+) -> None:
+    """Grid-tune one sleeve with a full trial log, plateau selection, 2x cost stress,
+    ±20% sensitivity, anchored walk-forward, CSCV PBO and the deflated Sharpe.
+
+    Writes results/<variant>/tuning.json + trials.csv, which the scorecard reads.
+    """
+    from waystone3.research.ops import post_status
+    from waystone3.research.tune import Tuner
+
+    tuner = Tuner(
+        strategy, script_index=script_index, workers=workers, years=years, min_years=min_years,
+        log=console.print,
+    )
+    post_status("tune", f"Tuning {strategy}", f"grid={len(tuner.grid)} params")
+    out = tuner.tune()
+    chosen = out["chosen"]
+    if apply:
+        path = tuner.apply(chosen["args"])
+        console.print(f"  catalog updated -> {path}")
+        from waystone3.research.run import run_strategies
+
+        report = run_strategies(strategy_id=strategy, years=years, min_years=min_years)
+        for row in report.results:
+            console.print(f"  {'ok' if row.ok else 'FAIL'} {' '.join(row.command[-8:])}")
+    cs = out.get("cost_stress") or {}
+    post_status(
+        "tune_done",
+        f"Tuned {strategy}",
+        f"sharpe={chosen['stats'].get('sharpe')} trades={chosen['stats'].get('trades')} "
+        f"maxDD={chosen['stats'].get('max_drawdown_pct')} cost2x={cs.get('sharpe')} "
+        f"WFE={out['walk_forward'].get('wfe')} PBO={out['pbo'].get('pbo_pct')} DSR={out['dsr'].get('probability')}",
+    )
+
+
 @app.command("research-scorecard")
 def research_scorecard(
     strategy: str | None = typer.Option(None, "--strategy", help="One catalog id, or all."),
@@ -523,6 +567,7 @@ def research_scorecard(
     from waystone3.research.catalog import get_strategy, list_strategies
     from waystone3.research.publish import _results_dir, result_folders, variant_name
     from waystone3.research.scorecard import build_scorecard, write_local_scorecard
+    from waystone3.research.tune import load_tuning
 
     results = _results_dir()
     rows = [get_strategy(strategy)] if strategy else list_strategies()
@@ -555,6 +600,7 @@ def research_scorecard(
                 trades_csv=(folder / "trades.csv").read_text()
                 if (folder / "trades.csv").is_file()
                 else "",
+                tuning=load_tuning(folder),
             )
             path = write_local_scorecard(folder, card)
             console.print(f"  {sid} {card.get('overall')} {path}")

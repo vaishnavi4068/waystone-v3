@@ -64,7 +64,12 @@ def load_daily(symbol: str, start: str | None = None, end: str | None = None) ->
         df = df[df.index >= pd.Timestamp(start)]
     if end:
         df = df[df.index <= pd.Timestamp(end)]
-    return df[DAILY_COLS + [c for c in ("adj_close",) if c in df.columns]].astype(float)
+    df = df[DAILY_COLS + [c for c in ("adj_close",) if c in df.columns]].astype(float)
+    # bad prints (e.g. an unadjusted high on a split day): a wick more than 30% beyond both open and close is clipped
+    oc_hi, oc_lo = df[["open", "close"]].max(axis=1), df[["open", "close"]].min(axis=1)
+    df["high"] = df["high"].where(df["high"] <= oc_hi * 1.3, oc_hi)
+    df["low"] = df["low"].where(df["low"] >= oc_lo * 0.7, oc_lo)
+    return df
 
 
 def load_many(symbols: list[str], start=None, end=None, strict: bool = False) -> dict[str, pd.DataFrame]:

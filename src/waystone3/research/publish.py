@@ -26,6 +26,8 @@ from waystone3.research.paths import (
     success_key,
     toolkit_root,
     trades_key,
+    trials_key,
+    tuning_key,
 )
 from waystone3.research.scorecard import (
     build_scorecard,
@@ -33,6 +35,7 @@ from waystone3.research.scorecard import (
     render_scorecard_html,
     write_local_scorecard,
 )
+from waystone3.research.tune import load_tuning
 from waystone3.research.window import years_from_equity
 
 
@@ -133,6 +136,19 @@ def publish_results(
                     (folder / "trades.csv").read_bytes(),
                     "text/csv",
                 )
+            tuning = load_tuning(folder)
+            if tuning is not None:
+                reports.put(
+                    tuning_key(sid, day, variant),
+                    (folder / "tuning.json").read_bytes(),
+                    "application/json",
+                )
+            if (folder / "trials.csv").is_file():
+                reports.put(
+                    trials_key(sid, day, variant),
+                    (folder / "trials.csv").read_bytes(),
+                    "text/csv",
+                )
             metrics = json.loads((folder / "metrics.json").read_text())
             catalog = get_strategy(sid) or {"id": sid, "name": sid}
             card = build_scorecard(
@@ -146,6 +162,7 @@ def publish_results(
                 trades_csv=(folder / "trades.csv").read_text()
                 if (folder / "trades.csv").is_file()
                 else "",
+                tuning=tuning,
             )
             write_local_scorecard(folder, card)
             reports.put(
