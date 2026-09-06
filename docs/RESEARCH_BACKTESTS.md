@@ -89,6 +89,38 @@ Read APIs (bearer): `GET /api/strategies`, `GET /api/strategies/{id}`, `GET /api
 
 Preview without a published run: staged fixture date `2026-08-14` (also used when `IBKR_STAGED=1` / no bucket).
 
+## Tuning (research-tune)
+
+```sh
+uv run waystone3 research-tune --strategy 08_pead_implied_move --workers 4 --apply
+```
+
+Grid-tunes one sleeve from `catalog.json` (`scripts[].grid` + `constraints`) and writes
+`results/<variant>/tuning.json` + `trials.csv`, which the scorecard reads for the Stage 2 KPIs:
+
+- every grid point is logged (the trial log is cumulative across runs; the DSR uses the total count);
+- selection is on the in-sample 60 % by *plateau* score (a point's Sharpe averaged with its grid
+  neighbours), so a lone spike never wins; the OOS 40 % is untouched by selection;
+- anchored walk-forward efficiency, CSCV probability of backtest overfitting, ±20 % parameter shifts and
+  a 2× cost run (`--cost-mult 2`) are computed on the chosen point;
+- `--apply` writes the chosen args back into the catalog and re-runs the sleeve.
+
+`gate_profile: regime_filter` (07) marks trade-count / PF / payoff / expectancy N/A and reports the
+filtered-vs-base Sharpe uplift instead: a switch is judged by what it does to the sleeves it gates.
+
+### Equity sleeves — what tuning found (2021-09 → 2026-07, NSDQ250 universe)
+
+| sleeve | before | after | what changed | still short of the gate |
+|---|---|---|---|---|
+| 01 mean reversion | single-name, ~20 trades | pullback portfolio, Sharpe 1.39, 1.7k trades, DD −13 % | RSI-2 dips above SMA200 across ~500 names, passive ATR-limit entries, earnings avoidance, 10 slots | Sharpe 1.5 |
+| 06 sector rotation | Sharpe 0.67, DD −18 % | Sharpe 1.04, DD −9 %, 2× cost 1.02 | sector **+ industry** ETFs, ex-ante vol target 8–12 %, T-bill yield on cash; defensive/GLD fallback and inverse-vol tested, no uplift | Sharpe 1.5; 96 legs < 100 |
+| 07 breadth regime | on/off switch, Sharpe 0.57 | best variant ≈ SMA200 base (0.65); PBO 83 % | hysteresis, sizing and thrust variants; gating 01 on breadth *lowers* return (a dip-buyer wants washed-out breadth) | no standalone timing value — diagnostic input only |
+| 08 PEAD | Sharpe 0.73, PF 1.3 | Sharpe ~1.3, PF ≥ 2.1, DD −9 %, 400 trades | event study on 9.6k events: unconditioned drift = SPY beta, shorts after misses drift *up*; require EPS beat ≥ 10 %, skip top-of-range closes, **no stop** (stops forfeit the drift), hold 20 | Sharpe 1.5 |
+
+Things that were tried and rejected because they only fit the sample: market-regime gating and beta
+hedging on 01 and 08 (the dollar alpha is a few bp per trade, the hedge costs more than it saves),
+weekly rebalancing on 06, risk-adjusted momentum scores, gap-fill and ATR stops on PEAD.
+
 ## Mac worker + Grok Bot
 
 This Linux cloud VM cannot run the 5-year jobs. Start a worker on the Mac

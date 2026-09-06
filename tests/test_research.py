@@ -265,3 +265,28 @@ def test_scorecard_gates_from_equity_and_trades() -> None:
     html = render_scorecard_html(card)
     assert "Mean reversion" in html
     assert "Stage 1" in html
+
+
+def test_scorecard_regime_filter_profile_skips_trade_gates() -> None:
+    metrics = {
+        "stats": {"sharpe": 0.65, "max_drawdown_pct": -21.0, "cagr_pct": 7.0, "trades": 15, "years": 5.0, "days": 1250},
+        "params": {"mode": "hyst", "thr": 40},
+        "extra": {"comparison": {"base": 0.66, "hyst": 0.65}, "base_max_dd_pct": -22.5},
+    }
+    equity = "date,equity,daily_ret\n" + "".join(
+        f"2023-01-{(i % 28) + 1:02d},100000,{0.001 if i % 3 else -0.0005}\n" for i in range(80)
+    )
+    card = build_scorecard(
+        strategy={"id": "07_breadth_regime", "name": "Breadth", "book": "equities", "gate_profile": "regime_filter"},
+        variant="hyst",
+        day="2023-01-28",
+        metrics=metrics,
+        equity_csv=equity,
+        trades_csv="exit_date,pnl\n2023-01-10,120\n2023-01-20,-40\n",
+    )
+    values = card["values"]
+    assert values["ntrades"] is None and values["pf"] is None and values["payoff"] is None
+    assert values["filter_uplift"] == -0.01
+    stage1 = card["stages"][0]
+    assert {k["id"]: k["status"] for k in stage1["kpis"]}["ntrades"] == "na"
+    assert any("Regime-filter profile" in note and "uplift -0.01" in note for note in card["notes"])
