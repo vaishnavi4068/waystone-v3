@@ -1,5 +1,6 @@
 {
   "name": "waystone-v3",
+  "install": "cd /workspace && set -a && [ -f .env ] && . ./.env; set +a && uv sync --extra research && (cd frontend && npm install)",
   "start": "true",
   "ports": [
     { "name": "hq-ui", "port": 3001 },
@@ -8,13 +9,18 @@
   "terminals": [
     {
       "name": "dash-api",
-      "command": "cd /workspace && export GOOGLE_APPLICATION_CREDENTIALS=\"${GOOGLE_APPLICATION_CREDENTIALS:-}\" IBKR_REPORTS_BUCKET=\"${IBKR_REPORTS_BUCKET:-waystone-data}\" WAYSTONE_DB=\"${WAYSTONE_DB:-/workspace/arena.db}\" IBKR_STAGED=0 && .venv/bin/waystone3 api-serve --host 0.0.0.0 --port 9200",
+      "command": "cd /workspace && set -a && [ -f .env ] && . ./.env; set +a && export GOOGLE_APPLICATION_CREDENTIALS=\"${GOOGLE_APPLICATION_CREDENTIALS:-}\" IBKR_REPORTS_BUCKET=\"${IBKR_REPORTS_BUCKET:-waystone-data}\" WAYSTONE_DB=\"${WAYSTONE_DB:-/workspace/arena.db}\" IBKR_STAGED=0 && .venv/bin/waystone3 api-serve --host 0.0.0.0 --port 9200",
       "description": "HQ research API on port 9200 (GCS strategies + scorecards)"
     },
     {
       "name": "dash-ui",
       "command": "cd /workspace/frontend && npm run dev",
       "description": "HQ Next.js UI on port 3001 — open /strategies after port forward"
+    },
+    {
+      "name": "sentiment-daily",
+      "command": "cd /workspace && set -a && [ -f .env ] && . ./.env; set +a && ./scripts/sentiment-daily.sh",
+      "description": "Daily sentiment fetch (FnG, Yahoo, SEC, GDELT, Massive news when MASSIVE_API_KEY is set)"
     }
   ]
 }

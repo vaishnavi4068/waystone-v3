@@ -11,6 +11,12 @@
 # Install (Linux, cron):   10 22 * * 1-5  cd /path/to/waystone-v3 && ./scripts/sentiment-daily.sh >> /tmp/sentiment.log 2>&1
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
 cd "$ROOT/waystone_backtests"
 PY="${PYTHON:-$ROOT/.venv/bin/python}"
 [ -x "$PY" ] || PY=python3
