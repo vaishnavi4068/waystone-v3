@@ -6,17 +6,74 @@
       "folder": "strategies/01_mean_reversion",
       "name": "Mean reversion",
       "book": "equities",
-      "instruments": "SPY, QQQ, IWM, DIA, liquid large caps",
-      "holding_period": "1–10 days",
-      "summary": "Fade 2–3 day oversold moves inside an uptrend (Bollinger) and trade NR7 range expansion. Opposite driver to V221 / VWAP continuation.",
-      "rule_sketch": "Signal at close t, fill at next open. bb: %b below 0 and close above SMA200, exit on close back above SMA20 or max hold. nr7: buy/sell stops off the compressed day's range with an ATR stop.",
-      "data_sources": ["nsdq250", "massive", "yahoo"],
-      "daily_symbols": ["SPY", "QQQ", "IWM", "DIA", "AAPL", "MSFT", "NVDA"],
+      "instruments": "~500 liquid US large caps (NSDQ250 universe), SPY regime",
+      "holding_period": "2\u20136 sessions",
+      "summary": "Cross-sectional pullback portfolio: buy the most oversold names (RSI-2) inside their own 200-day uptrend, \u226410 names at once, exit on the first strength. bb / nr7 single-symbol modes remain in the script for reference.",
+      "rule_sketch": "Signal at close t: close > SMA200, RSI(2) < entry, no earnings inside the hold window. Rank by RSI; resting limit at close - k\u00d7ATR(14) for the next session (passive fill, no spread crossing), \u226410 names, equal notional. Exit at the close when RSI(2) > 70 or close > SMA5, or after max_hold sessions.",
+      "data_sources": [
+        "nsdq250",
+        "massive",
+        "yahoo"
+      ],
+      "daily_symbols": [
+        "SPY",
+        "QQQ",
+        "IWM",
+        "DIA",
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "JPM",
+        "XOM",
+        "UNH"
+      ],
       "intraday_roots": [],
-      "modes": ["bb", "nr7"],
+      "modes": [
+        "pullback"
+      ],
       "scripts": [
-        {"args": ["--mode", "bb"]},
-        {"args": ["--mode", "nr7"]}
+        {
+          "args": [
+            "--mode",
+            "pullback",
+            "--universe",
+            "nsdq250.csv",
+            "--max-positions",
+            "10",
+            "--entry-atr",
+            "1.0",
+            "--rsi-entry",
+            "10",
+            "--rsi-exit",
+            "60",
+            "--max-hold",
+            "4"
+          ],
+          "grid": {
+            "--entry-atr": [
+              0.75,
+              1.0,
+              1.25
+            ],
+            "--rsi-entry": [
+              10,
+              15
+            ],
+            "--rsi-exit": [
+              60,
+              70
+            ],
+            "--max-hold": [
+              4,
+              5,
+              6
+            ]
+          },
+          "constraints": {
+            "min_trades": 200,
+            "max_dd_pct": 15
+          }
+        }
       ]
     },
     {
@@ -27,14 +84,34 @@
       "instruments": "MES/ES (signal from SPX options)",
       "holding_period": "Intraday, open to close",
       "summary": "Dealer gamma positioning sets the intraday regime: long-gamma pins and mean-reverts; short-gamma trends. Reads positioning, not price.",
-      "rule_sketch": "Build GEX from the SPX chain (OI × gamma). Trade MES/ES gap-fade or wall-revert when gex_z and walls agree. Signal from the prior close / overnight snapshot.",
-      "data_sources": ["nsdq250", "massive"],
-      "daily_symbols": ["AAPL"],
-      "intraday_roots": ["MNQ"],
-      "modes": ["gap_fade", "wall_revert"],
+      "rule_sketch": "Build GEX from the SPX chain (OI \u00d7 gamma). Trade MES/ES gap-fade or wall-revert when gex_z and walls agree. Signal from the prior close / overnight snapshot.",
+      "data_sources": [
+        "nsdq250",
+        "massive"
+      ],
+      "daily_symbols": [
+        "AAPL"
+      ],
+      "intraday_roots": [
+        "MNQ"
+      ],
+      "modes": [
+        "gap_fade",
+        "wall_revert"
+      ],
       "scripts": [
-        {"args": ["--mode", "gap_fade"]},
-        {"args": ["--mode", "wall_revert"]}
+        {
+          "args": [
+            "--mode",
+            "gap_fade"
+          ]
+        },
+        {
+          "args": [
+            "--mode",
+            "wall_revert"
+          ]
+        }
       ]
     },
     {
@@ -43,14 +120,25 @@
       "name": "Vol carry put spreads",
       "book": "options",
       "instruments": "XSP / SPX put credit spreads",
-      "holding_period": "10–25 days (45 DTE → 21 DTE)",
+      "holding_period": "10\u201325 days (45 DTE \u2192 21 DTE)",
       "summary": "Harvest the variance risk premium by selling put spreads only in VIX/VIX3M contango. Mirror image of the VWAP book, which buys premium.",
-      "rule_sketch": "Gate on VIX/VIX3M < 0.95 and VIX not at the cheap extreme. Sell ~15-delta put, buy 1% lower. Exit at 50% max profit, 2× credit stop, or 21 DTE.",
-      "data_sources": ["yahoo", "massive"],
-      "daily_symbols": ["^GSPC", "^VIX", "^VIX3M"],
+      "rule_sketch": "Gate on VIX/VIX3M < 0.95 and VIX not at the cheap extreme. Sell ~15-delta put, buy 1% lower. Exit at 50% max profit, 2\u00d7 credit stop, or 21 DTE.",
+      "data_sources": [
+        "yahoo",
+        "massive"
+      ],
+      "daily_symbols": [
+        "^GSPC",
+        "^VIX",
+        "^VIX3M"
+      ],
       "intraday_roots": [],
-      "modes": ["default"],
-      "scripts": [{}]
+      "modes": [
+        "default"
+      ],
+      "scripts": [
+        {}
+      ]
     },
     {
       "id": "04_calendar_effects",
@@ -61,14 +149,40 @@
       "holding_period": "A few sessions around the event",
       "summary": "Turn-of-month drift, FOMC announcement drift, and opex-week patterns on the index future.",
       "rule_sketch": "Long around month-end / FOMC / opex windows from fomc_dates.csv. Fill next open; flat after the window. Costs always on.",
-      "data_sources": ["nsdq250", "massive", "yahoo"],
-      "daily_symbols": ["SPY", "QQQ"],
+      "data_sources": [
+        "nsdq250",
+        "massive",
+        "yahoo"
+      ],
+      "daily_symbols": [
+        "SPY",
+        "QQQ"
+      ],
       "intraday_roots": [],
-      "modes": ["tom", "fomc", "opex"],
+      "modes": [
+        "tom",
+        "fomc",
+        "opex"
+      ],
       "scripts": [
-        {"args": ["--mode", "tom"]},
-        {"args": ["--mode", "fomc"]},
-        {"args": ["--mode", "opex"]}
+        {
+          "args": [
+            "--mode",
+            "tom"
+          ]
+        },
+        {
+          "args": [
+            "--mode",
+            "fomc"
+          ]
+        },
+        {
+          "args": [
+            "--mode",
+            "opex"
+          ]
+        }
       ]
     },
     {
@@ -79,12 +193,21 @@
       "instruments": "MNQ (then NQ)",
       "holding_period": "Minutes; flat by 15:55 ET",
       "summary": "Absorption: price makes a new session extreme but CVD does not. Fade back to VWAP. Microstructure, not Renko/MCO.",
-      "rule_sketch": "Session CVD + VWAP σ-bands on 1-minute MNQ. Enter on divergence at the band; target VWAP; time stop 60 bars.",
-      "data_sources": ["nsdq250", "massive"],
+      "rule_sketch": "Session CVD + VWAP \u03c3-bands on 1-minute MNQ. Enter on divergence at the band; target VWAP; time stop 60 bars.",
+      "data_sources": [
+        "nsdq250",
+        "massive"
+      ],
       "daily_symbols": [],
-      "intraday_roots": ["MNQ"],
-      "modes": ["default"],
-      "scripts": [{}]
+      "intraday_roots": [
+        "MNQ"
+      ],
+      "modes": [
+        "default"
+      ],
+      "scripts": [
+        {}
+      ]
     },
     {
       "id": "06_sector_rotation",
@@ -94,43 +217,191 @@
       "instruments": "11 SPDR sector ETFs",
       "holding_period": "One month per rebalance",
       "summary": "Cross-sectional momentum: long the leading sectors, cash when the 200-day filter fails. Different from time-series NQ momentum.",
-      "rule_sketch": "Rank XLK…XLC on lookback return. Hold top N if above SMA200; else cash. Monthly rebalance, IBKR-style costs.",
-      "data_sources": ["massive", "yahoo"],
-      "daily_symbols": ["SPY", "XLK", "XLF", "XLV", "XLE", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC"],
+      "rule_sketch": "Rank XLK\u2026XLC on blended 3/6/12-month return (skip last week). Hold top N above their SMA200, else that slot is cash. Equal or inverse-vol weights, optional book vol target, monthly or semi-monthly rebalance at the next open, 5 bps turnover cost.",
+      "data_sources": [
+        "massive",
+        "yahoo"
+      ],
+      "daily_symbols": [
+        "SPY",
+        "XLK",
+        "XLF",
+        "XLV",
+        "XLE",
+        "XLI",
+        "XLY",
+        "XLP",
+        "XLU",
+        "XLB",
+        "XLRE",
+        "XLC"
+      ],
       "intraday_roots": [],
-      "modes": ["default"],
-      "scripts": [{}]
+      "modes": [
+        "default"
+      ],
+      "scripts": [
+        {
+          "args": [
+            "--top-n",
+            "3",
+            "--rebalance",
+            "M",
+            "--weighting",
+            "equal",
+            "--vol-target",
+            "0"
+          ],
+          "grid": {
+            "--top-n": [
+              2,
+              3,
+              4
+            ],
+            "--rebalance": [
+              "M",
+              "SM"
+            ],
+            "--weighting": [
+              "equal",
+              "invvol"
+            ],
+            "--vol-target": [
+              0,
+              12
+            ]
+          },
+          "constraints": {
+            "min_trades": 0,
+            "max_dd_pct": 20
+          }
+        }
+      ]
     },
     {
       "id": "07_breadth_regime",
       "folder": "strategies/07_breadth_regime",
       "name": "Breadth regime",
       "book": "equities",
-      "instruments": "Filter (any book) from constituent participation",
+      "instruments": "Regime switch from ~500-name breadth; P&L shown on SPY",
       "holding_period": "Regime, not a trade",
-      "summary": "Participation breadth of 100–500 names vs SPY. Switches the other sleeves on or off. Not a standalone P&L engine.",
-      "rule_sketch": "Fraction of constituents above their moving average. Risk-on when breadth is expanding; risk-off when it thins. Writes a regime series.",
-      "data_sources": ["nsdq250", "massive", "yahoo"],
-      "daily_symbols": ["SPY", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AVGO", "TSLA"],
+      "summary": "Participation breadth of ~500 names vs SPY. Switches the other sleeves on or off (01 pullback reads its regime file). Not a standalone P&L engine.",
+      "rule_sketch": "% of constituents above their 50-day SMA (or a breadth thrust). Risk-on when breadth is above the threshold and SPY is above SMA200; risk-off otherwise. Writes results/07_breadth_regime_regime.csv.",
+      "data_sources": [
+        "nsdq250",
+        "massive",
+        "yahoo"
+      ],
+      "daily_symbols": [
+        "SPY",
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "AMZN",
+        "META",
+        "GOOGL",
+        "AVGO",
+        "TSLA"
+      ],
       "intraday_roots": [],
-      "modes": ["default"],
-      "scripts": [{}]
+      "modes": [
+        "default"
+      ],
+      "scripts": [
+        {
+          "args": [
+            "--mode",
+            "pct50",
+            "--thr",
+            "50"
+          ],
+          "grid": {
+            "--mode": [
+              "pct50",
+              "thrust"
+            ],
+            "--thr": [
+              40,
+              50,
+              60
+            ]
+          },
+          "constraints": {
+            "min_trades": 0,
+            "max_dd_pct": 20
+          }
+        }
+      ],
+      "gate_profile": "regime_filter"
     },
     {
       "id": "08_pead_implied_move",
       "folder": "strategies/08_pead_implied_move",
       "name": "PEAD / implied move",
       "book": "equities",
-      "instruments": "S&P 500 stocks",
-      "holding_period": "5–20 sessions after the print",
+      "instruments": "~500 US large caps (NSDQ250 universe) with Yahoo earnings dates",
+      "holding_period": "5\u201320 sessions after the print",
       "summary": "Post-earnings drift when the reaction exceeds the options-implied move. Uses the options market as an input, not the instrument.",
-      "rule_sketch": "After earnings, if the gap vs the ATM-straddle implied move is large, hold in the surprise direction for N days. Default long; optional short on misses.",
-      "data_sources": ["nsdq250", "massive", "yahoo"],
-      "daily_symbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL"],
+      "rule_sketch": "After earnings, if |reaction| exceeds move_mult \u00d7 the name's own expected move (mean |reaction| of its last 8 prints), hold in the surprise direction for N sessions with an ATR stop; \u2264 max_positions names, biggest surprise first. Long by default; optional short on misses.",
+      "data_sources": [
+        "nsdq250",
+        "massive",
+        "yahoo"
+      ],
+      "daily_symbols": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "AMZN",
+        "META",
+        "GOOGL",
+        "JPM",
+        "XOM",
+        "UNH"
+      ],
       "intraday_roots": [],
-      "modes": ["default"],
+      "modes": [
+        "default"
+      ],
       "scripts": [
-        {"args": ["--symbols", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL"]}
+        {
+          "args": [
+            "--list",
+            "nsdq250.csv",
+            "--move-mult",
+            "1.0",
+            "--hold",
+            "10",
+            "--stop-atr",
+            "2.0",
+            "--max-positions",
+            "10"
+          ],
+          "grid": {
+            "--move-mult": [
+              0.75,
+              1.0,
+              1.5
+            ],
+            "--hold": [
+              5,
+              10,
+              20
+            ],
+            "--stop-atr": [
+              0,
+              2.0
+            ],
+            "--short": [
+              false,
+              true
+            ]
+          },
+          "constraints": {
+            "min_trades": 200,
+            "max_dd_pct": 15
+          }
+        }
       ]
     }
   ]
