@@ -6,6 +6,7 @@
     python tools/fetch_yf.py --sp500 --max-symbols 120       # constituents from data/sp500.csv
     python tools/fetch_yf.py --earnings --sp500 --max-symbols 120
     python tools/fetch_yf.py --list nsdq250.csv --extend --start 2017-01-01   # prepend warm-up history to GCS files
+    python tools/fetch_yf.py --list nsdq250.csv --append                      # bring GCS files up to today
 
 Re-running only refreshes; existing CSVs are overwritten with the full history.
 Yahoo occasionally rate-limits: the script sleeps between symbols and retries once.
@@ -72,6 +73,70 @@ def fetch_daily(symbols: list[str], start: str, end: str | None, extend_only: bo
             time.sleep(1.5)
 
 
+def append_daily(symbols: list[str], end: str | None = None, overlap_days: int = 5, tol: float = 0.02) -> None:
+    """Bring GCS-synced CSVs up to date: download from (last row - overlap) in one batched Yahoo call, require the
+    overlapping closes to agree within `tol` (a split or a different adjustment basis fails the check and the
+    file is left alone), then append only the rows dated after the existing last row."""
+    import yfinance as yf
+    todo: dict[str, pd.DataFrame] = {}
+    for s in symbols:
+        path = D.daily_path(s)
+        if not path.exists():
+            continue
+        todo[s] = pd.read_csv(path, parse_dates=["date"]).set_index("date").sort_index()
+    if not todo:
+        print("  nothing to append")
+        return
+    start = (min(df.index[-1] for df in todo.values()) - pd.Timedelta(days=overlap_days * 2)).strftime("%Y-%m-%d")
+    names = list(todo)
+    batch = None
+    for chunk_start in range(0, len(names), 100):
+        chunk = names[chunk_start:chunk_start + 100]
+        for attempt in (1, 2, 3):
+            try:
+                raw = yf.download(chunk, start=start, end=end, progress=False, auto_adjust=False, threads=True, group_by="ticker")
+                break
+            except Exception as exc:  # noqa: BLE001
+                print(f"  batch {chunk_start}: {exc} (attempt {attempt})")
+                time.sleep(10 * attempt)
+                raw = None
+        if raw is None or raw.empty:
+            continue
+        batch = raw if batch is None else pd.concat([batch, raw], axis=1)
+        time.sleep(2)
+    if batch is None:
+        print("  Yahoo returned nothing")
+        return
+    n_ok = n_skip = 0
+    for s, existing in todo.items():
+        try:
+            df = batch[s] if isinstance(batch.columns, pd.MultiIndex) else batch
+        except KeyError:
+            continue
+        df = df.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close",
+                                "Adj Close": "adj_close", "Volume": "volume"}).dropna(subset=["close"])
+        if df.empty:
+            continue
+        df.index = pd.to_datetime(df.index).tz_localize(None) if getattr(df.index, "tz", None) is not None else pd.to_datetime(df.index)
+        df.index.name = "date"
+        last = existing.index[-1]
+        overlap = df[(df.index <= last) & (df.index > last - pd.Timedelta(days=overlap_days * 2))]
+        both = overlap.join(existing[["close"]], rsuffix="_have", how="inner")
+        if len(both) == 0 or (both["close"] / both["close_have"] - 1.0).abs().max() > tol:
+            worst = float((both["close"] / both["close_have"] - 1.0).abs().max()) if len(both) else float("nan")
+            print(f"  {s}: overlap mismatch {worst:.1%} (split / adjustment basis) — not appended")
+            n_skip += 1
+            continue
+        new = df[df.index > last]
+        if new.empty:
+            continue
+        cols = [c for c in ["open", "high", "low", "close", "adj_close", "volume"] if c in existing.columns]
+        out = pd.concat([existing[cols], new.reindex(columns=cols)]).sort_index()
+        out.to_csv(D.daily_path(s))
+        n_ok += 1
+    print(f"  appended {n_ok} files, skipped {n_skip}, latest row now {max(pd.read_csv(D.daily_path(s), usecols=['date'])['date'].max() for s in todo)}")
+
+
 def fetch_earnings(symbols: list[str]) -> None:
     import yfinance as yf
     out_dir = D.DATA_DIR / "earnings"
@@ -110,6 +175,7 @@ def main() -> None:
     ap.add_argument("--end", default=None)
     ap.add_argument("--list", default=None, help="symbol list CSV in data/ (e.g. nsdq250.csv)")
     ap.add_argument("--extend", action="store_true", help="only prepend history before each existing CSV's first row")
+    ap.add_argument("--append", action="store_true", help="bring existing CSVs up to date (batched; overlap must agree)")
     a = ap.parse_args()
     syms = list(a.symbols)
     if a.sectors:
@@ -123,6 +189,8 @@ def main() -> None:
         ap.error("nothing to fetch — pass --symbols, --sectors or --sp500")
     if a.earnings:
         fetch_earnings([s for s in syms if not s.startswith("^")])
+    elif a.append:
+        append_daily(syms, a.end)
     else:
         fetch_daily(syms, a.start, a.end, extend_only=a.extend)
 
