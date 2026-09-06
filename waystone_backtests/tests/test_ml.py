@@ -33,6 +33,30 @@ def test_daily_features_strictly_prior_close():
     assert out["feat_date"].iloc[0] == out["feat_date"].iloc[1]
 
 
+def test_polygon_ticker_alias():
+    from wsbt.data import polygon_ticker
+
+    assert polygon_ticker("BRK-B") == "BRK.B"
+    assert polygon_ticker("AAPL") == "AAPL"
+
+
+def test_massive_to_score():
+    from ml.sentiment.finbert_score import massive_to_score, score_items, filter_news, MASSIVE_LABEL_SCORE
+
+    assert massive_to_score("positive") == MASSIVE_LABEL_SCORE["positive"]
+    assert massive_to_score("negative") == MASSIVE_LABEL_SCORE["negative"]
+    assert massive_to_score("neutral") == 0.0
+    assert massive_to_score("") is None
+    news = pd.DataFrame([
+        {"title": "t1", "text": "", "massive_sentiment": "positive", "source": "Benzinga"},
+        {"title": "t2", "text": "", "massive_sentiment": "", "source": "yahoo_rss"},
+    ])
+    kept = filter_news(news, "massive")
+    assert len(kept) == 1
+    scores, used = score_items(kept, "massive", lambda texts: [0.0] * len(texts))
+    assert used == "massive" and scores[0] > 0
+
+
 def test_massive_insight_picker():
     from ml.sentiment.fetch_free_sentiment import _insight_for_ticker, _merge_news, _news_row, NEWS_COLS
 

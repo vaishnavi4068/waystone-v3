@@ -38,13 +38,14 @@ python ml/meta_label.py --primary v221 --symbol MNQ --vol-symbol I:VXN --regime 
 python ml/meta_label.py --primary vwap --n-symbols 45 --vol-symbol I:VIX --regime spx --tune --dashboard "<kpi html>"
 python ml/direction_gbdt.py --symbol SPY --vol-symbol I:VIX --regime spx --tune --dashboard "<kpi html>"
 
-# sentiment (free sources), per name, then the three sentiment backtests
-python ml/sentiment/fetch_free_sentiment.py gdelt --symbols AAPL NVDA --company "Apple" "Nvidia" --start 2023-01-01
-python ml/sentiment/fetch_free_sentiment.py yahoo-rss --symbols AAPL NVDA          # cron it daily; RSS is recent-only
-python ml/sentiment/fetch_free_sentiment.py sec-8k --symbols AAPL --cik 320193 --start 2023-01-01
-python ml/sentiment/finbert_score.py --symbols AAPL NVDA                            # FinBERT if installed, lexicon otherwise
-python ml/sentiment/event_classifier.py --symbols AAPL NVDA
-python ml/sentiment/sentiment_backtest.py --mode shock --symbols AAPL NVDA --grid --dashboard "<kpi html>"
+# sentiment (Massive news, full S&P 500), then the three sentiment backtests
+python tools/refresh_sp500.py
+python ml/sentiment/fetch_free_sentiment.py polygon-news --sp500 --start 2021-01-01   # needs MASSIVE_API_KEY (Stocks plan)
+python ml/sentiment/fetch_free_sentiment.py gdelt --sp500 --start 2023-01-01
+python ml/sentiment/fetch_free_sentiment.py sec-8k --sp500 --start 2023-01-01
+python ml/sentiment/finbert_score.py --sp500 --scorer massive --source-filter massive   # Massive LLM insights -> daily shock_z
+python ml/sentiment/event_classifier.py --sp500
+python ml/sentiment/sentiment_backtest.py --mode shock --n-symbols 503 --grid --dashboard "<kpi html>"
 python ml/sentiment/sentiment_backtest.py --mode event-filter --trades-csv results/ml_meta_vwap/primary_trades.csv
 python ml/sentiment/sentiment_backtest.py --mode macro --symbol SPY
 ```
@@ -71,7 +72,7 @@ browser; the stage verdicts are computed by the dashboard's own JavaScript, unto
 | GEX regime | `strategies/02_gex_dealer_gamma` output | `results/02_.../gex_daily.csv` | daily features (`gex_z`, `gex_sign`, `dist_flip`) |
 | Fear & Greed | CNN graphdata endpoint (same as the futures bot) | `data/macro/fng.csv` | V221 gate, macro features, macro sentiment sleeve |
 | AAII bull/bear, CBOE put/call | AAII xls, CBOE csv | `data/macro/aaii.csv`, `pcr.csv` | macro features, macro sleeve |
-| News per name | GDELT DOC API (tone + article volume), Polygon news (if in plan), Yahoo RSS, SEC EDGAR 8-K items | `data/news/<SYM>.csv`, `data/macro/gdelt_<SYM>.csv`, `data/events/<SYM>_8k.csv` | sentiment scoring, events |
+| News per name | Massive/Polygon REST (`polygon-news`, LLM `insights[]`), GDELT tone + volume, SEC EDGAR 8-K items | `data/news/<SYM>.csv`, `data/macro/gdelt_<SYM>.csv`, `data/events/<SYM>_8k.csv` | sentiment scoring, events |
 | Sentiment features | `ml/sentiment/finbert_score.py` | `data/sentiment/<SYM>_daily.csv` | daily features, shock sleeve |
 | Events | `ml/sentiment/event_classifier.py` | `data/events/<SYM>.csv` | event-filter overlay |
 | Regime states | `ml/regime_hmm.py` | `data/regime/<name>_states.csv` | daily features (`regime`), state gate |

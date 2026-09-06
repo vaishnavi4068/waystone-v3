@@ -6,10 +6,10 @@
   aaii         AAII sentiment survey -> data/macro/aaii.csv (--from-file sentiment.xls downloaded from aaii.com; needs xlrd)
   gdelt        GDELT DOC 2.0 API "timelinetone" per symbol/company -> data/macro/gdelt_<SYM>.csv (daily tone, 0-... free, no key)
   polygon-news Massive/Polygon GET /v2/reference/news per ticker -> data/news/<SYM>.csv (needs MASSIVE_API_KEY or
-               POLYGON_API_KEY; Stocks plan required — options/futures-only keys return 403). Stores insights[].sentiment
-               and sentiment_reasoning alongside title/text for dual scoring vs FinBERT.
+               POLYGON_API_KEY; Stocks plan required). Use --sp500 for all S&P 500 constituents (~503 names).
+  refresh-sp500  Download current S&P 500 list -> data/sp500.csv (datahub.io constituents)
   probe-news     One-shot subscription check: GET /v2/reference/news?ticker=AAPL&limit=3 — exit 0 if 200 + insights
-  yahoo-rss    Yahoo Finance headline RSS per ticker -> appended to data/news/<SYM>.csv (recent items only; run daily via cron)
+  yahoo-rss      [deprecated] Yahoo RSS — replaced by polygon-news for backtests
   sec-8k       SEC EDGAR full-text search for 8-K filings per company -> data/events/<SYM>_8k.csv (item codes = free event feed)
 
 All news rows share one schema:  date,ts,symbol,source,title,text,url,massive_sentiment,massive_reasoning
@@ -38,7 +38,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from wsbt.data import DATA_DIR, _safe_name  # noqa: E402
+from wsbt.data import DATA_DIR, _safe_name, load_symbol_list, polygon_ticker  # noqa: E402
 
 try:
     import requests
@@ -326,14 +326,31 @@ def cmd_probe_news(a):
     raise SystemExit(1)
 
 
+def _resolve_symbols(a) -> list[str]:
+    if getattr(a, "sp500", False):
+        return load_symbol_list(max_symbols=getattr(a, "max_symbols", None))
+    syms = getattr(a, "symbols", None) or []
+    if not syms:
+        raise SystemExit("pass --symbols or --sp500")
+    return [str(s).strip().upper().replace(".", "-") for s in syms]
+
+
+def cmd_refresh_sp500(a):
+    from tools.refresh_sp500 import refresh
+
+    refresh(getattr(a, "url", None) or "https://datahub.io/core/s-and-p-500-companies-financials/_r/-/data/constituents.csv")
+
+
 def cmd_polygon_news(a):
     _need_requests()
     key = _massive_key()
     if not key:
         raise SystemExit("set MASSIVE_API_KEY or POLYGON_API_KEY")
     base = _massive_base()
-    for sym in a.symbols:
-        url = f"{base}/v2/reference/news?ticker={sym}&published_utc.gte={a.start}&limit=1000&order=asc&apiKey={key}"
+    symbols = _resolve_symbols(a)
+    for sym in symbols:
+        api_sym = polygon_ticker(sym)
+        url = f"{base}/v2/reference/news?ticker={api_sym}&published_utc.gte={a.start}&limit=1000&order=asc&apiKey={key}"
         rows, pages = [], 0
         while url and pages < 50:
             r = requests.get(url, timeout=60)
@@ -442,10 +459,11 @@ def _sec_8k_submissions(sym: str, cik: str, start: str, end: str) -> list[dict] 
 
 def cmd_sec_8k(a):
     _need_requests()
+    symbols = _resolve_symbols(a)
     ciks = a.cik or []
     end = a.end or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    cik_map = _sec_cik_map() if len(ciks) < len(a.symbols) else {}
-    for i, sym in enumerate(a.symbols):
+    cik_map = _sec_cik_map() if len(ciks) < len(symbols) else {}
+    for i, sym in enumerate(symbols):
         cik = ciks[i] if i < len(ciks) else cik_map.get(sym.upper())
         if cik:
             rows = _sec_8k_submissions(sym, str(cik).zfill(10), a.start, end)
@@ -500,10 +518,24 @@ def main():
     p.add_argument("--symbol", default="AAPL")
     p.add_argument("--limit", type=int, default=3)
     p.set_defaults(fn=cmd_probe_news)
-    p = sub.add_parser("polygon-news"); p.add_argument("--symbols", nargs="+", required=True); p.add_argument("--start", default="2023-01-01"); p.set_defaults(fn=cmd_polygon_news)
+    p = sub.add_parser("refresh-sp500")
+    p.add_argument("--url", default="https://datahub.io/core/s-and-p-500-companies-financials/_r/-/data/constituents.csv")
+    p.set_defaults(fn=cmd_refresh_sp500)
+    p = sub.add_parser("polygon-news")
+    p.add_argument("--symbols", nargs="*")
+    p.add_argument("--sp500", action="store_true", help="all names in data/sp500.csv (~503 S&P 500 constituents)")
+    p.add_argument("--max-symbols", type=int)
+    p.add_argument("--start", default="2023-01-01")
+    p.set_defaults(fn=cmd_polygon_news)
     p = sub.add_parser("yahoo-rss"); p.add_argument("--symbols", nargs="+", required=True); p.set_defaults(fn=cmd_yahoo_rss)
-    p = sub.add_parser("sec-8k"); p.add_argument("--symbols", nargs="+", required=True); p.add_argument("--cik", nargs="*")
-    p.add_argument("--start", default="2023-01-01"); p.add_argument("--end"); p.set_defaults(fn=cmd_sec_8k)
+    p = sub.add_parser("sec-8k")
+    p.add_argument("--symbols", nargs="*")
+    p.add_argument("--sp500", action="store_true")
+    p.add_argument("--max-symbols", type=int)
+    p.add_argument("--cik", nargs="*")
+    p.add_argument("--start", default="2023-01-01")
+    p.add_argument("--end")
+    p.set_defaults(fn=cmd_sec_8k)
     a = ap.parse_args()
     a.fn(a)
 

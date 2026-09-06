@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """Score news headlines/snippets -> per-name DAILY sentiment features.
 
-Scorer priority:  FinBERT (ProsusAI/finbert via transformers, CPU is fine at ~20 items/s)  ->  embedded finance
-lexicon (Loughran-McDonald-style word lists with negation handling) when transformers/torch are not installed.
-Both return a score in [-1, +1] per item; the lexicon is coarser but has no dependencies and runs on the VM today.
+Scorer modes (--scorer):
+  massive   Use Massive/Polygon LLM `insights[].sentiment` when present (positive/neutral/negative -> numeric).
+            Rows without `massive_sentiment` are skipped.  This is the default path for backtests once
+            `polygon-news` has backfilled data/news/<SYM>.csv.
+  auto      Prefer `massive_sentiment` per row; fall back to FinBERT/lexicon on title+text for the rest.
+  finbert   FinBERT only (ProsusAI/finbert via transformers, CPU is fine at ~20 items/s).
+  lexicon   Embedded finance lexicon (Loughran-McDonald-style word lists with negation handling).
+
+FinBERT and lexicon both return a score in [-1, +1] per item; the lexicon is coarser but has no dependencies.
 
 Daily aggregation per symbol (data/sentiment/<SYM>_daily.csv):
   date, score (mean), count, pos_share, neg_share,
@@ -12,7 +18,7 @@ Daily aggregation per symbol (data/sentiment/<SYM>_daily.csv):
 Only items with ts <= 16:00 ET count for that date; later items roll to the next session (so a feature dated D
 was public before D's close and can be used from D+1's open — align_prior_close() in features.py does that).
 
-  python ml/sentiment/finbert_score.py --symbols AAPL NVDA                # data/news/<SYM>.csv -> data/sentiment/<SYM>_daily.csv
+  python ml/sentiment/finbert_score.py --symbols AAPL NVDA --scorer massive   # Massive LLM insights -> data/sentiment/<SYM>_daily.csv
   python ml/sentiment/finbert_score.py --symbols AAPL --scorer lexicon
   python ml/sentiment/finbert_score.py --synthetic --symbols S00 S01 --days 300   # fabricated news for the mechanics test
 """
@@ -29,7 +35,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from wsbt.data import DATA_DIR, _safe_name  # noqa: E402
+from wsbt.data import DATA_DIR, _safe_name, load_symbol_list  # noqa: E402
 
 ET = "America/New_York"
 
@@ -51,6 +57,49 @@ struggles subpoena suspend suspended tumble tumbled tumbles uncertain uncertaint
 warns weak weaken weakened weaker weakness worse worst write-down writedown""".split())
 NEGATORS = {"not", "no", "never", "without", "fails", "failed", "unable", "n't"}
 INTENSIFIERS = {"sharply": 1.5, "significantly": 1.4, "strongly": 1.4, "slightly": 0.6, "modestly": 0.7, "record": 1.3}
+MASSIVE_LABEL_SCORE = {"positive": 0.65, "neutral": 0.0, "negative": -0.65, "bullish": 0.65, "bearish": -0.65}
+
+
+def massive_to_score(label: str) -> float | None:
+    s = str(label).strip().lower()
+    if not s or s in ("nan", "none"):
+        return None
+    if s in MASSIVE_LABEL_SCORE:
+        return MASSIVE_LABEL_SCORE[s]
+    if "pos" in s or "bull" in s:
+        return 0.65
+    if "neg" in s or "bear" in s:
+        return -0.65
+    return 0.0
+
+
+def filter_news(news: pd.DataFrame, source_filter: str) -> pd.DataFrame:
+    if not len(news) or source_filter == "all":
+        return news
+    df = news.copy()
+    if source_filter == "massive":
+        ms = df.get("massive_sentiment", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+        return df[ms != ""].reset_index(drop=True)
+    if source_filter == "no-yahoo":
+        src = df.get("source", pd.Series("", index=df.index)).fillna("").astype(str).str.lower()
+        return df[src != "yahoo_rss"].reset_index(drop=True)
+    raise ValueError(f"unknown source_filter={source_filter!r}")
+
+
+def score_items(news: pd.DataFrame, scorer: str, score_fn) -> tuple[np.ndarray, str]:
+    """Return per-row scores in [-1, +1] and the effective scorer label."""
+    texts = (news["title"].fillna("") + ". " + news["text"].fillna("")).tolist()
+    massive_col = news.get("massive_sentiment", pd.Series("", index=news.index)).fillna("").astype(str)
+    if scorer == "massive":
+        scores = [massive_to_score(ms) for ms in massive_col]
+        if any(v is None for v in scores):
+            raise ValueError("massive scorer requires massive_sentiment on every row (use --source-filter massive)")
+        return np.array(scores, dtype=float), "massive"
+    fb_scores = score_fn(texts)
+    if scorer == "auto":
+        out = [massive_to_score(ms) if massive_to_score(ms) is not None else fb for ms, fb in zip(massive_col, fb_scores)]
+        return np.array(out, dtype=float), "auto(massive+finbert/lexicon)"
+    return np.array(fb_scores, dtype=float), scorer
 
 
 def lexicon_score(text: str) -> float:
@@ -157,34 +206,50 @@ def synthetic_news(symbols: list[str], days: int, start: str = "2026-01-05", see
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--symbols", nargs="+", required=True)
-    ap.add_argument("--scorer", choices=["auto", "finbert", "lexicon"], default="auto")
+    ap.add_argument("--symbols", nargs="*")
+    ap.add_argument("--sp500", action="store_true", help="score all names in data/sp500.csv (~503 constituents)")
+    ap.add_argument("--max-symbols", type=int)
+    ap.add_argument("--scorer", choices=["auto", "massive", "finbert", "lexicon"], default="massive")
+    ap.add_argument("--source-filter", choices=["all", "massive", "no-yahoo"], default="massive",
+                    help="massive=rows with Massive insight only; no-yahoo=drop yahoo_rss rows")
     ap.add_argument("--window", type=int, default=20)
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--days", type=int, default=300)
     a = ap.parse_args()
-    kind, score_fn = get_scorer(a.scorer)
-    print(f"scorer: {kind}")
-    syn = synthetic_news(a.symbols, a.days) if a.synthetic else {}
-    for sym in a.symbols:
+    if a.sp500:
+        symbols = load_symbol_list(max_symbols=a.max_symbols)
+    elif a.symbols:
+        symbols = [str(s).strip().upper().replace(".", "-") for s in a.symbols]
+    else:
+        raise SystemExit("pass --symbols or --sp500")
+    fb_kind, score_fn = get_scorer("lexicon" if a.scorer == "massive" else a.scorer)
+    print(f"scorer: {a.scorer} (fallback={fb_kind}) source_filter={a.source_filter} symbols={len(symbols)}")
+    syn = synthetic_news(symbols, a.days) if a.synthetic else {}
+    for sym in symbols:
         if a.synthetic:
             news = syn[sym]
             (DATA_DIR / "news").mkdir(parents=True, exist_ok=True)
             news.to_csv(DATA_DIR / "news" / f"{_safe_name(sym)}.csv", index=False)
+            source_filter = "all"
+            scorer = "lexicon"
         else:
             p = DATA_DIR / "news" / f"{_safe_name(sym)}.csv"
             if not p.exists():
-                print(f"{sym}: no {p} (run fetch_free_sentiment.py first)"); continue
+                print(f"{sym}: no {p} (run fetch_free_sentiment.py polygon-news first)"); continue
             news = pd.read_csv(p)
+            source_filter = a.source_filter
+            scorer = a.scorer
+        news = filter_news(news, source_filter)
         if not len(news):
-            print(f"{sym}: empty"); continue
-        texts = (news["title"].fillna("") + ". " + news["text"].fillna("")).tolist()
-        scores = np.array(score_fn(texts))
+            print(f"{sym}: empty after source_filter={source_filter}"); continue
+        scores, used = score_items(news, scorer, score_fn)
+        if not len(scores):
+            print(f"{sym}: no scorable rows ({used})"); continue
         daily = daily_sentiment(news, scores, a.window)
         out = DATA_DIR / "sentiment" / f"{_safe_name(sym)}_daily.csv"
         out.parent.mkdir(parents=True, exist_ok=True)
         daily.to_csv(out)
-        print(f"{sym}: {len(news)} items -> {len(daily)} days, mean score {daily['score'].mean():+.3f}, "
+        print(f"{sym}: {len(news)} items ({used}) -> {len(daily)} days, mean score {daily['score'].mean():+.3f}, "
               f"|shock_z|>=2 on {int((daily['shock_z'].abs() >= 2).sum())} days -> {out}")
 
 

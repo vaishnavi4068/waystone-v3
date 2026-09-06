@@ -20,7 +20,7 @@
     {
       "name": "sentiment-daily",
       "command": "cd /workspace && set -a && [ -f .env ] && . ./.env; set +a && ./scripts/sentiment-daily.sh",
-      "description": "Daily sentiment fetch (FnG, Yahoo, SEC, GDELT, Massive news when MASSIVE_API_KEY is set)"
+      "description": "Daily sentiment fetch (FnG, SEC, GDELT, Massive news + scoring when MASSIVE_API_KEY is set)"
     }
   ]
 }

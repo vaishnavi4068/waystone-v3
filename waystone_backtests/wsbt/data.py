@@ -124,11 +124,17 @@ def load_earnings(symbol: str) -> pd.DataFrame:
 def load_symbol_list(name: str = "sp500.csv", max_symbols: int | None = None) -> list[str]:
     p = DATA_DIR / name
     if not p.exists():
-        raise DataMissing(f"{p} not found — copy the options bot's sp500.csv here")
+        raise DataMissing(f"{p} not found — run `python tools/refresh_sp500.py` or copy sp500.csv here")
     df = pd.read_csv(p)
     col = "symbol" if "symbol" in df.columns else df.columns[0]
     syms = [str(s).strip().upper().replace(".", "-") for s in df[col] if str(s).strip()]
     return syms[:max_symbols] if max_symbols else syms
+
+
+def polygon_ticker(symbol: str) -> str:
+    """Massive/Polygon REST ticker (BRK-B -> BRK.B). File names stay on wsbt symbol."""
+    s = str(symbol).strip().upper().replace(".", "-")
+    return {"BRK-B": "BRK.B"}.get(s, s.replace("-", "."))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

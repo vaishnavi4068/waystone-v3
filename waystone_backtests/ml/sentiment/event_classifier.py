@@ -37,8 +37,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from wsbt.data import DATA_DIR, _safe_name  # noqa: E402
-from ml.sentiment.finbert_score import lexicon_score, to_session_date  # noqa: E402
+from wsbt.data import DATA_DIR, _safe_name, load_symbol_list  # noqa: E402
+from ml.sentiment.finbert_score import lexicon_score, massive_to_score, to_session_date  # noqa: E402
 
 RULES = [  # (type, polarity or None=tone, [regex cues])
     ("guidance_cut", -1, [r"\b(cuts?|lowers?|slash(es)?|trims?|reduc(es|ed))\b.{0,40}\b(guidance|outlook|forecast|view)\b",
@@ -61,7 +61,7 @@ NEG_CAPITAL = re.compile(r"\b(offering|secondary|convertible|share sale|dilut)",
 NEGATIVE_BINARY = {"regulatory", "litigation", "guidance_cut", "downgrade", "management"}
 
 
-def classify(title: str, text: str = "") -> dict:
+def classify(title: str, text: str = "", massive_sentiment: str = "") -> dict:
     s = f"{title} {text}".lower()
     for etype, pol, cues in RULES:
         hits = sum(1 for c in cues if re.search(c, s, re.I))
@@ -72,9 +72,20 @@ def classify(title: str, text: str = "") -> dict:
                 elif etype == "capital":
                     pol = -1 if NEG_CAPITAL.search(s) else 1
                 else:
-                    tone = lexicon_score(s)
-                    pol = 1 if tone > 0.15 else (-1 if tone < -0.15 else 0)
-            return {"type": etype, "polarity": int(pol), "confidence": round(min(1.0, 0.5 + 0.25 * hits), 2)}
+                    ms = massive_to_score(massive_sentiment)
+                    if ms is not None and abs(ms) >= 0.2:
+                        pol = 1 if ms > 0 else -1
+                    else:
+                        tone = lexicon_score(s)
+                        pol = 1 if tone > 0.15 else (-1 if tone < -0.15 else 0)
+            conf = round(min(1.0, 0.5 + 0.25 * hits), 2)
+            ms = massive_to_score(massive_sentiment)
+            if ms is not None and etype in NEGATIVE_BINARY and ms < -0.2:
+                conf = min(1.0, conf + 0.15)
+            return {"type": etype, "polarity": int(pol), "confidence": conf}
+    ms = massive_to_score(massive_sentiment)
+    if ms is not None and ms <= -0.5:
+        return {"type": "downgrade", "polarity": -1, "confidence": 0.55}
     return {"type": "none", "polarity": 0, "confidence": 0.0}
 
 
@@ -94,7 +105,9 @@ def classify_llm(rows: list[dict]) -> list[dict] | None:
 def classify_file(news: pd.DataFrame) -> pd.DataFrame:
     rows = news.to_dict("records")
     llm = classify_llm(rows)
-    labels = llm if llm and len(llm) == len(rows) else [classify(r.get("title", ""), r.get("text", "")) for r in rows]
+    labels = llm if llm and len(llm) == len(rows) else [
+        classify(r.get("title", ""), r.get("text", ""), r.get("massive_sentiment", "")) for r in rows
+    ]
     ev = news[["date", "ts", "symbol", "source", "title", "url"]].copy()
     ev["type"] = [l["type"] for l in labels]
     ev["polarity"] = [int(l.get("polarity", 0)) for l in labels]
@@ -105,9 +118,17 @@ def classify_file(news: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--symbols", nargs="+", required=True)
+    ap.add_argument("--symbols", nargs="*")
+    ap.add_argument("--sp500", action="store_true", help="classify all names in data/sp500.csv")
+    ap.add_argument("--max-symbols", type=int)
     a = ap.parse_args()
-    for sym in a.symbols:
+    if a.sp500:
+        symbols = load_symbol_list(max_symbols=a.max_symbols)
+    elif a.symbols:
+        symbols = [str(s).strip().upper().replace(".", "-") for s in a.symbols]
+    else:
+        raise SystemExit("pass --symbols or --sp500")
+    for sym in symbols:
         p = DATA_DIR / "news" / f"{_safe_name(sym)}.csv"
         if not p.exists():
             print(f"{sym}: no {p}"); continue
