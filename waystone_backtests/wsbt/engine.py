@@ -340,10 +340,12 @@ def simulate_trades_multi(frames: dict[str, pd.DataFrame], specs: dict[str, list
 # 3. Portfolio-of-weights simulator
 # ══════════════════════════════════════════════════════════════════════════════
 def simulate_weights(frames: dict[str, pd.DataFrame], weights: pd.DataFrame, cost_bps: float = 5.0,
-                     capital: float = 100_000.0):
+                     capital: float = 100_000.0, cash_yield: pd.Series | None = None):
     """weights: rows = decision dates (at the close), cols = symbols, values = target weight (sum <= 1).
     Executed at the NEXT open; the first day's return is open->close, later days close->close.
     Turnover cost = cost_bps x |Δw| on each rebalance.
+
+    cash_yield: optional annualised % series (e.g. ^IRX); the uninvested fraction earns it daily.
 
     Returns (daily_ret, trades, equity).  `trades` has one row per REBALANCE (date, turnover) plus
     `trades.attrs['legs']`: a DataFrame of per-symbol round trips (weight goes 0 -> >0 -> 0) with
@@ -360,6 +362,9 @@ def simulate_weights(frames: dict[str, pd.DataFrame], weights: pd.DataFrame, cos
     cc = closes.pct_change().fillna(0.0)
     oc = (closes / opens - 1.0).fillna(0.0)
     gap = (opens / closes.shift() - 1.0).fillna(0.0)           # previous close -> today's open (old book's overnight)
+    cy = None
+    if cash_yield is not None:
+        cy = (cash_yield.reindex(idx).ffill().bfill().fillna(0.0) / 100.0 / 252.0).to_numpy()
     open_leg: dict[str, dict] = {}
     legs: list[dict] = []
     for i in range(1, len(idx)):
@@ -377,6 +382,8 @@ def simulate_weights(frames: dict[str, pd.DataFrame], weights: pd.DataFrame, cos
         else:
             contrib = held * cc.iloc[i]
         r = float(contrib.sum())
+        if cy is not None:
+            r += max(0.0, 1.0 - float(held.abs().sum())) * float(cy[i])
         for s, leg in list(open_leg.items()):
             leg["pnl"] += float(contrib[s]) * capital
             leg["max_weight"] = max(leg["max_weight"], float(held[s]))

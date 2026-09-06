@@ -31,3 +31,4 @@ frontend/out/
 
 # OS / editor
 .DS_Store
+frontend/tsconfig.tsbuildinfo
