@@ -48,13 +48,35 @@ gcloud builds submit frontend --config=frontend/cloudbuild.yaml \
   --substitutions=_API_BASE="https://$DOMAIN",_IMAGE="$FRONTEND_IMAGE"
 
 # ---- 5. Apply the manifest with the new image tags baked in ----
-# (namespace/secret/PVC/ingress/cert already exist from the first deploy --
-#  kubectl apply just updates what changed, safely, without recreating them)
+# (namespace/secret/PVC/ingress/cert already exist after the first deploy --
+#  kubectl apply just updates what changed, safely, without recreating them.
+#  On a truly fresh project/cluster this also creates them for the first time.)
 sed -e "s|__IMAGE__|$IMAGE|g" \
     -e "s|__FRONTEND_IMAGE__|$FRONTEND_IMAGE|g" \
     -e "s|__DASH_DOMAIN__|$DOMAIN|g" \
     -e "s|__IBKR_BUCKET__|$BUCKET|g" \
     deploy/k8s/dashboard.yaml | kubectl apply -f -
+
+# ---- 5b. GCS read access via Workload Identity (safe to re-run every time) ----
+# Without this, every page that reads IBKR data returns "API error 500" even
+# though /api/health looks fine -- the API pod has no permission to read the
+# bucket until this binding + annotation exist and the pod is (re)started.
+gcloud iam service-accounts create waystone-dash --display-name="waystone dashboard" 2>/dev/null || true
+
+gcloud iam service-accounts add-iam-policy-binding \
+  "waystone-dash@$PROJECT.iam.gserviceaccount.com" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="serviceAccount:$PROJECT.svc.id.goog[waystone-dash/waystone-dash]" \
+  --quiet
+
+kubectl -n waystone-dash annotate serviceaccount waystone-dash \
+  iam.gke.io/gcp-service-account="waystone-dash@$PROJECT.iam.gserviceaccount.com" \
+  --overwrite
+
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+  --member="serviceAccount:waystone-dash@$PROJECT.iam.gserviceaccount.com" \
+  --role=roles/storage.objectViewer \
+  --quiet
 
 # ---- 6. Wait for both rollouts to finish before declaring success ----
 kubectl -n waystone-dash rollout status deploy/waystone-dash-api
