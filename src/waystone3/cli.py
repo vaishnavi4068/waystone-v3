@@ -585,8 +585,9 @@ def research_scorecard(
             metrics = _json.loads(metrics_path.read_text())
             day = "local"
             if (folder / "equity.csv").is_file():
-                from waystone3.research.publish import as_of_from_equity
                 from datetime import date as date_cls
+
+                from waystone3.research.publish import as_of_from_equity
 
                 day = as_of_from_equity(folder / "equity.csv", date_cls.today()).isoformat()
             card = build_scorecard(

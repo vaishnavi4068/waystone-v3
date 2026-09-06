@@ -82,10 +82,17 @@ def test_sector_rotation_weights_stable():
     frames = D.synthetic_panel(m.SECTORS, n=1500, seed=6)
     closes = D.closes_panel(frames)
     cut = closes.index[1200]
-    w_full = m.weights_monthly(closes, 3, (63, 126, 252), 5, True)
-    w_part = m.weights_monthly(closes[closes.index <= cut], 3, (63, 126, 252), 5, True)
+    w_full = m.weights_schedule(closes, 3, (63, 126, 252), 5, True)
+    w_part = m.weights_schedule(closes[closes.index <= cut], 3, (63, 126, 252), 5, True)
     common = w_part.index[w_part.index < cut - pd.Timedelta(days=40)]
     pd.testing.assert_frame_equal(w_full.loc[common], w_part.loc[common])
+    # vol-targeted, semi-monthly book with a defensive fallback must be just as causal
+    kw = dict(freq="SM", vol_target=8.0, defensive=m.SECTORS[-1], universe=m.SECTORS[:-1])
+    v_full = m.weights_schedule(closes, 4, (63, 126, 252), 5, True, **kw)
+    v_part = m.weights_schedule(closes[closes.index <= cut], 4, (63, 126, 252), 5, True, **kw)
+    common = v_part.index[v_part.index < cut - pd.Timedelta(days=40)]
+    pd.testing.assert_frame_equal(v_full.loc[common], v_part.loc[common])
+    assert (v_full.sum(axis=1) <= 1.0 + 1e-9).all()
 
 
 def test_cvd_intraday():

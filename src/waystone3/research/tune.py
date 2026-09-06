@@ -202,7 +202,7 @@ def _shift(value: Any, pct: float) -> Any:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     if isinstance(value, int):
-        shifted = int(round(value * (1 + pct)))
+        shifted = round(value * (1 + pct))
         if shifted == value:
             shifted = value + (1 if pct > 0 else -1)
         return shifted if shifted > 0 else None
@@ -277,7 +277,7 @@ class Tuner:
             eq = pd.read_csv(folder / "equity.csv", parse_dates=["date"]).set_index("date")
             trial.daily = eq["daily_ret"].astype(float)
             trial.ok = True
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             trial.error = str(exc)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
