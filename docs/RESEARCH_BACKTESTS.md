@@ -121,6 +121,64 @@ Things that were tried and rejected because they only fit the sample: market-reg
 hedging on 01 and 08 (the dollar alpha is a few bp per trade, the hedge costs more than it saves),
 weekly rebalancing on 06, risk-adjusted momentum scores, gap-fill and ATR stops on PEAD.
 
+Re-tuned on the full 2021-09-04 → 2026-09-04 window (after `fetch_yf.py --append` brought every
+NSDQ250 file up to date): 01 pullback Sharpe 1.42, CAGR 19 %, DD −12.6 %, 1,489 trades, 2× cost 1.31,
+PBO 15.7 %, OOS Sharpe 2.13 > IS 0.85; 08 PEAD Sharpe 1.31, DD −11.3 %, 216 trades, but OOS 0.66 and
+PBO 50 % — the weaker of the two.
+
+## ML layer (`waystone_backtests/ml/`, see `ML_ALGO.md`)
+
+The ML never generates a trade. It is an overlay on trades that already exist: a meta-model
+(`ml/meta_label.py`) scores each fill of a primary sleeve and either skips it or sizes it up; a
+prefix-decoded HMM (`ml/regime_hmm.py`) gates a trade list by market state. Overlays only make sense
+on a sleeve that already passes its own grid/DSR check, so the order is: prove the primary, then ask
+the ML whether it improves it.
+
+Run order (all self-contained, nothing here touches a live bot):
+
+```sh
+uv sync --extra research                         # scikit-learn, lightgbm, hmmlearn, yfinance
+cd waystone_backtests && python -m pytest tests -q && ./run_ml.sh --synthetic
+python tools/fetch_yf.py --symbols ^VIX ^VXN ^GSPC SPY --start 2010-01-01
+python ml/sentiment/fetch_free_sentiment.py fng --start 2021-01-01
+python ml/regime_hmm.py --symbol ^GSPC --vol-symbol ^VIX --name spx   # -> data/regime/spx_states.csv
+waystone3 research-run --strategy ml_meta_08_pead      # catalog rows with kind: overlay
+waystone3 research-run --strategy ml_meta_01_pullback
+waystone3 research-run --strategy ml_meta_v221         # needs data/intraday/MNQ_1min.csv
+waystone3 research-run --strategy ml_regime_gate_08
+waystone3 research-scorecard && waystone3 research-publish
+```
+
+Overlay rows in `catalog.json` carry `kind: overlay`, their own `script`, and `inputs` (the primary's
+`trades.csv`); `research-run` skips them until the primary output exists. `ml/kpi_export.py` writes
+`kpi.json` next to `metrics.json` with the Stage 1–2 KPIs computed from purged walk-forward
+out-of-fold trades; the scorecard takes those as authoritative and publishes `kpi.json` alongside.
+The card's decisive block is **base vs meta on the same OOF trades**: an overlay passes only if the
+meta Sharpe is positive, the uplift is ≥ 0.1 and the model's AUC is above 0.52 — otherwise the
+research gate is FAIL no matter how the absolute KPIs look (the primary already delivers those).
+A passing overlay goes to paper for three months with `p_skip_live` / `p_boost_live` from
+`metrics.json` before it gets size. `results/trial_log.csv` family names must stay stable.
+
+### What the overlays found (first pass, 2026-09-06)
+
+| overlay | primary (same OOF trades) | overlay | verdict |
+|---|---|---|---|
+| `ml_meta_01_pullback` | Sharpe 2.66, $80.4k, 1,043 trades | Sharpe 2.32, $71.5k, skipped 324 trades worth **+$20.4k** (61 % hit) | AUC 0.54 — does not earn its keep; run the primary ungated |
+| `ml_meta_08_pead` | Sharpe 1.59, $38.1k | Sharpe 1.60, $76.5k, boosted 135 of 152 | AUC 0.497 — pure leverage, not skill |
+| `ml_meta_v221` (MNQ 1-min re-sim) | Sharpe −0.59, −$23.5k, 1,414 trades | Sharpe −0.09, −$3.2k, skipped 559 | loss reducer on a primary that is itself negative; not tradable |
+| `ml_regime_gate_08` (SPX/VIX HMM) | Sharpe 1.14, $26.0k, 119 trades | Sharpe 0.73, $8.7k, 61 trades | the state gate throws away good PEAD trades |
+
+Sentiment: `scripts/sentiment-daily.sh` collects CNN Fear & Greed, Yahoo RSS, SEC 8-K (via
+`data.sec.gov/submissions`, the full-text search is blocked from cloud IPs) and GDELT tone/volume for
+the top-45 names by dollar volume (`data/sentiment_top.csv`), then `waystone3 research-sentiment-sync
+--push` merges them into `gs://…/research/v1/sentiment/`. Install it daily on the Mac with
+`scripts/com.waystone.sentiment.plist`; a new box runs `research-sentiment-sync --pull` first. The free
+sources only give history going forward, so the backtests wait until ~2 months of rows exist.
+
+Not done yet, by design: the VWAP/options path (needs 10-minute bars for the universe — pull them
+through IB with `tools/ib_fetch_bars.py` for the top-45 and treat that as the stock-leg
+approximation), and Polygon news (needs a Stocks plan key).
+
 ## Mac worker + Grok Bot
 
 This Linux cloud VM cannot run the 5-year jobs. Start a worker on the Mac
