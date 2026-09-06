@@ -77,8 +77,8 @@ export default function ResearchOpsPanel() {
       )}
       {inbox.length > 0 && (
         <ul className="mt-3 space-y-1 text-xs text-slate-400">
-          {inbox.map((row) => (
-            <li key={row.id}>
+          {inbox.map((row, i) => (
+            <li key={row.id ?? `${row.action ?? "note"}-${i}`}>
               pending {row.action || "note"} · {row.text} · {row.source}
             </li>
           ))}
