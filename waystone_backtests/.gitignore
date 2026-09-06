@@ -9,3 +9,13 @@ data/earnings/*
 !data/earnings/.keep
 results/
 __pycache__/
+data/macro/*
+!data/macro/.keep
+data/news/*
+!data/news/.keep
+data/events/*
+!data/events/.keep
+data/regime/*
+!data/regime/.keep
+data/sentiment/*
+!data/sentiment/.keep

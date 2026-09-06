@@ -20,7 +20,7 @@ metrics and the deflated-Sharpe accounting so every strategy is measured the sam
 ```bash
 pip install -r requirements.txt
 ./run_all.sh --synthetic                 # every strategy on generated data: proves the code runs (numbers are meaningless)
-python -m pytest tests -q                # 8 look-ahead / engine tests
+python -m pytest tests -q                # 22 look-ahead / purging / control tests
 
 # stocks / ETFs (Yahoo, free — your Polygon plan is options+indices+futures)
 python tools/fetch_yf.py --symbols SPY QQQ IWM --start 2005-01-01
@@ -62,6 +62,27 @@ python strategies/03_vol_carry_put_spreads/backtest.py --spx I:SPX --vix I:VIX -
 4. Only then read the README's "known weaknesses" and decide whether the data upgrade (chain history, tick
    delta, implied moves, point-in-time constituents) is worth paying for.
 
+## ML & sentiment layer (`ml/`) — see `ML_ALGO.md`
+The models never generate a trade; they decide which of V221's / the VWAP scan's trades to skip or size up,
+which regime to stand aside in, and (as a capped tilt only) direction.  Every run is scored on the Stage-Gate
+KPI dashboard's own ids and every configuration tried is logged for the deflated Sharpe and PBO.
+
+| Script | What it tests | Output |
+|---|---|---|
+| `ml/meta_label.py --primary v221|vwap|trades` | GBDT meta-labeling on purged walk-forward folds; base vs meta on the same OOF trades; nested threshold tuning, PBO, ±20 % sensitivity | `results/ml_meta_*/` + `dashboard.html` |
+| `ml/regime_hmm.py` | prefix-decoded HMM / k-means regimes, per-state expectancy, walk-forward state gate, sleeve allocation | `data/regime/<name>_states.csv`, `results/ml_regime_*/` |
+| `ml/direction_gbdt.py` | next-N-day direction as a dead-banded tilt vs buy-and-hold; AUC, IC, DSR | `results/ml_direction_*/` |
+| `ml/sentiment/fetch_free_sentiment.py` | CNN Fear & Greed, CBOE put/call, AAII, GDELT tone + volume, Polygon news, Yahoo RSS, SEC 8-K items | `data/macro/`, `data/news/`, `data/events/` |
+| `ml/sentiment/finbert_score.py` · `event_classifier.py` | FinBERT (or lexicon) daily score / shock z; rule-based event types with an LLM hook | `data/sentiment/`, `data/events/` |
+| `ml/sentiment/sentiment_backtest.py --mode shock|event-filter|macro` | tone-shock sleeve (with a planted-signal positive control), event stand-aside overlay, contrarian macro tilt | `results/ml_sent_*/` |
+| `ml/kpi_export.py` | KPI ids from any results dir → `kpi.json`, and a prefilled copy of the dashboard | `results/<name>/dashboard.html` |
+
+```bash
+./run_ml.sh --synthetic                                   # mechanics + positive/negative controls, ~1 min
+export KPI_DASHBOARD="/path/to/Options Strategy KPI Dashboard — StageGate Scorecard.html"
+./run_ml.sh                                               # real data (see ML_ALGO.md §0 for the fetch order)
+```
+
 ## Where each one plugs into the live stack
 02 · 04 · 05 are MES/MNQ strategies: they become `on_bar` engines in the v3 futures loop (`v221_engine.py`
 shape), inheriting brackets, stop verification, reconciliation and telemetry. 03 uses the options bot's
@@ -74,11 +95,13 @@ wsbt/              toolkit: data.py (CSV contracts + loaders + synthetic), engin
                    metrics.py (stats + deflated Sharpe), costs.py, report.py, calendar_utils.py
 tools/             fetch_yf.py · fetch_polygon.py · polygon_flatfile_gex.py · ib_fetch_bars.py · ib_chain_snapshot.py
 strategies/NN_*/   README.md + backtest.py
-tests/             test_no_lookahead.py
+ml/                features.py · labels.py · cv.py · models.py · evaluate.py · kpi_export.py · meta_label.py ·
+                   regime_hmm.py · direction_gbdt.py · engines/ (v221 copy, vwap port) · sentiment/
+tests/             test_no_lookahead.py · test_ml.py
 data/              your CSVs (contracts documented in wsbt/data.py); fomc_dates.csv included
 results/           written by the backtests
 ```
-Python 3.10+, pandas ≥ 2.2 (tested on 3.0), numpy, scipy; yfinance only for `tools/fetch_yf.py`; requests for `tools/fetch_polygon.py`; ib_async only for the IB tools.
+Python 3.10+, pandas ≥ 2.2 (tested on 3.0), numpy, scipy, scikit-learn; lightgbm and hmmlearn optional (sklearn fallbacks); yfinance only for `tools/fetch_yf.py`; requests for `tools/fetch_polygon.py` and the sentiment fetchers; torch+transformers only if you want FinBERT; ib_async only for the IB tools.
 
 *Research tooling, not investment advice. Every strategy here is public; the work is in regime selection,
 sizing and execution, and in not fooling yourself — which is what the deflated Sharpe and the truncation

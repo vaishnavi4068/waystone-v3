@@ -5,3 +5,8 @@ pytest>=7
 requests>=2.31       # tools/fetch_polygon.py
 yfinance>=0.2.40      # tools/fetch_yf.py only
 # ib_async            # tools/ib_*.py only — already in /root/Oxygen on the VM
+scikit-learn>=1.3   # ml/
+lightgbm>=4.0       # ml/ — optional, sklearn HistGradientBoosting is the fallback
+hmmlearn>=0.3       # ml/regime_hmm.py — optional, k-means fallback
+# torch + transformers   # ml/sentiment/finbert_score.py FinBERT — optional, lexicon fallback (pip install torch --index-url https://download.pytorch.org/whl/cpu transformers)
+# xlrd                   # ml/sentiment/fetch_free_sentiment.py aaii (.xls)
