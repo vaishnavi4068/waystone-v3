@@ -54,7 +54,14 @@ def daily_pnl(trades: pd.DataFrame, pnl_col: str = "pnl", when_col: str = "exit_
     if index is not None:
         idx = pd.DatetimeIndex(index)
         idx = idx.tz_localize(None) if idx.tz is not None else idx
-        s = s.reindex(idx.normalize().unique(), fill_value=0.0)
+        idx = pd.DatetimeIndex(idx.normalize().unique()).sort_values()
+        if len(idx):
+            # Exits that fall on a calendar date with no session (Globex Sunday-evening fills, holidays) belong
+            # to the NEXT session; a plain reindex would silently drop their P&L.
+            pos = idx.searchsorted(s.index, side="left")
+            pos = np.minimum(pos, len(idx) - 1)
+            s = s.groupby(idx[pos]).sum()
+        s = s.reindex(idx, fill_value=0.0)
     return s.sort_index()
 
 

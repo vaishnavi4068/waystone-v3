@@ -165,8 +165,12 @@ A passing overlay goes to paper for three months with `p_skip_live` / `p_boost_l
 |---|---|---|---|
 | `ml_meta_01_pullback` | Sharpe 2.66, $80.4k, 1,043 trades | Sharpe 2.32, $71.5k, skipped 324 trades worth **+$20.4k** (61 % hit) | AUC 0.54 — does not earn its keep; run the primary ungated |
 | `ml_meta_08_pead` | Sharpe 1.59, $38.1k | Sharpe 1.60, $76.5k, boosted 135 of 152 | AUC 0.497 — pure leverage, not skill |
-| `ml_meta_v221` (MNQ 1-min re-sim) | Sharpe −0.59, −$23.5k, 1,414 trades | Sharpe −0.09, −$3.2k, skipped 559 | loss reducer on a primary that is itself negative; not tradable |
+| `ml_meta_v221` (MNQ 1-min re-sim) | Sharpe 0.38, $16.0k, 1,414 trades | Sharpe 0.85, $34.2k, DD −18 % → −11 %, skipped 559 (−$5.2k), boosted 262 (+$13.0k) | the only overlay with real uplift (+0.47, AUC 0.54) — but PBO 88 %, WFE 0.08, DSR 0.33: threshold choice is overfit and the sleeve stays below Sharpe 1.5. Paper at size 1 (skip leg only) is the most it has earned |
 | `ml_regime_gate_08` (SPX/VIX HMM) | Sharpe 1.14, $26.0k, 119 trades | Sharpe 0.73, $8.7k, 61 trades | the state gate throws away good PEAD trades |
+
+Bundle fix that changed a verdict: `ml/evaluate.daily_pnl` now rolls exits on non-session dates
+(Globex Sunday-evening fills, holidays) to the next session instead of dropping them on reindex —
+before that the MNQ card was missing +$37k of P&L on 77 Sundays and read as a losing sleeve.
 
 Sentiment: `scripts/sentiment-daily.sh` collects CNN Fear & Greed, Yahoo RSS, SEC 8-K (via
 `data.sec.gov/submissions`, the full-text search is blocked from cloud IPs) and GDELT tone/volume for

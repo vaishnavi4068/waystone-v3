@@ -621,11 +621,22 @@ def build_scorecard(
             else:
                 verdict = "earns its keep"
             overlay["earns_keep"] = verdict == "earns its keep"
-            notes.append(
+            msg = (
                 f"Overlay vs ungated primary on the same out-of-fold trades: Sharpe {meta_s:.2f} vs {base_s:.2f} "
                 f"(uplift {uplift:+.2f}), net P&L {meta_pnl if meta_pnl is None else round(meta_pnl):,} vs "
                 f"{base_pnl if base_pnl is None else round(base_pnl):,} — {verdict}."
             )
+            meta_row = bvm.get("meta") or {}
+            skipped_pnl = _f(meta_row.get("pnl_of_skipped_trades"))
+            if skipped_pnl is not None and meta_pnl is not None and base_pnl is not None:
+                skip_gain = -skipped_pnl
+                boost_gain = (meta_pnl - base_pnl) - skip_gain
+                msg += (
+                    f" Attribution: {round(skip_gain):+,} from skipping {meta_row.get('skipped')} trades, "
+                    f"{round(boost_gain):+,} from sizing up {meta_row.get('boosted')} — the sizing leg is leverage on the "
+                    "model's ranking and must be paper-traded at size 1 first."
+                )
+            notes.append(msg)
 
     stages = [_stage_verdict(stage, values) for stage in STAGES]
     # The research gate is what a backtest can decide (Stages 1-2). Stages 3-5 need attribution,
