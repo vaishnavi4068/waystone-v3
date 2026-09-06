@@ -1,0 +1,20 @@
+{
+  "name": "waystone-v3",
+  "start": "true",
+  "ports": [
+    { "name": "hq-ui", "port": 3001 },
+    { "name": "hq-api", "port": 9200 }
+  ],
+  "terminals": [
+    {
+      "name": "dash-api",
+      "command": "cd /workspace && export GOOGLE_APPLICATION_CREDENTIALS=\"${GOOGLE_APPLICATION_CREDENTIALS:-}\" IBKR_REPORTS_BUCKET=\"${IBKR_REPORTS_BUCKET:-waystone-data}\" WAYSTONE_DB=\"${WAYSTONE_DB:-/workspace/arena.db}\" IBKR_STAGED=0 && .venv/bin/waystone3 api-serve --host 0.0.0.0 --port 9200",
+      "description": "HQ research API on port 9200 (GCS strategies + scorecards)"
+    },
+    {
+      "name": "dash-ui",
+      "command": "cd /workspace/frontend && npm run dev",
+      "description": "HQ Next.js UI on port 3001 — open /strategies after port forward"
+    }
+  ]
+}

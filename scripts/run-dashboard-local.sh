@@ -72,9 +72,17 @@ fi
 echo
 echo "HQCapital local preview"
 echo "  API  http://127.0.0.1:9200/api/health"
-echo "  UI   http://127.0.0.1:3001"
-echo "  also http://localhost:3001  (now listens on IPv6)"
-echo "Sign in with a team username. Prefer 127.0.0.1 if a port-forward hangs."
+echo "  UI   http://127.0.0.1:3001/strategies"
+echo "  also http://localhost:3001/strategies"
+if [[ "${CURSOR_AGENT:-}" == "1" ]]; then
+  echo
+  echo "Cloud Agent: 127.0.0.1 is inside the remote VM, not your Mac."
+  echo "  1. In Cursor Desktop, open this agent run."
+  echo "  2. Click the plug icon (top-right) → forward port 3001 (and 9200 if needed)."
+  echo "  3. Open http://localhost:3001/strategies in your browser."
+  echo "  Agent run: https://cursor.com/agents/${CURSOR_CONVERSATION_ID:-}"
+fi
+echo "Sign in: Mark / mark1234 (or your team username)."
 echo
 
 cd "$ROOT/frontend"
