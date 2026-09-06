@@ -76,6 +76,20 @@ gs://waystone-data/research/v1/<id>/dt=YYYY-MM-DD/<variant>/
   _SUCCESS
 gs://waystone-data/research/v1/scorecards/dt=YYYY-MM-DD/index.html
 gs://waystone-data/research/v1/scorecards/latest.html
+gs://waystone-data/research/v1/sentiment/
+  macro/              fng.csv, aaii.csv, pcr.csv, gdelt_<SYM>.csv
+  news/               <SYM>.csv  (Massive polygon-news + LLM insights)
+  events/             <SYM>.csv, <SYM>_8k.csv
+  sentiment/          <SYM>_daily.csv  (Massive-scored shock_z for backtests)
+  lists/              sp500.csv  (503 S&P 500 constituents)
+```
+
+Sync commands:
+
+```sh
+uv run waystone3 research-sentiment-sync --pull   # new box: merge GCS -> local data/
+uv run waystone3 research-sentiment-sync --push   # after fetch/score: merge local -> GCS
+./scripts/backfill-massive-sp500.sh               # pull, backfill 503 names, score, push
 ```
 
 `dt=` is the last equity date (NY). `run_id` is recorded in `_manifest.json`. HQ **Strategies** lists sleeves by book and shows Sharpe / CAGR / DD plus the stage-gate verdict for that date. Each sleeve detail page renders the full KPI scorecard (same gates as the options dashboard HTML).
@@ -172,16 +186,13 @@ Bundle fix that changed a verdict: `ml/evaluate.daily_pnl` now rolls exits on no
 (Globex Sunday-evening fills, holidays) to the next session instead of dropping them on reindex —
 before that the MNQ card was missing +$37k of P&L on 77 Sundays and read as a losing sleeve.
 
-Sentiment: `scripts/sentiment-daily.sh` collects CNN Fear & Greed, Yahoo RSS, SEC 8-K (via
-`data.sec.gov/submissions`, the full-text search is blocked from cloud IPs) and GDELT tone/volume for
-the top-45 names by dollar volume (`data/sentiment_top.csv`), then `waystone3 research-sentiment-sync
---push` merges them into `gs://…/research/v1/sentiment/`. Install it daily on the Mac with
-`scripts/com.waystone.sentiment.plist`; a new box runs `research-sentiment-sync --pull` first. The free
-sources only give history going forward, so the backtests wait until ~2 months of rows exist.
-
-Not done yet, by design: the VWAP/options path (needs 10-minute bars for the universe — pull them
-through IB with `tools/ib_fetch_bars.py` for the top-45 and treat that as the stock-leg
-approximation), and Polygon news (needs a Stocks plan key).
+Sentiment: `scripts/sentiment-daily.sh` collects CNN Fear & Greed, Massive/Polygon news (full
+S&P 500 via `data/sp500.csv`), SEC 8-K (via `data.sec.gov/submissions`), and GDELT tone/volume,
+scores Massive LLM insights into `data/sentiment/<SYM>_daily.csv`, then
+`waystone3 research-sentiment-sync --pull --push` merges into
+`gs://…/research/v1/sentiment/{macro,news,events,sentiment,lists}/`. Install daily on the Mac with
+`scripts/com.waystone.sentiment.plist`; a new box runs `research-sentiment-sync --pull` first. One-time
+historical backfill: `./scripts/backfill-massive-sp500.sh` (503 names from 2021, then push to GCS).
 
 ## Mac worker + Grok Bot
 

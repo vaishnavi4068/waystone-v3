@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Backfill Massive/Polygon news for the full S&P 500 (~503 names) and score daily sentiment.
+# Backfill Massive/Polygon news for the full S&P 500 (~503 names), score, and sync to GCS.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ -f "$ROOT/.env" ]]; then
@@ -12,9 +12,15 @@ cd "$ROOT/waystone_backtests"
 PY="${PYTHON:-$ROOT/.venv/bin/python}"
 START="${MASSIVE_NEWS_START:-2021-01-01}"
 LOG="${MASSIVE_BACKFILL_LOG:-/tmp/massive-sp500-backfill.log}"
+SYNC="${ROOT}/.venv/bin/waystone3"
 
-echo "== refresh S&P 500 list" | tee "$LOG"
+echo "== pull existing sentiment data from GCS (merge)" | tee "$LOG"
+"$SYNC" research-sentiment-sync --pull 2>&1 | tee -a "$LOG" || echo "gcs pull skipped/failed" | tee -a "$LOG"
+
+echo "== refresh S&P 500 list" | tee -a "$LOG"
 "$PY" tools/refresh_sp500.py | tee -a "$LOG"
+mkdir -p data/lists
+cp -f data/sp500.csv data/lists/sp500.csv
 
 echo "== polygon-news --sp500 start=$START (this takes a while)" | tee -a "$LOG"
 "$PY" ml/sentiment/fetch_free_sentiment.py polygon-news --sp500 --start "$START" 2>&1 | tee -a "$LOG"
@@ -24,5 +30,8 @@ echo "== score Massive LLM insights -> daily sentiment" | tee -a "$LOG"
 
 echo "== classify events" | tee -a "$LOG"
 "$PY" ml/sentiment/event_classifier.py --sp500 2>&1 | tee -a "$LOG"
+
+echo "== push news + sentiment + lists to GCS" | tee -a "$LOG"
+"$SYNC" research-sentiment-sync --push 2>&1 | tee -a "$LOG" || echo "gcs push skipped/failed" | tee -a "$LOG"
 
 echo "== done. log: $LOG" | tee -a "$LOG"

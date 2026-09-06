@@ -18,6 +18,9 @@ PY="${PYTHON:-$ROOT/.venv/bin/python}"
 export SEC_USER_AGENT="${SEC_USER_AGENT:-waystone-research research@waystone.local}"
 START="${SENTIMENT_START:-$(date -u -d '-14 days' +%F 2>/dev/null || date -u -v-14d +%F)}"
 F=ml/sentiment/fetch_free_sentiment.py
+"$PY" tools/refresh_sp500.py 2>/dev/null || true
+mkdir -p data/lists
+[ -f data/sp500.csv ] && cp -f data/sp500.csv data/lists/sp500.csv
 N=$("$PY" -c "from wsbt.data import load_symbol_list; print(len(load_symbol_list()))")
 
 echo "== sentiment-daily $(date -u +%FT%TZ) sp500=$N start=$START"
@@ -48,6 +51,6 @@ else
 fi
 
 if [ -z "${SENTIMENT_NO_SYNC:-}" ]; then
-  (cd "$ROOT" && "$PY" -m waystone3.cli research-sentiment-sync --push) || echo "gcs sync skipped/failed"
+  (cd "$ROOT" && "$PY" -m waystone3.cli research-sentiment-sync --pull --push) || echo "gcs sync skipped/failed"
 fi
 echo "== done $(date -u +%FT%TZ)"

@@ -33,7 +33,10 @@ def refresh(url: str = DEFAULT_URL) -> Path:
     out = out.drop_duplicates(subset=["symbol"]).sort_values("symbol").reset_index(drop=True)
     path = DATA_DIR / "sp500.csv"
     out.to_csv(path, index=False)
-    print(f"wrote {len(out)} symbols -> {path}")
+    lists = DATA_DIR / "lists"
+    lists.mkdir(parents=True, exist_ok=True)
+    out.to_csv(lists / "sp500.csv", index=False)
+    print(f"wrote {len(out)} symbols -> {path} and {lists / 'sp500.csv'}")
     return path
 
 

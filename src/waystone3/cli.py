@@ -439,6 +439,8 @@ def research_fetch(
     from waystone3.research.fetch import fetch_market_data
     from waystone3.research.ops import post_status
 
+    if not no_api:
+        _pull_sentiment_from_gcs()
     post_status("fetch", "Research fetch started", f"strategy={strategy or 'all'} years<={years:g}")
     report = fetch_market_data(
         strategy_id=strategy,
@@ -463,6 +465,16 @@ def research_fetch(
         "Research fetch finished",
         f"nsdq={len(report.from_nsdq250)} api={len(report.from_api)} missing={len(report.missing)}",
     )
+
+
+def _pull_sentiment_from_gcs() -> None:
+    from waystone3.research.sentiment import sync
+
+    report = sync(pull=True, push=False)
+    if report.pulled:
+        console.print(f"Sentiment GCS: pulled {len(report.pulled)} files")
+    for msg in report.skipped:
+        console.print(f"  sentiment sync: {msg}")
 
 
 @app.command("research-run")
@@ -653,10 +665,10 @@ def research_status(
 
 @app.command("research-sentiment-sync")
 def research_sentiment_sync(
-    push: bool = typer.Option(False, "--push", help="Merge local data/{macro,news,events} into GCS."),
+    push: bool = typer.Option(False, "--push", help="Merge local data/{macro,news,events,sentiment,lists} into GCS."),
     pull: bool = typer.Option(False, "--pull", help="Merge GCS copies into the local data dir."),
 ) -> None:
-    """Mirror the free-sentiment CSVs to research/v1/sentiment/ so daily collection survives any one box."""
+    """Mirror sentiment CSVs to gs://$IBKR_REPORTS_BUCKET/research/v1/sentiment/."""
     from waystone3.research.sentiment import sync
 
     if not (push or pull):
