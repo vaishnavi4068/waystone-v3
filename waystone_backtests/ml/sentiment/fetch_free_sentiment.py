@@ -5,17 +5,18 @@
   pcr          CBOE total put/call ratio -> data/macro/pcr.csv (tries the CBOE CSV; --from-csv for a downloaded file)
   aaii         AAII sentiment survey -> data/macro/aaii.csv (--from-file sentiment.xls downloaded from aaii.com; needs xlrd)
   gdelt        GDELT DOC 2.0 API "timelinetone" per symbol/company -> data/macro/gdelt_<SYM>.csv (daily tone, 0-... free, no key)
-  polygon-news Polygon /v2/reference/news per ticker -> data/news/<SYM>.csv (needs POLYGON_API_KEY; the news endpoint is
-               in the Stocks plans — with an options/indices/futures-only subscription it may return 403; the script says so)
+  polygon-news Massive/Polygon GET /v2/reference/news per ticker -> data/news/<SYM>.csv (needs MASSIVE_API_KEY or
+               POLYGON_API_KEY; Stocks plan required — options/futures-only keys return 403). Stores insights[].sentiment
+               and sentiment_reasoning alongside title/text for dual scoring vs FinBERT.
+  probe-news     One-shot subscription check: GET /v2/reference/news?ticker=AAPL&limit=3 — exit 0 if 200 + insights
   yahoo-rss    Yahoo Finance headline RSS per ticker -> appended to data/news/<SYM>.csv (recent items only; run daily via cron)
   sec-8k       SEC EDGAR full-text search for 8-K filings per company -> data/events/<SYM>_8k.csv (item codes = free event feed)
 
-All news rows share one schema:  date,ts,symbol,source,title,text,url   (date = ET date the item became public).
+All news rows share one schema:  date,ts,symbol,source,title,text,url,massive_sentiment,massive_reasoning
 Every fetcher is idempotent — it merges into the existing file on (symbol, url) or (date) and never drops rows.
 
-  export POLYGON_API_KEY=...
-  python ml/sentiment/fetch_free_sentiment.py fng
-  python ml/sentiment/fetch_free_sentiment.py gdelt --symbols AAPL NVDA --company "Apple" "Nvidia" --start 2024-01-01
+  export MASSIVE_API_KEY=...   # or POLYGON_API_KEY
+  python ml/sentiment/fetch_free_sentiment.py probe-news
   python ml/sentiment/fetch_free_sentiment.py polygon-news --symbols AAPL NVDA --start 2024-01-01
   python ml/sentiment/fetch_free_sentiment.py yahoo-rss --symbols AAPL NVDA
   python ml/sentiment/fetch_free_sentiment.py sec-8k --symbols AAPL --cik 320193 --start 2024-01-01
@@ -45,7 +46,17 @@ except Exception:                                    # pragma: no cover
     requests = None
 
 ET = "America/New_York"
-NEWS_COLS = ["date", "ts", "symbol", "source", "title", "text", "url"]
+NEWS_COLS = [
+    "date",
+    "ts",
+    "symbol",
+    "source",
+    "title",
+    "text",
+    "url",
+    "massive_sentiment",
+    "massive_reasoning",
+]
 CNN_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9",
@@ -59,11 +70,65 @@ def _need_requests():
         raise SystemExit("pip install requests")
 
 
+def _massive_key() -> str:
+    return (os.environ.get("MASSIVE_API_KEY") or os.environ.get("POLYGON_API_KEY") or "").strip()
+
+
+def _massive_base() -> str:
+    return os.environ.get("POLYGON_BASE_URL", "https://api.massive.com").rstrip("/")
+
+
+def _insight_for_ticker(insights: list | None, symbol: str) -> tuple[str, str]:
+    """Pick Massive's per-ticker LLM sentiment for `symbol` from results[].insights."""
+    sym = symbol.upper()
+    for row in insights or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("ticker", "")).upper() == sym:
+            return str(row.get("sentiment") or ""), str(row.get("sentiment_reasoning") or "")
+    if insights and isinstance(insights[0], dict):
+        first = insights[0]
+        return str(first.get("sentiment") or ""), str(first.get("sentiment_reasoning") or "")
+    return "", ""
+
+
+def _news_row(
+    *,
+    date: str,
+    ts: str,
+    symbol: str,
+    source: str,
+    title: str,
+    text: str,
+    url: str,
+    massive_sentiment: str = "",
+    massive_reasoning: str = "",
+) -> dict:
+    return {
+        "date": date,
+        "ts": ts,
+        "symbol": symbol,
+        "source": source,
+        "title": title,
+        "text": text,
+        "url": url,
+        "massive_sentiment": massive_sentiment,
+        "massive_reasoning": massive_reasoning,
+    }
+
+
 def _merge_news(path: Path, rows: list[dict]) -> int:
-    new = pd.DataFrame(rows, columns=NEWS_COLS)
+    new = pd.DataFrame(rows)
+    for col in NEWS_COLS:
+        if col not in new.columns:
+            new[col] = ""
+    new = new[NEWS_COLS]
     if path.exists():
         old = pd.read_csv(path)
-        both = pd.concat([old, new])
+        for col in NEWS_COLS:
+            if col not in old.columns:
+                old[col] = ""
+        both = pd.concat([old[NEWS_COLS], new])
     else:
         both = new
     both = both.drop_duplicates(subset=["symbol", "url"]).sort_values("ts")
@@ -204,35 +269,111 @@ def cmd_gdelt(a):
         time.sleep(GDELT_PAUSE)
 
 
+def cmd_probe_news(a):
+    """Verify Stocks news access and Massive insights on the current API key."""
+    _need_requests()
+    key = _massive_key()
+    if not key:
+        raise SystemExit("set MASSIVE_API_KEY or POLYGON_API_KEY")
+    sym = (a.symbol or "AAPL").upper()
+    base = _massive_base()
+    url = f"{base}/v2/reference/news?ticker={sym}&limit={a.limit}&apiKey={key}"
+    r = requests.get(url, timeout=60)
+    out = {
+        "endpoint": "/v2/reference/news",
+        "base": base,
+        "ticker": sym,
+        "http_status": r.status_code,
+        "ok": r.status_code == 200,
+        "stocks_news_access": r.status_code == 200,
+    }
+    if r.status_code == 403:
+        out["verdict"] = "FAIL — Stocks news not in plan (403). Add a Stocks tier or use gdelt/yahoo-rss."
+        print(json.dumps(out, indent=2))
+        raise SystemExit(2)
+    if r.status_code != 200:
+        out["verdict"] = f"FAIL — HTTP {r.status_code}"
+        out["body"] = r.text[:300]
+        print(json.dumps(out, indent=2))
+        raise SystemExit(1)
+    j = r.json()
+    results = j.get("results") or []
+    sample = results[0] if results else {}
+    insights = sample.get("insights") or []
+    insight0 = insights[0] if insights else {}
+    out.update(
+        {
+            "status": j.get("status"),
+            "count": j.get("count"),
+            "results_returned": len(results),
+            "has_insights": bool(insights),
+            "sample_title": (sample.get("title") or "")[:120],
+            "sample_insight": {
+                "ticker": insight0.get("ticker"),
+                "sentiment": insight0.get("sentiment"),
+                "sentiment_reasoning": (insight0.get("sentiment_reasoning") or "")[:200],
+            }
+            if insight0
+            else None,
+        }
+    )
+    if insights:
+        out["verdict"] = "PASS — Stocks news + LLM insights available. Run polygon-news for historical backfill."
+        print(json.dumps(out, indent=2))
+        return
+    out["verdict"] = "WARN — 200 OK but no insights[] on sample article (unexpected)."
+    print(json.dumps(out, indent=2))
+    raise SystemExit(1)
+
+
 def cmd_polygon_news(a):
     _need_requests()
-    key = os.environ.get("POLYGON_API_KEY")
+    key = _massive_key()
     if not key:
-        raise SystemExit("set POLYGON_API_KEY")
-    base = os.environ.get("POLYGON_BASE_URL", "https://api.polygon.io")
+        raise SystemExit("set MASSIVE_API_KEY or POLYGON_API_KEY")
+    base = _massive_base()
     for sym in a.symbols:
         url = f"{base}/v2/reference/news?ticker={sym}&published_utc.gte={a.start}&limit=1000&order=asc&apiKey={key}"
         rows, pages = [], 0
         while url and pages < 50:
             r = requests.get(url, timeout=60)
             if r.status_code == 403:
-                raise SystemExit("Polygon news: 403 — the news endpoint is not in your plan (options/indices/futures only). "
-                                 "Use gdelt / yahoo-rss / sec-8k instead.")
+                raise SystemExit(
+                    "Massive/Polygon news: 403 — /v2/reference/news requires a Stocks plan "
+                    "(options/indices/futures-only keys cannot backfill news). "
+                    "Run: python ml/sentiment/fetch_free_sentiment.py probe-news"
+                )
             if r.status_code == 429:
-                time.sleep(15); continue
+                time.sleep(15)
+                continue
             if r.status_code != 200:
-                print(f"polygon-news {sym}: HTTP {r.status_code} {r.text[:120]}"); break
+                print(f"polygon-news {sym}: HTTP {r.status_code} {r.text[:120]}")
+                break
             j = r.json()
             for it in j.get("results", []):
                 ts = pd.Timestamp(it["published_utc"]).tz_convert(ET)
-                rows.append({"date": ts.strftime("%Y-%m-%d"), "ts": ts.isoformat(), "symbol": sym, "source": it.get("publisher", {}).get("name", "polygon"),
-                             "title": it.get("title", ""), "text": it.get("description", "") or "", "url": it.get("article_url", "")})
+                sent, reasoning = _insight_for_ticker(it.get("insights"), sym)
+                pub = it.get("publisher") or {}
+                rows.append(
+                    _news_row(
+                        date=ts.strftime("%Y-%m-%d"),
+                        ts=ts.isoformat(),
+                        symbol=sym,
+                        source=pub.get("name") or "massive",
+                        title=it.get("title", ""),
+                        text=it.get("description", "") or "",
+                        url=it.get("article_url", ""),
+                        massive_sentiment=sent,
+                        massive_reasoning=reasoning,
+                    )
+                )
             url = j.get("next_url")
             url = f"{url}&apiKey={key}" if url else None
             pages += 1
             time.sleep(0.25)
         n = _merge_news(DATA_DIR / "news" / f"{_safe_name(sym)}.csv", rows)
-        print(f"polygon-news {sym}: {len(rows)} items, file now {n}")
+        with_insights = sum(1 for row in rows if row.get("massive_sentiment"))
+        print(f"polygon-news {sym}: {len(rows)} items ({with_insights} with Massive insights), file now {n}")
 
 
 def cmd_yahoo_rss(a):
@@ -250,8 +391,17 @@ def cmd_yahoo_rss(a):
                 link = (item.findtext("link") or "").strip()
                 pub = item.findtext("pubDate")
                 ts = pd.Timestamp(pub).tz_convert(ET) if pub else pd.Timestamp.now(tz=ET)
-                rows.append({"date": ts.strftime("%Y-%m-%d"), "ts": ts.isoformat(), "symbol": sym, "source": "yahoo_rss",
-                             "title": title, "text": (item.findtext("description") or "").strip(), "url": link})
+                rows.append(
+                    _news_row(
+                        date=ts.strftime("%Y-%m-%d"),
+                        ts=ts.isoformat(),
+                        symbol=sym,
+                        source="yahoo_rss",
+                        title=title,
+                        text=(item.findtext("description") or "").strip(),
+                        url=link,
+                    )
+                )
         except ElementTree.ParseError as exc:
             print(f"yahoo-rss {sym}: parse error {exc}"); continue
         n = _merge_news(DATA_DIR / "news" / f"{_safe_name(sym)}.csv", rows)
@@ -321,9 +471,17 @@ def cmd_sec_8k(a):
             ts = pd.Timestamp(src.get("file_date")).tz_localize(ET) if src.get("file_date") else None
             if ts is None:
                 continue
-            rows.append({"date": ts.strftime("%Y-%m-%d"), "ts": ts.isoformat(), "symbol": sym, "source": "sec_8k",
-                         "title": "8-K items " + ",".join(items), "text": src.get("display_names", [""])[0] if src.get("display_names") else "",
-                         "url": "https://www.sec.gov/Archives/edgar/data/" + h.get("_id", "").replace(":", "/")})
+            rows.append(
+                _news_row(
+                    date=ts.strftime("%Y-%m-%d"),
+                    ts=ts.isoformat(),
+                    symbol=sym,
+                    source="sec_8k",
+                    title="8-K items " + ",".join(items),
+                    text=src.get("display_names", [""])[0] if src.get("display_names") else "",
+                    url="https://www.sec.gov/Archives/edgar/data/" + h.get("_id", "").replace(":", "/"),
+                )
+            )
         n = _merge_news(DATA_DIR / "events" / f"{_safe_name(sym)}_8k.csv", rows)
         print(f"sec-8k {sym}: {len(rows)} filings, file now {n}  (item 2.02 = results, 5.02 = officer change, 1.01 = material agreement, "
               f"8.01 = other events, 2.05 = exit costs, 4.02 = non-reliance on prior financials)")
@@ -338,6 +496,10 @@ def main():
     p = sub.add_parser("aaii"); p.add_argument("--from-file"); p.set_defaults(fn=cmd_aaii)
     p = sub.add_parser("gdelt"); p.add_argument("--symbols", nargs="+", required=True); p.add_argument("--company", nargs="*")
     p.add_argument("--start", default="2023-01-01"); p.add_argument("--end"); p.set_defaults(fn=cmd_gdelt)
+    p = sub.add_parser("probe-news")
+    p.add_argument("--symbol", default="AAPL")
+    p.add_argument("--limit", type=int, default=3)
+    p.set_defaults(fn=cmd_probe_news)
     p = sub.add_parser("polygon-news"); p.add_argument("--symbols", nargs="+", required=True); p.add_argument("--start", default="2023-01-01"); p.set_defaults(fn=cmd_polygon_news)
     p = sub.add_parser("yahoo-rss"); p.add_argument("--symbols", nargs="+", required=True); p.set_defaults(fn=cmd_yahoo_rss)
     p = sub.add_parser("sec-8k"); p.add_argument("--symbols", nargs="+", required=True); p.add_argument("--cik", nargs="*")

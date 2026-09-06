@@ -27,8 +27,13 @@ echo "== sentiment-daily $(date -u +%FT%TZ) symbols=$(echo $SYMS | wc -w) start=
 "$PY" $F yahoo-rss --symbols $SYMS             || echo "yahoo-rss failed"
 "$PY" $F sec-8k    --symbols $SYMS --start "$START" || echo "sec-8k failed"
 "$PY" $F gdelt     --symbols $SYMS --company "${COMPANIES[@]}" --start "$START" || echo "gdelt failed"
-# optional, needs POLYGON_API_KEY with a Stocks plan
-if [ -n "${POLYGON_API_KEY:-}" ]; then "$PY" $F polygon-news --symbols $SYMS --start "$START" || echo "polygon-news failed"; fi
+# optional Massive/Polygon Stocks news (MASSIVE_API_KEY or POLYGON_API_KEY; run probe-news first)
+MASSIVE_KEY="${MASSIVE_API_KEY:-${POLYGON_API_KEY:-}}"
+if [ -n "$MASSIVE_KEY" ]; then
+  export POLYGON_API_KEY="$MASSIVE_KEY"
+  "$PY" $F probe-news --symbol AAPL --limit 1 >/tmp/massive-news-probe.json 2>&1 || echo "probe-news: $(cat /tmp/massive-news-probe.json 2>/dev/null | head -3)"
+  "$PY" $F polygon-news --symbols $SYMS --start "$START" || echo "polygon-news failed"
+fi
 
 if [ -z "${SENTIMENT_NO_SYNC:-}" ]; then
   (cd "$ROOT" && "$PY" -m waystone3.cli research-sentiment-sync --push) || echo "gcs sync skipped/failed"

@@ -33,6 +33,36 @@ def test_daily_features_strictly_prior_close():
     assert out["feat_date"].iloc[0] == out["feat_date"].iloc[1]
 
 
+def test_massive_insight_picker():
+    from ml.sentiment.fetch_free_sentiment import _insight_for_ticker, _merge_news, _news_row, NEWS_COLS
+
+    insights = [
+        {"ticker": "NVDA", "sentiment": "positive", "sentiment_reasoning": "AI demand"},
+        {"ticker": "AAPL", "sentiment": "neutral", "sentiment_reasoning": "mixed supply chain"},
+    ]
+    assert _insight_for_ticker(insights, "AAPL") == ("neutral", "mixed supply chain")
+    row = _news_row(
+        date="2024-01-02",
+        ts="2024-01-02T10:00:00-05:00",
+        symbol="AAPL",
+        source="massive",
+        title="t",
+        text="d",
+        url="https://x",
+        massive_sentiment="positive",
+        massive_reasoning="bullish",
+    )
+    path = D.DATA_DIR / "news" / "_probe_merge.csv"
+    try:
+        n = _merge_news(path, [row])
+        assert n == 1
+        df = pd.read_csv(path)
+        assert list(df.columns) == NEWS_COLS
+        assert df.loc[0, "massive_sentiment"] == "positive"
+    finally:
+        path.unlink(missing_ok=True)
+
+
 def test_intraday_features_causal_truncation():
     bars = C.intraday("MNQ", 1, synthetic=True, days=12, seed=4)
     full = intraday_features(bars)
