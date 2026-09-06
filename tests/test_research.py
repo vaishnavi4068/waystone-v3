@@ -34,11 +34,14 @@ from waystone3.research.window import (
 from waystone3.workspace.workspace import TradingWorkspace
 
 
-def test_catalog_has_eight_books() -> None:
+def test_catalog_has_eight_sleeves_plus_ml_overlays() -> None:
     rows = list_strategies()
-    assert len(rows) == 8
-    books = {row["book"] for row in rows}
-    assert books == {"equities", "options", "futures"}
+    sleeves = [row for row in rows if row.get("kind") != "overlay"]
+    overlays = [row for row in rows if row.get("kind") == "overlay"]
+    assert len(sleeves) == 8
+    assert {row["book"] for row in sleeves} == {"equities", "options", "futures"}
+    # the ML layer never generates a trade: every overlay names the primary output it consumes
+    assert overlays and all(row["book"] == "overlay" and row.get("script") and row.get("inputs") for row in overlays)
 
 
 def test_default_window_is_five_years() -> None:
@@ -197,7 +200,7 @@ def test_api_strategies_preview_without_bucket(monkeypatch) -> None:
     client, token = _client(monkeypatch)
     headers = {"Authorization": f"Bearer {token}"}
     data = client.get("/api/strategies", headers=headers).json()
-    assert len(data["strategies"]) == 8
+    assert len(data["strategies"]) == 12  # 8 sleeves + 4 ML overlays
     first = data["strategies"][0]
     assert first["latest"]["date"] == "2026-08-14"
     detail = client.get(f"/api/strategies/{first['id']}", headers=headers).json()
@@ -290,3 +293,47 @@ def test_scorecard_regime_filter_profile_skips_trade_gates() -> None:
     stage1 = card["stages"][0]
     assert {k["id"]: k["status"] for k in stage1["kpis"]}["ntrades"] == "na"
     assert any("Regime-filter profile" in note and "uplift -0.01" in note for note in card["notes"])
+
+
+def _overlay_card(base_vs_meta, auc: float = 0.58):
+    metrics = {
+        "stats": {"sharpe": 1.9, "max_drawdown_pct": -5.0, "cagr_pct": 12.0, "trades": 400, "years": 3.0, "days": 750},
+        "params": {"primary": "trades"},
+        "extra": {"primary": "trades", "model": "lightgbm", "auc_mean": auc, "folds": 5, "n_trials": 19,
+                  "base_vs_meta": base_vs_meta, "thresholds": {"p_skip_live": 0.41, "p_boost_live": 0.72}},
+    }
+    equity = ",equity,daily_ret,daily_pnl\n" + "".join(
+        f"2023-01-{(i % 28) + 1:02d},100000,{0.001 if i % 3 else -0.0005},{100 if i % 3 else -50}\n" for i in range(80)
+    )
+    kpi = {"sharpe": 1.9, "maxdd": 5.0, "ntrades": 400, "coststress": 1.7, "oosis": 0.9, "wfe": 0.8, "dsr": 0.97,
+           "pbo": 12.0, "paramsens": 15.0, "boot": 0.9, "_meta": {"n_trials": 19, "model_family": "ml_meta_x"}}
+    return build_scorecard(
+        strategy={"id": "ml_meta_x", "name": "Meta X", "book": "overlay", "kind": "overlay"},
+        variant="default",
+        day="2023-01-28",
+        metrics=metrics,
+        equity_csv=equity,
+        trades_csv="exit_date,pnl\n2023-01-10,120\n2023-01-20,-40\n",
+        kpi=kpi,
+    )
+
+
+def test_scorecard_overlay_uses_kpi_json_and_uplift_rule() -> None:
+    # repr-string payload as written by the bundle, meta beats base by a real margin
+    good = _overlay_card("{'base': {'net_pnl': 1000.0, 'sharpe': 1.2, 'trades': 500}, 'meta': {'net_pnl': 2000.0, 'sharpe': 1.9, 'trades': 400}}")
+    assert good["values"]["coststress"] == 1.7 and good["values"]["pbo"] == 12.0  # kpi.json wins over naive estimates
+    assert good["values"]["dsr"] == 0.97
+    assert good["overlay"]["uplift_sharpe"] == 0.7 and good["overlay"]["earns_keep"] is True
+    assert good["overall"] != "FAIL"
+    html = render_scorecard_html(good)
+    assert "ML overlay" in html and "p_skip_live" in html
+
+    worse = _overlay_card({"base": {"net_pnl": 80428.0, "sharpe": 2.66}, "meta": {"net_pnl": 71531.0, "sharpe": 2.32}})
+    assert worse["overall"] == "FAIL" and worse["overlay"]["earns_keep"] is False
+    assert any("does NOT earn its keep" in n for n in worse["notes"])
+
+    coin = _overlay_card({"base": {"net_pnl": 38052.0, "sharpe": 1.59}, "meta": {"net_pnl": 76513.0, "sharpe": 1.6}}, auc=0.497)
+    assert coin["overall"] == "FAIL" and any("coin flip" in n for n in coin["notes"])
+
+    loser = _overlay_card({"base": {"net_pnl": -23451.0, "sharpe": -0.59}, "meta": {"net_pnl": -3220.0, "sharpe": -0.09}})
+    assert loser["overall"] == "FAIL" and any("not tradable" in n for n in loser["notes"])

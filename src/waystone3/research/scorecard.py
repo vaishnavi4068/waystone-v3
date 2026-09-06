@@ -193,7 +193,7 @@ def _parse_equity(raw: str) -> tuple[list[str], list[float], list[float]]:
     reader = csv.DictReader(io.StringIO(raw))
     prev: float | None = None
     for row in reader:
-        day = (row.get("date") or row.get("Date") or "").strip()[:10]
+        day = (row.get("date") or row.get("Date") or row.get("") or "").strip()[:10]
         eq = _f(row.get("equity") or row.get("Equity"))
         ret = _f(row.get("daily_ret") or row.get("ret"))
         if not day or eq is None:
@@ -366,6 +366,22 @@ def _overall(stages: list[dict[str, Any]], only: set[str] | None = None) -> str:
     return worst
 
 
+def _base_vs_meta(raw: Any) -> dict[str, Any]:
+    """metrics.extra.base_vs_meta is a dict from meta_label.py / gate_vs_base from regime_hmm.py, but the
+    bundle serialises it as a Python repr string in some paths."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip().startswith("{"):
+        import ast
+
+        try:
+            parsed = ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def build_scorecard(
     *,
     strategy: dict[str, Any],
@@ -375,6 +391,7 @@ def build_scorecard(
     equity_csv: str = "",
     trades_csv: str = "",
     tuning: dict[str, Any] | None = None,
+    kpi: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     stats = metrics.get("stats") if isinstance(metrics.get("stats"), dict) else {}
     extra = metrics.get("extra") if isinstance(metrics.get("extra"), dict) else {}
@@ -548,10 +565,74 @@ def build_scorecard(
             msg += f" MaxDD {maxdd:.1f}% vs base {float(extra['base_max_dd_pct']):.1f}%."
         notes.append(msg)
 
+    overlay: dict[str, Any] | None = None
+    kpi_json = kpi if isinstance(kpi, dict) else {}
+    if kpi_json:
+        # ml/kpi_export.py already computes the Stage 1-2 KPIs from purged walk-forward OOF trades
+        # (nested tuning, CSCV/PBO, trial-log DSR). Those are the honest numbers for an overlay, so they
+        # take precedence over the naive full-window estimates above.
+        for key, val in kpi_json.items():
+            if key.startswith("_") or key not in values:
+                continue
+            if val is None:
+                continue
+            values[key] = round(val, 3) if isinstance(val, float) else val
+        meta = kpi_json.get("_meta") if isinstance(kpi_json.get("_meta"), dict) else {}
+        overlay = {
+            "primary": extra.get("primary"),
+            "model": extra.get("model"),
+            "n_features": extra.get("n_features"),
+            "folds": extra.get("folds"),
+            "auc_mean": extra.get("auc_mean"),
+            "importance_stability": extra.get("importance_stability"),
+            "thresholds": extra.get("thresholds"),
+            "base_vs_meta": _base_vs_meta(extra.get("base_vs_meta") or extra.get("gate_vs_base")),
+            "skipped": extra.get("skipped"),
+            "n_trials": extra.get("n_trials") or meta.get("n_trials"),
+            "family": extra.get("family") or meta.get("model_family"),
+            "is_sharpe": meta.get("is_sharpe"),
+            "dsr_detail": meta.get("dsr_detail"),
+            "synthetic": bool(metrics.get("synthetic") or extra.get("synthetic")),
+        }
+        notes.append(
+            "Overlay KPIs come from ml/kpi_export (kpi.json): out-of-fold trades from purged walk-forward CV, "
+            "thresholds tuned inside each fold, DSR against the shared results/trial_log.csv family."
+        )
+        if overlay["synthetic"]:
+            notes.append("SYNTHETIC DATA — mechanics only; not a research verdict.")
+        bvm = overlay["base_vs_meta"]
+        base_s = _f((bvm.get("base") or {}).get("sharpe"))
+        meta_s = _f((bvm.get("meta") or bvm.get("state_gate") or {}).get("sharpe"))
+        if base_s is not None and meta_s is not None:
+            overlay["uplift_sharpe"] = round(meta_s - base_s, 3)
+            values["overlay_uplift"] = overlay["uplift_sharpe"]
+            base_pnl = _f((bvm.get("base") or {}).get("net_pnl") or (bvm.get("base") or {}).get("net"))
+            meta_pnl = _f((bvm.get("meta") or bvm.get("state_gate") or {}).get("net_pnl") or (bvm.get("meta") or bvm.get("state_gate") or {}).get("net"))
+            auc = _f(extra.get("auc_mean"))
+            uplift = meta_s - base_s
+            if meta_s <= 0:
+                verdict = "reduces the loss, but the primary itself is not tradable — no overlay fixes a losing sleeve"
+            elif auc is not None and auc < 0.52:
+                verdict = f"AUC {auc:.3f} ≈ coin flip: any P&L change is sizing/leverage, not skill — does NOT earn its keep"
+            elif uplift < 0.1:
+                verdict = "uplift within noise (< 0.1 Sharpe) — does NOT earn its keep"
+            else:
+                verdict = "earns its keep"
+            overlay["earns_keep"] = verdict == "earns its keep"
+            notes.append(
+                f"Overlay vs ungated primary on the same out-of-fold trades: Sharpe {meta_s:.2f} vs {base_s:.2f} "
+                f"(uplift {uplift:+.2f}), net P&L {meta_pnl if meta_pnl is None else round(meta_pnl):,} vs "
+                f"{base_pnl if base_pnl is None else round(base_pnl):,} — {verdict}."
+            )
+
     stages = [_stage_verdict(stage, values) for stage in STAGES]
     # The research gate is what a backtest can decide (Stages 1-2). Stages 3-5 need attribution,
     # incubation and live logs, so they stay WARN/N/A here and are rolled up separately.
     overall = _overall(stages, only={"s1", "s2"})
+    if overlay and "earns_keep" in overlay and not overlay["earns_keep"]:
+        # An overlay only exists to improve the primary; no real uplift on identical OOF trades is a research
+        # FAIL regardless of how the absolute KPIs look (the primary already delivers those).
+        overall = "FAIL"
     overall_all = _overall(stages)
     if int(stats.get("days") or 0) < 30 or (stats.get("years") or 0) < 2:
         notes.append(
@@ -615,6 +696,7 @@ def build_scorecard(
         "equity": equity[:: max(1, len(equity) // 240)][:240] if equity else [],
         "calc": KPI_CALC,
         "tuning": tuning_summary,
+        "overlay": overlay,
     }
 
 
@@ -734,6 +816,33 @@ def render_scorecard_html(card: dict[str, Any]) -> str:
             + "</section>"
         )
 
+    overlay_html = ""
+    ov = card.get("overlay") or {}
+    if ov:
+        bvm = _base_vs_meta(ov.get("base_vs_meta"))
+        cols = ["net_pnl", "sharpe", "max_drawdown_pct", "trades", "days"]
+        bvm_rows = "".join(
+            f"<tr><td class='kname'>{esc(leg)}</td>"
+            + "".join(f"<td>{esc(row.get(c, row.get('net') if c == 'net_pnl' else None))}</td>" for c in cols)
+            + "</tr>"
+            for leg, row in bvm.items()
+            if isinstance(row, dict)
+        )
+        thr = ov.get("thresholds") if isinstance(ov.get("thresholds"), dict) else {}
+        overlay_html = (
+            "<section><div class='sec-head'><h2>ML overlay (meta-label on the primary's trades)</h2>"
+            f"<span class='sub'>primary {esc(ov.get('primary'))} · family {esc(ov.get('family'))}</span></div>"
+            f"<div class='sec-desc'>Model {esc(ov.get('model'))} · {esc(ov.get('n_features'))} features · {esc(ov.get('folds'))} purged walk-forward folds · "
+            f"AUC {esc(ov.get('auc_mean'))} · importance stability {esc(ov.get('importance_stability'))} · "
+            f"{esc(ov.get('n_trials'))} trials in the family.<br/>"
+            f"Live thresholds from metrics.json: p_skip_live {esc(thr.get('p_skip_live'))} · p_boost_live {esc(thr.get('p_boost_live'))} "
+            f"(m_skip {esc(thr.get('m_skip'))}, m_boost {esc(thr.get('m_boost'))}, boost size {esc(thr.get('boost_size'))}). "
+            "The ML never generates a trade: it only skips or sizes the primary's trades. Passing overlays go to paper for three months.</div>"
+            + ("<table><thead><tr><th>Same OOF trades</th><th>Net P&L</th><th>Sharpe</th><th>Max DD %</th><th>Trades</th><th>Days</th></tr></thead>"
+               f"<tbody>{bvm_rows}</tbody></table>" if bvm_rows else "")
+            + "</section>"
+        )
+
     overall_cls = (card.get("overall") or "na").lower()
     gate_html = "".join(
         f"<div class='gate {overall_cls if i == 0 else ''}'><h3>{esc(title)}</h3>"
@@ -790,6 +899,7 @@ def render_scorecard_html(card: dict[str, Any]) -> str:
   {"<section><div class='sec-head'><h2>P&L by year</h2></div><table><thead><tr><th>Year</th><th>Trades</th><th>Net P&L</th></tr></thead><tbody>" + year_rows + "</tbody></table></section>" if year_rows else ""}
   {"".join(stages_html)}
   {tuning_html}
+  {overlay_html}
   <p class="sub">Work stages in order. A sleeve that passes Stages 1–2 but fails Stage 3 is a research artifact, not a tradable product.</p>
 </div></body></html>
 """

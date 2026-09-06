@@ -483,7 +483,15 @@ class Tuner:
 
 
 def load_tuning(folder: Path) -> dict[str, Any] | None:
-    path = folder / "tuning.json"
+    return _load_json(folder / "tuning.json")
+
+
+def load_kpi(folder: Path) -> dict[str, Any] | None:
+    """ml/kpi_export.py writes kpi.json next to metrics.json for the ML overlay runs."""
+    return _load_json(folder / "kpi.json")
+
+
+def _load_json(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:

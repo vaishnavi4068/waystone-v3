@@ -13,12 +13,14 @@ const BOOKS: { id: string; label: string }[] = [
   { id: "equities", label: "Stocks" },
   { id: "options", label: "Options" },
   { id: "futures", label: "Futures" },
+  { id: "overlay", label: "ML overlays" },
 ];
 
 function bookClass(book: string) {
   if (book === "equities") return "bg-sky-600/20 text-sky-200";
   if (book === "options") return "bg-violet-600/20 text-violet-200";
   if (book === "futures") return "bg-amber-600/20 text-amber-200";
+  if (book === "overlay") return "bg-emerald-600/20 text-emerald-200";
   return "bg-slate-800 text-slate-300";
 }
 

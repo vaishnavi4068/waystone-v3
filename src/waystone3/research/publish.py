@@ -16,6 +16,7 @@ from waystone3.research.catalog import get_strategy, list_strategies, load_catal
 from waystone3.research.paths import (
     CATALOG_KEY,
     equity_key,
+    kpi_key,
     latest_key,
     manifest_key,
     metrics_key,
@@ -35,7 +36,7 @@ from waystone3.research.scorecard import (
     render_scorecard_html,
     write_local_scorecard,
 )
-from waystone3.research.tune import load_tuning
+from waystone3.research.tune import load_kpi, load_tuning
 from waystone3.research.window import years_from_equity
 
 
@@ -62,6 +63,8 @@ def result_folders(results: Path, strategy_id: str) -> list[Path]:
         for path in results.iterdir()
         if path.is_dir()
         and path.name.startswith(strategy_id)
+        # synthetic mechanics runs (run_ml.sh --synthetic) are never published as a variant
+        and (path.name.endswith("_syn") is strategy_id.endswith("_syn"))
         and (path / "metrics.json").is_file()
     ]
     return sorted(found, key=lambda p: p.stat().st_mtime)
@@ -149,6 +152,13 @@ def publish_results(
                     (folder / "trials.csv").read_bytes(),
                     "text/csv",
                 )
+            kpi = load_kpi(folder)
+            if kpi is not None:
+                reports.put(
+                    kpi_key(sid, day, variant),
+                    (folder / "kpi.json").read_bytes(),
+                    "application/json",
+                )
             metrics = json.loads((folder / "metrics.json").read_text())
             catalog = get_strategy(sid) or {"id": sid, "name": sid}
             card = build_scorecard(
@@ -163,6 +173,7 @@ def publish_results(
                 if (folder / "trades.csv").is_file()
                 else "",
                 tuning=tuning,
+                kpi=kpi,
             )
             write_local_scorecard(folder, card)
             reports.put(

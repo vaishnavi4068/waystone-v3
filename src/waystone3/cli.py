@@ -567,7 +567,7 @@ def research_scorecard(
     from waystone3.research.catalog import get_strategy, list_strategies
     from waystone3.research.publish import _results_dir, result_folders, variant_name
     from waystone3.research.scorecard import build_scorecard, write_local_scorecard
-    from waystone3.research.tune import load_tuning
+    from waystone3.research.tune import load_kpi, load_tuning
 
     results = _results_dir()
     rows = [get_strategy(strategy)] if strategy else list_strategies()
@@ -602,6 +602,7 @@ def research_scorecard(
                 if (folder / "trades.csv").is_file()
                 else "",
                 tuning=load_tuning(folder),
+                kpi=load_kpi(folder),
             )
             path = write_local_scorecard(folder, card)
             console.print(f"  {sid} {card.get('overall')} {path}")
@@ -648,6 +649,26 @@ def research_status(
     latest = read_status()
     if latest:
         console.print(f"latest phase={latest.get('phase')} at={latest.get('at')}")
+
+
+@app.command("research-sentiment-sync")
+def research_sentiment_sync(
+    push: bool = typer.Option(False, "--push", help="Merge local data/{macro,news,events} into GCS."),
+    pull: bool = typer.Option(False, "--pull", help="Merge GCS copies into the local data dir."),
+) -> None:
+    """Mirror the free-sentiment CSVs to research/v1/sentiment/ so daily collection survives any one box."""
+    from waystone3.research.sentiment import sync
+
+    if not (push or pull):
+        push = pull = True
+    report = sync(push=push, pull=pull)
+    for key in report.pulled:
+        console.print(f"  pulled {key}")
+    for key in report.pushed:
+        console.print(f"  pushed {key}")
+    for msg in report.skipped:
+        console.print(f"  skipped: {msg}")
+    console.print(f"pulled={len(report.pulled)} pushed={len(report.pushed)}")
 
 
 @app.command("research-inbox")

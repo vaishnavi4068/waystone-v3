@@ -49,23 +49,43 @@ def run_strategies(
     for row in rows:
         if not row:
             continue
-        script = root / row["folder"] / "backtest.py"
-        tuned = resolve_window(
-            list(row.get("daily_symbols") or []),
-            data_dir,
-            roots=list(row.get("intraday_roots") or []),
-            min_years=min_years,
-            max_years=years,
+        overlay = row.get("kind") == "overlay"
+        script = (
+            root / str(row["script"]) if row.get("script") else root / row["folder"] / "backtest.py"
         )
-        if not synthetic and tuned is None:
+        tuned = (
+            None
+            if overlay
+            else resolve_window(
+                list(row.get("daily_symbols") or []),
+                data_dir,
+                roots=list(row.get("intraday_roots") or []),
+                min_years=min_years,
+                max_years=years,
+            )
+        )
+        if overlay and not synthetic:
+            # An overlay never generates trades: it needs the primary's trades.csv to exist first.
+            missing = [inp for inp in (row.get("inputs") or []) if not (root / str(inp)).is_file()]
+            if missing:
+                report.results.append(
+                    RunResult(
+                        strategy_id=str(row["id"]),
+                        ok=True,
+                        command=[],
+                        output=f"skip: primary outputs missing {missing} (run the primary first)",
+                        skipped=True,
+                    )
+                )
+                continue
+        if not synthetic and tuned is None and not overlay:
             report.results.append(
                 RunResult(
                     strategy_id=str(row["id"]),
                     ok=True,
                     command=[],
                     output=(
-                        f"skip: overlap shorter than {min_years:g} years "
-                        "(need 2-5 years of data)"
+                        f"skip: overlap shorter than {min_years:g} years (need 2-5 years of data)"
                     ),
                     skipped=True,
                 )

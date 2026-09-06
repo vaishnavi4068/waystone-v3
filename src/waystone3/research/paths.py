@@ -69,6 +69,10 @@ def trials_key(strategy_id: str, day: date | str, variant: str = "default") -> s
     return f"{strategy_day_prefix(strategy_id, day, variant)}/trials.csv"
 
 
+def kpi_key(strategy_id: str, day: date | str, variant: str = "default") -> str:
+    return f"{strategy_day_prefix(strategy_id, day, variant)}/kpi.json"
+
+
 def scorecards_index_key(day: date | str) -> str:
     return f"{RESEARCH_PREFIX}/scorecards/dt={_day(day)}/index.html"
 
