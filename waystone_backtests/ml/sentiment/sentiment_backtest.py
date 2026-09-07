@@ -42,14 +42,21 @@ from ml.evaluate import daily_pnl, log_trial, sharpe_of, to_et_naive, trial_coun
 from ml.kpi_export import build_banner, build_sections, compute_kpis, inject  # noqa: E402
 from ml.sentiment.finbert_score import daily_sentiment, lexicon_score, synthetic_news  # noqa: E402
 from ml.sentiment.event_classifier import NEGATIVE_BINARY, classify_file  # noqa: E402
+from ml import universe as U  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # mode: shock
 # ─────────────────────────────────────────────────────────────────────────────
-def shock_specs(bars: pd.DataFrame, sent: pd.DataFrame, z: float, rvol: float, hold: int, stop_atr: float, both: bool) -> list[TradeSpec]:
+def shock_specs(bars: pd.DataFrame, sent: pd.DataFrame, z: float, rvol: float, hold: int, stop_atr: float, both: bool,
+                allowed: pd.Series | None = None) -> list[TradeSpec]:
+    """allowed: optional boolean per bar (from ml.universe.membership_series) — signals on bars where it is False are dropped."""
     b = bars.sort_index()
     s = sent.reindex(b.index)
+    if allowed is not None:
+        mask = allowed.reindex(b.index).fillna(False).astype(bool).to_numpy()
+        s = s.copy()
+        s.loc[~mask, "shock_z"] = np.nan
     tr = pd.concat([b["high"] - b["low"], (b["high"] - b["close"].shift(1)).abs(), (b["low"] - b["close"].shift(1)).abs()], axis=1).max(axis=1)
     atr = tr.rolling(14).mean()
     rv = b["volume"] / b["volume"].rolling(20).mean()
@@ -68,15 +75,48 @@ def shock_specs(bars: pd.DataFrame, sent: pd.DataFrame, z: float, rvol: float, h
     return specs
 
 
-def run_shock(bars_by: dict, sent_by: dict, z, rvol, hold, stop_atr, both, cost, per_name, nav):
-    rets, trades = [], []
+def cap_concurrency(specs_by: dict[str, list[TradeSpec]], max_positions: int, hold: int, sessions: pd.DatetimeIndex) -> dict[str, list[TradeSpec]]:
+    """Book-level cap: at most `max_positions` names open at once across the whole universe.  Candidates on the
+    same day are admitted in order of |shock_z|.  A slot is assumed busy for `hold` sessions (a stop frees it
+    earlier in the simulation, so this is the conservative side).  Without this cap a 500-name universe runs
+    hundreds of simultaneous $NAV/max_positions positions — the P&L and drawdown then measure leverage, not signal."""
+    pos = {d: i for i, d in enumerate(sessions)}
+    cands = []
+    for sym, specs in specs_by.items():
+        for sp in specs:
+            i = pos.get(pd.Timestamp(sp.date))
+            if i is not None:
+                cands.append((i, -abs(sp.meta.get("shock_z", 0.0)), sym, sp))
+    cands.sort(key=lambda t: (t[0], t[1]))
+    open_until = []                                     # session index at which each open slot frees
+    kept = {sym: [] for sym in specs_by}
+    for i, _, sym, sp in cands:
+        open_until = [u for u in open_until if u > i]
+        if len(open_until) >= max_positions:
+            continue
+        open_until.append(i + hold - 1)
+        kept[sym].append(sp)
+    return kept
+
+
+def run_shock(bars_by: dict, sent_by: dict, z, rvol, hold, stop_atr, both, cost, per_name, nav, max_positions: int = 5,
+              universe: pd.DataFrame | None = None):
+    specs_by = {}
     for sym, b in bars_by.items():
         if sym not in sent_by:
             continue
-        specs = shock_specs(b, sent_by[sym], z, rvol, hold, stop_atr, both)
+        allowed = U.membership_series(universe, sym, b.index) if universe is not None else None
+        specs = shock_specs(b, sent_by[sym], z, rvol, hold, stop_atr, both, allowed)
+        if specs:
+            specs_by[sym] = specs
+    n_raw = sum(len(v) for v in specs_by.values())
+    sessions = pd.DatetimeIndex(sorted(set().union(*[set(b.index) for b in bars_by.values()])))
+    specs_by = cap_concurrency(specs_by, max_positions, hold, sessions)
+    rets, trades = [], []
+    for sym, specs in specs_by.items():
         if not specs:
             continue
-        dr, tr, _ = simulate_trades(b, specs, cost, {"notional": per_name}, nav, max_concurrent=1)
+        dr, tr, _ = simulate_trades(bars_by[sym], specs, cost, {"notional": per_name}, nav, max_concurrent=1)
         rets.append(dr)
         if len(tr):
             tr["symbol"] = sym
@@ -85,7 +125,66 @@ def run_shock(bars_by: dict, sent_by: dict, z, rvol, hold, stop_atr, both, cost,
         return pd.Series(dtype=float), pd.DataFrame()
     R = pd.concat(rets, axis=1).fillna(0.0).sum(axis=1)
     T = pd.concat(trades) if trades else pd.DataFrame()
+    if len(T):
+        T["ret_bps"] = (T["exit"] / T["entry"] - 1.0) * T["side"] * 1e4      # scale-free per-trade return (before commission)
+        T.attrs["n_signals"] = n_raw
     return R, T
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# mode: event-study — WHEN does the return around a tone shock happen?
+# ─────────────────────────────────────────────────────────────────────────────
+def event_study(bars_by: dict, sent_by: dict, z: float = 2.0, rvol_min: float = 0.0, horizons=(1, 2, 3, 5, 10),
+                universe: pd.DataFrame | None = None, by_symbol: bool = False) -> pd.DataFrame:
+    """For every (name, session D) with |shock_z| >= z: the news-day move (close D / close D-1), the overnight gap
+    (open D+1 / close D) and the tradeable returns from the D+1 open to the close k sessions later, split by the
+    sign of the shock.  Mean in bps, t-stat, N, hit rate.  If the news-day and gap rows carry the move and the
+    tradeable rows do not, the information is priced before the sleeve can act — which is the usual finding."""
+    rows = []
+    for sym, b in bars_by.items():
+        s = sent_by.get(sym)
+        if s is None:
+            continue
+        b = b.sort_index()
+        c, o = b["close"], b["open"]
+        rv = b["volume"] / b["volume"].rolling(20).mean()
+        sz = s["shock_z"].reindex(b.index)
+        if universe is not None:
+            sz = sz.where(U.membership_series(universe, sym, b.index).to_numpy(), np.nan)
+        idx = b.index
+        for i in np.where(sz.abs() >= z)[0]:
+            if i < 21 or i + max(horizons) + 1 >= len(b):
+                continue
+            if rvol_min > 0 and (pd.isna(rv.iloc[i]) or rv.iloc[i] < rvol_min):
+                continue
+            side = 1 if sz.iloc[i] > 0 else -1
+            r = {"symbol": sym, "date": idx[i], "side": side, "shock_z": float(sz.iloc[i]),
+                 "news_day": (c.iloc[i] / c.iloc[i - 1] - 1) * side, "gap": (o.iloc[i + 1] / c.iloc[i] - 1) * side}
+            for k in horizons:
+                r[f"h{k}"] = (c.iloc[i + k] / o.iloc[i + 1] - 1) * side
+            rows.append(r)
+    ev = pd.DataFrame(rows)
+    if not len(ev):
+        return pd.DataFrame()
+    cols = ["news_day", "gap"] + [f"h{k}" for k in horizons]
+    if by_symbol:
+        g = ev.groupby("symbol")
+        tab = pd.DataFrame({"events": g.size()})
+        for col in ("gap", "h1", "h3", "h5"):
+            if col in ev:
+                tab[f"{col}_bps"] = (g[col].mean() * 1e4).round(1)
+                tab[f"{col}_t"] = (g[col].mean() / g[col].std(ddof=1) * np.sqrt(g.size())).round(2)
+        return tab.sort_values("h3_t", ascending=False)
+    out = []
+    for label, g in (("positive shocks", ev[ev["side"] > 0]), ("negative shocks (signed: + = price fell with the tone)", ev[ev["side"] < 0]), ("all (signed)", ev)):
+        for col in cols:
+            x = g[col].dropna()
+            if len(x) < 5:
+                continue
+            out.append({"group": label, "window": col, "n": int(len(x)), "mean_bps": round(float(x.mean() * 1e4), 1),
+                        "median_bps": round(float(x.median() * 1e4), 1), "t_stat": round(float(x.mean() / x.std(ddof=1) * np.sqrt(len(x))), 2),
+                        "hit_rate": round(float((x > 0).mean()), 3)})
+    return pd.DataFrame(out)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,9 +238,35 @@ def macro_target(bars: pd.DataFrame, macro: dict, lo_pct=0.15, hi_pct=0.85, shor
     return tgt
 
 
+def build_universe(a, bars_by: dict, sent_by: dict) -> pd.DataFrame | None:
+    """--universe none | structural | reactive | file:<path>, comma-separated to intersect."""
+    parts = [x.strip() for x in (a.universe or "none").split(",") if x.strip()]
+    if not parts or parts == ["none"]:
+        return None
+    tables = []
+    for part in parts:
+        if part == "structural":
+            tables.append(U.structural(bars_by, a.min_price, a.min_adv))
+        elif part == "reactive":
+            t = U.reactive(bars_by, sent_by, z=a.z, horizon=max(1, a.hold), top_n=a.top_n,
+                           lookback=min(252, max(60, a.days // 3)) if a.synthetic else 252)
+            rb = t.attrs.get("rebalances")
+            if rb is not None and len(rb):
+                print(f"  reactive universe: {len(rb)} rebalances, chosen names avg {rb['chosen'].mean():.1f} "
+                      f"(median t of chosen {rb['t_median_chosen'].median()})")
+            tables.append(t)
+        elif part.startswith("file:"):
+            tables.append(U.from_file(part[5:], U._sessions(bars_by), list(bars_by)))
+        else:
+            raise SystemExit(f"unknown universe part {part}")
+    table = U.intersect(*tables)
+    print(f"  universe [{a.universe}]: {table.sum(axis=1).mean():.1f} names allowed on an average day (of {len(bars_by)})")
+    return table
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=["shock", "event-filter", "macro"], required=True)
+    ap.add_argument("--mode", choices=["shock", "event-study", "event-filter", "macro"], required=True)
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--plant", type=float, default=0.0, help="synthetic: correlation between latent tone and next-day return")
     ap.add_argument("--symbols", nargs="*")
@@ -154,6 +279,11 @@ def main():
     ap.add_argument("--stop-atr", type=float, default=1.5)
     ap.add_argument("--both-sides", action="store_true")
     ap.add_argument("--max-positions", type=int, default=5)
+    ap.add_argument("--universe", default="structural", help="comma list of structural,reactive,file:<path>,none — "
+                    "structural = price/liquidity as-of; reactive = walk-forward top-N by trailing shock reactivity")
+    ap.add_argument("--top-n", type=int, default=50, help="reactive universe size")
+    ap.add_argument("--min-adv", type=float, default=20e6, help="structural: 20-day average $ volume")
+    ap.add_argument("--min-price", type=float, default=10.0)
     ap.add_argument("--grid", action="store_true")
     ap.add_argument("--trades-csv")
     ap.add_argument("--quiet", type=int, default=3, help="event-filter: sessions to stand aside after a negative event")
@@ -168,8 +298,8 @@ def main():
     flags = {f.strip(): True for f in a.flags.split(",") if f.strip()}
     cost = costs.US_STOCK
 
-    # ═══════════════════════════════ shock ═══════════════════════════════
-    if a.mode == "shock":
+    # ═══════════════════════════════ shock / event-study ═══════════════════════════════
+    if a.mode in ("shock", "event-study"):
         name = a.name or ("ml_sent_shock" + ("_syn" if a.synthetic else ""))
         family = name
         if a.synthetic:
@@ -211,18 +341,43 @@ def main():
             if not bars_by:
                 raise SystemExit("no names with both data/daily/<SYM>.csv and data/sentiment/<SYM>_daily.csv")
             note = ""
+        universe = build_universe(a, bars_by, sent_by)
+        if a.mode == "event-study":
+            for rv_min in (0.0, 1.5):
+                tab = event_study(bars_by, sent_by, a.z, rv_min, universe=universe)
+                print(f"\n  EVENT STUDY  |shock_z| >= {a.z}" + (f", RVOL >= {rv_min}" if rv_min else "") + f"  on {len(bars_by)} names"
+                      "  (returns signed by the shock: + means the price moved WITH the tone)")
+                if len(tab):
+                    with pd.option_context("display.width", 160):
+                        print(tab.to_string(index=False))
+                    out_dir = RESULTS / ("ml_sent_eventstudy" + ("_syn" if a.synthetic else ""))
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    tab.to_csv(out_dir / f"event_study_rvol{rv_min}.csv", index=False)
+                else:
+                    print("  no events")
+            bys = event_study(bars_by, sent_by, a.z, 0.0, universe=universe, by_symbol=True)
+            if len(bys):
+                out_dir = RESULTS / ("ml_sent_eventstudy" + ("_syn" if a.synthetic else ""))
+                out_dir.mkdir(parents=True, exist_ok=True)
+                bys.to_csv(out_dir / "event_study_by_symbol.csv")
+                print(f"\n  per-name table -> {out_dir}/event_study_by_symbol.csv  (top 10 by h3 t-stat, whole-sample: for understanding, not selection)")
+                print(bys.head(10).to_string())
+            print("\n  Read it as: news_day = the move on the session the news landed (not tradeable at the next open); gap = overnight;"
+                  " h1..h10 = what a next-open entry earns.  Signal worth pursuing only if h1..h5 are positive with |t| > 3 on both groups.")
+            return
         per_name = a.nav / a.max_positions
         idx = sorted(set().union(*[set(b.index) for b in bars_by.values()]))
         grid = {"z": [1.5, 2.0, 2.5], "hold": [2, 3, 5], "rvol": [0.0, 1.5]} if a.grid else {"z": [a.z], "hold": [a.hold], "rvol": [a.rvol]}
         mat, trials = {}, []
         for z, hold, rv in itertools.product(grid["z"], grid["hold"], grid["rvol"]):
-            R, T = run_shock(bars_by, sent_by, z, rv, hold, a.stop_atr, a.both_sides, cost, per_name, a.nav)
+            R, T = run_shock(bars_by, sent_by, z, rv, hold, a.stop_atr, a.both_sides, cost, per_name, a.nav, a.max_positions, universe)
             R = R.reindex(pd.DatetimeIndex(idx)).fillna(0.0)
             mat[(z, hold, rv)] = R
             sr = sharpe_of(R)
             log_trial(family, {"z": z, "hold": hold, "rvol": rv, "stop_atr": a.stop_atr, "both": a.both_sides},
                       {"sharpe": round(sr, 3), "trades": len(T), "net_pnl": round(float(R.sum() * a.nav), 2), "sr_per_period": M.sharpe_per_period(R)})
-            trials.append({"z": z, "hold": hold, "rvol": rv, "sharpe": round(sr, 3), "trades": len(T), "net_pnl": round(float(R.sum() * a.nav), 0)})
+            trials.append({"z": z, "hold": hold, "rvol": rv, "sharpe": round(sr, 3), "trades": len(T), "net_pnl": round(float(R.sum() * a.nav), 0),
+                           "avg_ret_bps": round(float(T["ret_bps"].mean()), 1) if len(T) else None, "signals": T.attrs.get("n_signals") if len(T) else 0})
         tab = pd.DataFrame(trials)
         pbo = cscv_pbo(pd.DataFrame(mat).to_numpy(), n_blocks=8) if len(mat) > 1 else None
         if a.grid:
@@ -232,20 +387,26 @@ def main():
             z, hold, rv = eval(sel)
             print("  grid (search log):"); print(tab.sort_values("sharpe", ascending=False).to_string(index=False))
             print(f"  chosen on first half: z={z} hold={hold} rvol={rv}  -> reported on the second half; PBO={pbo['pbo'] if pbo else None}")
-            R, T = run_shock(bars_by, sent_by, z, rv, hold, a.stop_atr, a.both_sides, cost, per_name, a.nav)
+            R, T = run_shock(bars_by, sent_by, z, rv, hold, a.stop_atr, a.both_sides, cost, per_name, a.nav, a.max_positions, universe)
             R = R.reindex(pd.DatetimeIndex(idx)).fillna(0.0)
             R = R[R.index >= half]
             T = T[pd.to_datetime(T["entry_date"]) >= half] if len(T) else T
         else:
             z, hold, rv = a.z, a.hold, a.rvol
-            R, T = run_shock(bars_by, sent_by, z, rv, hold, a.stop_atr, a.both_sides, cost, per_name, a.nav)
+            R, T = run_shock(bars_by, sent_by, z, rv, hold, a.stop_atr, a.both_sides, cost, per_name, a.nav, a.max_positions, universe)
             R = R.reindex(pd.DatetimeIndex(idx)).fillna(0.0)
         T = T.rename(columns={"entry_date": "entry_time", "exit_date": "exit_time"}) if len(T) else T
         if len(T):
             T["cost"] = 2 * cost.commission * T["units"] + 2 * T["entry"] * cost.slippage_bps / 1e4 * T["units"]
         stats = M.summary(R, T)
         n_trials = trial_count(family)
-        extra = {"mode": "shock", "z": z, "hold": hold, "rvol": rv, "n_names": len(bars_by), "n_trials": n_trials, "family": family,
+        if len(T):
+            print(f"  scale-free read: {len(T)} trades from {T.attrs.get('n_signals', '?')} signals (cap {a.max_positions} names open); "
+                  f"avg return per trade {T['ret_bps'].mean():+.1f} bps before commission, hit {100 * (T['ret_bps'] > 0).mean():.1f}%, "
+                  f"exits {T['reason'].value_counts().to_dict()}")
+        extra = {"mode": "shock", "z": z, "hold": hold, "rvol": rv, "n_names": len(bars_by), "max_positions": a.max_positions,
+                 "universe": a.universe, "universe_avg_names": round(float(universe.sum(axis=1).mean()), 1) if universe is not None else len(bars_by),
+                 "avg_ret_bps": round(float(T["ret_bps"].mean()), 1) if len(T) else None, "n_trials": n_trials, "family": family,
                  "trial_sr_var": trial_sr_variance(family), "pbo": pbo["pbo"] if pbo else None, "attrib": 100.0, "synthetic": a.synthetic,
                  "notes": [f"Tone-shock sleeve on {len(bars_by)} names: z>={z}, RVOL>={rv}, hold {hold}, stop {a.stop_atr} ATR; {n_trials} trials logged.", note]}
         _finish(name, a, R, T, stats, extra, flags, note)

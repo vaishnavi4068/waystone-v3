@@ -3,24 +3,21 @@
 
 Scorer modes (--scorer):
   massive   Use Massive/Polygon LLM `insights[].sentiment` when present (positive/neutral/negative -> numeric).
-            Rows without `massive_sentiment` are skipped.  This is the default path for backtests once
-            `polygon-news` has backfilled data/news/<SYM>.csv.
+            Rows without `massive_sentiment` are skipped.  Default for backtests once polygon-news has backfilled.
   auto      Prefer `massive_sentiment` per row; fall back to FinBERT/lexicon on title+text for the rest.
   finbert   FinBERT only (ProsusAI/finbert via transformers, CPU is fine at ~20 items/s).
   lexicon   Embedded finance lexicon (Loughran-McDonald-style word lists with negation handling).
-
-FinBERT and lexicon both return a score in [-1, +1] per item; the lexicon is coarser but has no dependencies.
 
 Daily aggregation per symbol (data/sentiment/<SYM>_daily.csv):
   date, score (mean), count, pos_share, neg_share,
   shock_z   = (score - mean of the previous 20 days with news) / std of those days     — "tone shock"
   count_z   = (count - mean count previous 20 days) / std                                — "attention shock"
-Only items with ts <= 16:00 ET count for that date; later items roll to the next session (so a feature dated D
-was public before D's close and can be used from D+1's open — align_prior_close() in features.py does that).
+  score_src, shock_src_z  — when Massive LLM labels exist, parallel shock on Massive's own sentiment
+Only items with ts <= 16:00 ET count for that date; later items roll to the next session.
 
-  python ml/sentiment/finbert_score.py --symbols AAPL NVDA --scorer massive   # Massive LLM insights -> data/sentiment/<SYM>_daily.csv
-  python ml/sentiment/finbert_score.py --symbols AAPL --scorer lexicon
-  python ml/sentiment/finbert_score.py --synthetic --symbols S00 S01 --days 300   # fabricated news for the mechanics test
+  python ml/sentiment/finbert_score.py --sp500 --scorer massive --source-filter massive
+  python ml/sentiment/finbert_score.py --symbols AAPL NVDA --scorer auto
+  python ml/sentiment/finbert_score.py --synthetic --symbols S00 S01 --days 300
 """
 from __future__ import annotations
 
@@ -158,21 +155,66 @@ def to_session_date(ts: pd.Series) -> pd.Series:
     return d.dt.tz_localize(None)
 
 
-def daily_sentiment(news: pd.DataFrame, scores: np.ndarray, window: int = 20) -> pd.DataFrame:
-    df = news.copy()
-    df["s"] = scores
-    df["sdate"] = to_session_date(df["ts"])
-    g = df.groupby("sdate")["s"]
-    out = pd.DataFrame({"score": g.mean(), "count": g.size(), "pos_share": g.apply(lambda s: float((s > 0.2).mean())),
-                        "neg_share": g.apply(lambda s: float((s < -0.2).mean()))})
+def _add_shocks(out: pd.DataFrame, window: int) -> pd.DataFrame:
+    """shock_z / count_z against the PREVIOUS `window` news days (shift(1): today's value is never in its own baseline)."""
     prev_mean = out["score"].shift(1).rolling(window, min_periods=5).mean()
     prev_std = out["score"].shift(1).rolling(window, min_periods=5).std()
     out["shock_z"] = (out["score"] - prev_mean) / prev_std.replace(0, np.nan)
     cm = out["count"].shift(1).rolling(window, min_periods=5).mean()
     cs = out["count"].shift(1).rolling(window, min_periods=5).std()
     out["count_z"] = (out["count"] - cm) / cs.replace(0, np.nan)
+    if "score_src" in out.columns and out["score_src"].notna().any():
+        pm = out["score_src"].shift(1).rolling(window, min_periods=5).mean()
+        ps = out["score_src"].shift(1).rolling(window, min_periods=5).std()
+        out["shock_src_z"] = (out["score_src"] - pm) / ps.replace(0, np.nan)
     out.index.name = "date"
     return out.round(4)
+
+
+def daily_sentiment(news: pd.DataFrame, scores: np.ndarray, window: int = 20) -> pd.DataFrame:
+    """Per-session aggregation of item-level scores.  If the news frame carries `massive_sentiment` (Massive's own
+    per-ticker LLM label, +1/0/-1) the daily mean of that is added as `score_src` and `shock_src_z`."""
+    df = news.copy()
+    df["s"] = scores
+    df["sdate"] = to_session_date(df["ts"])
+    if "massive_sentiment" in df.columns:
+        df["src_sentiment"] = df["massive_sentiment"].map(massive_to_score)
+    g = df.groupby("sdate")["s"]
+    out = pd.DataFrame({"score": g.mean(), "count": g.size(), "pos_share": g.apply(lambda s: float((s > 0.2).mean())),
+                        "neg_share": g.apply(lambda s: float((s < -0.2).mean()))})
+    if "src_sentiment" in df.columns and df["src_sentiment"].notna().any():
+        gs = df.dropna(subset=["src_sentiment"]).groupby("sdate")["src_sentiment"]
+        out["score_src"] = gs.mean()
+        out["count_src"] = gs.size()
+    out["source"] = "headlines"
+    return _add_shocks(out, window)
+
+
+def daily_from_timeline(tone: pd.Series, articles: pd.Series | None = None, window: int = 20, scale: float = 5.0) -> pd.DataFrame:
+    """GDELT timelinetone (daily average tone, roughly -10..+10) -> the same daily contract."""
+    t = pd.Series(tone).astype(float).sort_index()
+    idx = pd.DatetimeIndex(t.index)
+    idx = idx.tz_localize(None) if idx.tz is not None else idx
+    shifted = (idx + pd.offsets.BDay(1)).normalize()
+    out = pd.DataFrame({"score": np.tanh(t.to_numpy() / scale)}, index=shifted)
+    out["count"] = pd.Series(articles).astype(float).reindex(t.index).to_numpy() if articles is not None else np.nan
+    out["pos_share"], out["neg_share"] = np.nan, np.nan
+    out = out[~out.index.duplicated(keep="last")]
+    out["source"] = "gdelt_timeline"
+    return _add_shocks(out, window)
+
+
+def merge_daily(headline_daily: pd.DataFrame | None, timeline_daily: pd.DataFrame | None) -> pd.DataFrame:
+    """Headline-level scores win on the days they exist; GDELT tone fills the rest."""
+    parts = [d for d in (headline_daily, timeline_daily) if d is not None and len(d)]
+    if not parts:
+        return pd.DataFrame()
+    if len(parts) == 1:
+        return parts[0]
+    h, t = headline_daily.copy(), timeline_daily.copy()
+    t = t[~t.index.isin(h.index)]
+    m = pd.concat([h, t]).sort_index()
+    return _add_shocks(m, 20)
 
 
 def synthetic_news(symbols: list[str], days: int, start: str = "2026-01-05", seed: int = 3, latent: dict | None = None) -> dict[str, pd.DataFrame]:
@@ -187,7 +229,7 @@ def synthetic_news(symbols: list[str], days: int, start: str = "2026-01-05", see
         for i, d in enumerate(dates):
             t = 0.7 * (tone[i - 1] if i else 0) + rng.normal(0, 0.35)
             if rng.random() < 0.04:
-                t += rng.choice([-1, 1]) * rng.uniform(1.0, 2.0)          # occasional shock
+                t += rng.choice([-1, 1]) * rng.uniform(1.0, 2.0)
             tone[i] = t
             n = max(0, int(rng.poisson(2 + 3 * abs(t))))
             for k in range(n):
@@ -249,8 +291,9 @@ def main():
         out = DATA_DIR / "sentiment" / f"{_safe_name(sym)}_daily.csv"
         out.parent.mkdir(parents=True, exist_ok=True)
         daily.to_csv(out)
+        src_note = f", score_src on {int(daily['score_src'].notna().sum())} days" if "score_src" in daily.columns else ""
         print(f"{sym}: {len(news)} items ({used}) -> {len(daily)} days, mean score {daily['score'].mean():+.3f}, "
-              f"|shock_z|>=2 on {int((daily['shock_z'].abs() >= 2).sum())} days -> {out}")
+              f"|shock_z|>=2 on {int((daily['shock_z'].abs() >= 2).sum())} days{src_note} -> {out}")
 
 
 if __name__ == "__main__":
