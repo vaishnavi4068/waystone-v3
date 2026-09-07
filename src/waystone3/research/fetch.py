@@ -150,25 +150,21 @@ def fetch_market_data(
 
 
 def _fetch_daily_via_api(symbol: str, root: Path, *, years: int) -> bool:
-    """Massive REST first, Yahoo second. Mac Studio only — never called from GKE."""
+    """Massive REST first (indices or stocks), Yahoo second. Mac Studio only — never called from GKE."""
     start, _ = default_window(years)
+    sym = symbol.upper()
     if _massive_key():
-        with contextlib.suppress(subprocess.CalledProcessError, FileNotFoundError):
-            _run_tool(
-                "fetch_polygon.py",
-                ["indices", "--symbols", symbol, "--start", start],
-                root,
-            )
-            if _has_daily(root / "data", symbol):
-                return True
-        with contextlib.suppress(subprocess.CalledProcessError, FileNotFoundError):
-            _run_tool(
-                "fetch_polygon.py",
-                ["indices", "--symbols", symbol.removeprefix("I:"), "--start", start],
-                root,
-            )
-            if _has_daily(root / "data", symbol):
-                return True
+        if sym.startswith("I:") or sym in {"SPX", "VIX", "VIX3M", "VXN", "NDX"}:
+            idx = sym.removeprefix("I:")
+            with contextlib.suppress(subprocess.CalledProcessError, FileNotFoundError):
+                _run_tool("fetch_polygon.py", ["indices", "--symbols", idx, "--start", start], root)
+                if _has_daily(root / "data", symbol):
+                    return True
+        else:
+            with contextlib.suppress(subprocess.CalledProcessError, FileNotFoundError):
+                _run_tool("fetch_polygon.py", ["stocks", "--symbols", sym, "--start", start], root)
+                if _has_daily(root / "data", symbol):
+                    return True
     try:
         _run_tool("fetch_yf.py", ["--symbols", symbol, "--start", start], root)
         return _has_daily(root / "data", symbol)

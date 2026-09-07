@@ -3,6 +3,10 @@
 
     export POLYGON_API_KEY=...            # or MASSIVE_API_KEY; the options bot's "Massive" key works
 
+    # daily bars for stocks/ETFs -> data/daily/AAPL.csv
+    python tools/fetch_polygon.py stocks --symbols AAPL MSFT --start 2021-01-01
+    python tools/fetch_polygon.py stocks --sp500 --start 2021-01-01
+
     # indices (daily) -> data/daily/I_SPX.csv, I_VIX.csv, I_VIX3M.csv, I_NDX.csv
     python tools/fetch_polygon.py indices --symbols SPX VIX VIX3M NDX --start 2010-01-01
     # indices (1-min) -> data/intraday/I_SPX_1min.csv   (for the intraday GEX version)
@@ -84,6 +88,48 @@ class Client:
             out.extend(js.get("results") or [])
             pages += 1
         return out
+
+
+def stock_daily_bars(c: Client, symbol: str, start: str, end: str) -> pd.DataFrame:
+    """Daily OHLCV for a stock/ETF via /v2/aggs/ticker/{sym}/range/1/day/..."""
+    api_sym = D.polygon_ticker(symbol)
+    rows = c.paginate(
+        f"/v2/aggs/ticker/{api_sym}/range/1/day/{start}/{end}",
+        {"adjusted": "true", "sort": "asc", "limit": 50000},
+    )
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows).rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume", "t": "ts"})
+    df["date"] = pd.to_datetime(df["ts"], unit="ms", utc=True).dt.tz_convert("America/New_York").dt.tz_localize(None).dt.normalize()
+    if "volume" not in df:
+        df["volume"] = 0.0
+    return df[["date", "open", "high", "low", "close", "volume"]]
+
+
+def cmd_stocks(a) -> None:
+    c = Client(dry_run=a.dry_run)
+    end = a.end or date.today().isoformat()
+    if a.sp500:
+        symbols = D.load_symbol_list(max_symbols=a.max_symbols)
+    elif a.symbols:
+        symbols = [str(s).strip().upper().replace(".", "-") for s in a.symbols]
+    else:
+        raise SystemExit("pass --symbols or --sp500")
+    ok, fail = 0, 0
+    for s in symbols:
+        out = D.daily_path(s)
+        if out.exists() and not a.force:
+            print(f"  {s}: skip (exists)"); ok += 1; continue
+        df = stock_daily_bars(c, s, a.start, end)
+        if df.empty:
+            print(f"  {s}: no data from Massive"); fail += 1; continue
+        d = df.set_index("date")
+        d["adj_close"] = d["close"]
+        d.to_csv(out)
+        print(f"  {s}: {len(d)} rows -> {out}")
+        ok += 1
+        time.sleep(0.15)
+    print(f"stocks: ok={ok} fail={fail}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -310,6 +356,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="print the requests instead of calling")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("stocks")
+    p.add_argument("--symbols", nargs="*")
+    p.add_argument("--sp500", action="store_true")
+    p.add_argument("--max-symbols", type=int)
+    p.add_argument("--start", required=True)
+    p.add_argument("--end")
+    p.add_argument("--force", action="store_true", help="refetch even if CSV exists")
+    p.set_defaults(fn=cmd_stocks)
     p = sub.add_parser("indices"); p.add_argument("--symbols", nargs="+", required=True); p.add_argument("--start", required=True)
     p.add_argument("--end"); p.add_argument("--minute", action="store_true"); p.set_defaults(fn=cmd_indices)
     p = sub.add_parser("futures"); p.add_argument("--root", required=True); p.add_argument("--start", required=True); p.add_argument("--end")
