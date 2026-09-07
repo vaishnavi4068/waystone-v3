@@ -28,7 +28,8 @@ else
   run ml/sentiment/finbert_score.py --sp500 --scorer massive --source-filter massive
   run ml/sentiment/event_classifier.py --sp500
   SP500_N=$($PY -c "from wsbt.data import load_symbol_list; print(len(load_symbol_list()))")
-  run ml/sentiment/sentiment_backtest.py --mode shock --n-symbols "$SP500_N" --grid --both-sides --name ml_sent_shock_massive $D
+  run ml/sentiment/sentiment_backtest.py --mode shock --n-symbols "$SP500_N" --grid --both-sides \
+    --universe structural --max-positions 5 --name ml_sent_shock_massive $D
   run ml/sentiment/sentiment_backtest.py --mode macro --symbol "${MKT:-SPY}" $D
 fi
 echo; echo "results/ml_*/ hold metrics.json, trades.csv, equity.csv, kpi.json (+ dashboard.html when KPI_DASHBOARD is set); results/trial_log.csv is the trial log."
