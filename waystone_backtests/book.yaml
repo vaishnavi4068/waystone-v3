@@ -1,0 +1,18 @@
+version: 1
+name: research_book_v1
+nav: 100000
+method: equal_weight
+warmup_days: 252
+sleeves:
+  - id: 01_mean_reversion_pullback
+    equity: results/01_mean_reversion_pullback/equity.csv
+    weight: 1.0
+  - id: 08_pead_implied_move
+    equity: results/08_pead_implied_move/equity.csv
+    weight: 1.0
+  - id: ml_meta_01_pullback
+    equity: results/ml_meta_01_pullback/equity.csv
+    weight: 1.0
+  - id: ml_meta_08_pead
+    equity: results/ml_meta_08_pead/equity.csv
+    weight: 1.0
