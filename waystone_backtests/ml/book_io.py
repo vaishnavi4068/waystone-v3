@@ -132,37 +132,31 @@ def _simple_yaml(text: str) -> dict:
     """Indent parser for the book.yaml subset (maps, lists, scalars, # comments)."""
     root: dict = {}
     stack: list[tuple[int, object]] = [(-1, root)]
-    pending_key = None
     for raw in text.splitlines():
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip(" "))
         line = raw.strip()
-        while stack and indent <= stack[-1][0] and not (pending_key is not None and indent > stack[-1][0]):
-            if indent == stack[-1][0]:
-                break
+        # Same indent as the opener is a sibling — pop back to the parent map.
+        while len(stack) > 1 and indent <= stack[-1][0]:
             stack.pop()
         cur = stack[-1][1]
         if line.startswith("- "):
-            val = _parse_scalar(line[2:])
             if isinstance(cur, list):
-                cur.append(val)
+                cur.append(_parse_scalar(line[2:]))
             continue
         if ":" not in line:
             continue
         key, rest = line.split(":", 1)
         key, rest = key.strip(), rest.strip()
+        if not isinstance(cur, dict):
+            continue
         if rest:
-            val = _parse_scalar(rest)
-            if isinstance(cur, dict):
-                cur[key] = val
-            pending_key = None
+            cur[key] = _parse_scalar(rest)
         else:
             nxt: dict = {}
-            if isinstance(cur, dict):
-                cur[key] = nxt
+            cur[key] = nxt
             stack.append((indent, nxt))
-            pending_key = key
     return root
 
 

@@ -19,7 +19,7 @@ from ml.allocator import (  # noqa: E402
     solve_erc, step_brake,
 )
 from ml.book_io import (  # noqa: E402
-    default_state, derive_for_session, holdout_status, load_book,
+    _simple_yaml, default_state, derive_for_session, holdout_status, load_book,
     next_session_on_or_after, read_instruction, round_units, save_json,
 )
 
@@ -383,10 +383,17 @@ def test_for_session_weekend_and_holiday():
 
 def test_committed_book_yaml_never_live():
     book = load_book(ROOT / "book.yaml")
-    assert book["sleeves"]
-    for sid, cfg in book["sleeves"].items():
-        assert cfg["status"] in {"paper", "shadow", "off"}, sid
-        assert cfg["status"] != "live"
+    # CI has no PyYAML — the indent fallback must still see all three sleeves.
+    fallback = _simple_yaml((ROOT / "book.yaml").read_text())
+    for parsed in (book, fallback):
+        assert set(parsed["sleeves"]) == {"v221_mnq", "vwap_options", "pullback_bb"}
+        for sid, cfg in parsed["sleeves"].items():
+            assert cfg["status"] in {"paper", "shadow", "off"}, sid
+            assert cfg["status"] != "live"
+        assert parsed["sleeves"]["v221_mnq"]["unit_size"] == 2
+        assert parsed["sleeves"]["v221_mnq"]["regime_rules"]["half_in_states"] == [2]
+        assert parsed["sleeves"]["vwap_options"]["regime_rules"]["half_in_states"] == [1]
+        assert parsed["sleeves"]["pullback_bb"]["event_blackout"] == ["FOMC"]
 
 
 def test_live_dir_missing_is_backtest(tmp_path):
