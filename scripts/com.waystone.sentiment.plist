@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Daily free-sentiment collection (CNN F&G, Yahoo RSS, SEC 8-K, GDELT) + GCS mirror.
+       Edit WorkingDirectory / GOOGLE_APPLICATION_CREDENTIALS, then:
+         cp scripts/com.waystone.sentiment.plist ~/Library/LaunchAgents/
+         launchctl load ~/Library/LaunchAgents/com.waystone.sentiment.plist -->
+  <key>Label</key><string>com.waystone.sentiment</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>./scripts/sentiment-daily.sh</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/me/waystone-v3</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>GOOGLE_APPLICATION_CREDENTIALS</key><string>/Users/me/.config/gcloud/waystone-data.json</string>
+    <key>IBKR_REPORTS_BUCKET</key><string>waystone-data</string>
+    <key>SEC_USER_AGENT</key><string>Waystone Research admin@waystone.capital</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>10</integer></dict>
+  <key>StandardOutPath</key><string>/tmp/sentiment.log</string>
+  <key>StandardErrorPath</key><string>/tmp/sentiment.log</string>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>

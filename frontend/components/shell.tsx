@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   BarChart3,
+  BookOpen,
   CalendarDays,
   CandlestickChart,
   Gauge,
@@ -21,6 +22,7 @@ import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
 
 const NAV = [
   { href: "/ibkr", label: "Daily", icon: CalendarDays },
+  { href: "/strategies", label: "Strategies", icon: BookOpen },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/options-kpis", label: "Options KPIs", icon: Gauge },
   { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
@@ -52,7 +54,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="flex flex-1 flex-col gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href;
+            const active = href === "/strategies" ? pathname.startsWith("/strategies") : pathname === href;
             return (
               <Link
                 key={href}

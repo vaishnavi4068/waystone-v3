@@ -233,3 +233,81 @@ class ZohoCliqChannel:
             )
             return False
         return True
+
+
+class GrokBotChannel:
+    """Wake a Grok Bot webhook routine with a status JSON body.
+
+    Create a routine in the Grok Bot desktop app (trigger: when a webhook fires).
+    Copy the POST URL and sender key (``crsr_…``) from the trigger card — not shown on iOS.
+    Key-optional: with no URL/key this degrades to a logged no-op.
+
+    Env: ``GROK_BOT_WEBHOOK_URL``, ``GROK_BOT_WEBHOOK_KEY`` (or ``GROK_BOT_SENDER_KEY``).
+    """
+
+    name = "grok_bot"
+
+    def __init__(
+        self,
+        webhook_url: str | None = None,
+        sender_key: str | None = None,
+    ) -> None:
+        self.webhook_url: str = webhook_url or os.getenv("GROK_BOT_WEBHOOK_URL") or ""
+        self.sender_key: str = (
+            sender_key
+            or os.getenv("GROK_BOT_WEBHOOK_KEY")
+            or os.getenv("GROK_BOT_SENDER_KEY")
+            or ""
+        )
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.webhook_url and self.sender_key)
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.sender_key}",
+            "X-Automation-Key": self.sender_key,
+            "Content-Type": "application/json",
+        }
+
+    def post_sync(self, payload: dict[str, object]) -> bool:
+        if not self.configured:
+            log.info("alert_not_sent_unconfigured", channel=self.name, title="grok_bot")
+            return False
+        try:
+            resp = httpx.post(
+                self.webhook_url, json=payload, headers=self._headers(), timeout=10
+            )
+        except httpx.HTTPError as exc:
+            log.warning("grok_bot_send_failed", error=str(exc))
+            return False
+        if not resp.is_success:
+            log.warning("grok_bot_send_rejected", status=resp.status_code)
+            return False
+        return True
+
+    async def send(self, alert: Alert, recipient: Recipient) -> bool:
+        del recipient
+        if not self.configured:
+            log.info("alert_not_sent_unconfigured", channel=self.name, title=alert.title)
+            return False
+        payload: dict[str, object] = {
+            "event": "waystone.alert",
+            "severity": alert.severity.value,
+            "title": alert.title,
+            "body": alert.body,
+            "source": "waystone3",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    self.webhook_url, json=payload, headers=self._headers()
+                )
+        except httpx.HTTPError as exc:
+            log.warning("grok_bot_send_failed", error=str(exc))
+            return False
+        if not resp.is_success:
+            log.warning("grok_bot_send_rejected", status=resp.status_code)
+            return False
+        return True

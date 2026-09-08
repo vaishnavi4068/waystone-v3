@@ -27,14 +27,25 @@ def _completer(payload: dict[str, Any]):
 def test_team_recipients_seeded_from_cliq_env(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("ZOHO_CLIQ_WEBHOOK_URL", "https://cliq.zoho.com/x?zapikey=K")
     monkeypatch.delenv("WHATSAPP_GROUP_API_URL", raising=False)
+    monkeypatch.delenv("GROK_BOT_WEBHOOK_URL", raising=False)
     os_ = build_agent_os(is_paper=True)
     channels = {r.channel for r in os_.recipients.list_all()}
     assert channels == {"cliq"}  # only the configured channel is seeded
 
 
+def test_team_recipients_seeded_from_grok_bot_env(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("ZOHO_CLIQ_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("WHATSAPP_GROUP_API_URL", raising=False)
+    monkeypatch.setenv("GROK_BOT_WEBHOOK_URL", "https://api2.cursor.sh/automations/webhook/r1")
+    os_ = build_agent_os(is_paper=True)
+    channels = {r.channel for r in os_.recipients.list_all()}
+    assert channels == {"grok_bot"}
+
+
 def test_no_team_recipients_without_env(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.delenv("ZOHO_CLIQ_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("WHATSAPP_GROUP_API_URL", raising=False)
+    monkeypatch.delenv("GROK_BOT_WEBHOOK_URL", raising=False)
     os_ = build_agent_os(is_paper=True)
     assert os_.recipients.list_all() == []  # nothing configured -> no auto recipients
 

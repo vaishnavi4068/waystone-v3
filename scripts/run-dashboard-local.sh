@@ -6,13 +6,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Load repo .env when present; GCS keys are often injected by the shell/Cloud Agent
+# (they are not always checked into .env).
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
+
 export WAYSTONE_DB="${WAYSTONE_DB:-$ROOT/arena.db}"
 export WAYSTONE_ADMIN_TOKEN="${WAYSTONE_ADMIN_TOKEN:-dev-admin-token}"
-export IBKR_STAGED="${IBKR_STAGED:-1}"
+# IBKR_STAGED=0 → read IBKR + research from GCS when IBKR_REPORTS_BUCKET is set.
+export IBKR_STAGED="${IBKR_STAGED:-0}"
 export IBKR_PAPER="${IBKR_PAPER:-true}"
 export WAYSTONE_BROKER="${WAYSTONE_BROKER:-paper}"
 if [[ -z "${IBKR_REPORTS_LOCAL_DIR:-}" && -d "$ROOT/reports/demo" ]]; then
   export IBKR_REPORTS_LOCAL_DIR="$ROOT/reports/demo"
+fi
+if [[ -z "${IBKR_REPORTS_BUCKET:-}" ]]; then
+  echo "WARN: IBKR_REPORTS_BUCKET is unset — /strategies will show the built-in preview only." >&2
+  echo "      Export GCS credentials (GOOGLE_APPLICATION_CREDENTIALS, IBKR_REPORTS_BUCKET) and retry." >&2
 fi
 
 if [[ ! -d "$ROOT/frontend/node_modules" ]]; then
@@ -58,9 +72,17 @@ fi
 echo
 echo "HQCapital local preview"
 echo "  API  http://127.0.0.1:9200/api/health"
-echo "  UI   http://127.0.0.1:3001"
-echo "  also http://localhost:3001  (now listens on IPv6)"
-echo "Sign in with a team username. Prefer 127.0.0.1 if a port-forward hangs."
+echo "  UI   http://127.0.0.1:3001/strategies"
+echo "  also http://localhost:3001/strategies"
+if [[ "${CURSOR_AGENT:-}" == "1" ]]; then
+  echo
+  echo "Cloud Agent: 127.0.0.1 is inside the remote VM, not your Mac."
+  echo "  1. In Cursor Desktop, open this agent run."
+  echo "  2. Click the plug icon (top-right) → forward port 3001 (and 9200 if needed)."
+  echo "  3. Open http://localhost:3001/strategies in your browser."
+  echo "  Agent run: https://cursor.com/agents/${CURSOR_CONVERSATION_ID:-}"
+fi
+echo "Sign in: Mark / mark1234 (or your team username)."
 echo
 
 cd "$ROOT/frontend"

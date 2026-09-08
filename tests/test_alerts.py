@@ -8,6 +8,7 @@ from waystone3.agents.notifier import NotifierAgent
 from waystone3.agents.registry import AgentRegistry
 from waystone3.alerts import channels as channels_mod
 from waystone3.alerts.channels import (
+    GrokBotChannel,
     LogChannel,
     TwilioSmsChannel,
     WhatsAppGroupChannel,
@@ -293,3 +294,29 @@ async def test_notifier_bridges_strategy_submitted() -> None:
     )
     assert cap.alerts[-1].title == "Strategy submitted by Akash"
     assert "momentum" in cap.alerts[-1].body
+
+
+async def test_unconfigured_grok_bot_degrades_not_raises() -> None:
+    channel = GrokBotChannel(webhook_url="", sender_key="")
+    rec = Recipient(id=1, name="Grok Bot", role=Role.OPS, channel="grok_bot")
+    delivered = await channel.send(Alert(Severity.INFO, Role.OPS, "t", "b"), rec)
+    assert delivered is False
+
+
+async def test_grok_bot_posts_webhook(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _FakeClient.captured = {}
+    _FakeClient.status_code = 200
+    monkeypatch.setattr(channels_mod.httpx, "AsyncClient", _FakeClient)
+    channel = GrokBotChannel(
+        webhook_url="https://api2.cursor.sh/automations/webhook/r1",
+        sender_key="crsr_test",
+    )
+    rec = Recipient(id=1, name="Grok Bot", role=Role.OPS, channel="grok_bot")
+    delivered = await channel.send(Alert(Severity.INFO, Role.OPS, "Fetch done", "nsdq=3"), rec)
+    assert delivered is True
+    assert _FakeClient.captured["url"] == "https://api2.cursor.sh/automations/webhook/r1"
+    body = _FakeClient.captured["json"]
+    assert body["event"] == "waystone.alert"
+    assert body["title"] == "Fetch done"
+    headers = _FakeClient.captured["headers"]
+    assert headers["Authorization"] == "Bearer crsr_test"

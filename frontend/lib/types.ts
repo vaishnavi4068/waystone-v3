@@ -290,6 +290,129 @@ export interface AlgoCompare {
   staged_week?: string | null;
 }
 
+export interface ResearchStats {
+  days?: number;
+  years?: number;
+  total_return_pct?: number | null;
+  cagr_pct?: number | null;
+  ann_vol_pct?: number | null;
+  sharpe?: number | null;
+  sortino?: number | null;
+  max_drawdown_pct?: number | null;
+  calmar?: number | null;
+  trade_count?: number | null;
+  win_rate_pct?: number | null;
+}
+
+export interface ResearchRun {
+  date: string;
+  variant: string;
+  run_id?: string | null;
+  synthetic: boolean;
+  params: Record<string, unknown>;
+  stats: ResearchStats;
+  extra: Record<string, unknown>;
+  equity: number[];
+}
+
+export interface ResearchScorecardKpi {
+  id: string;
+  name: string;
+  definition: string;
+  unit: string;
+  type: string;
+  pass?: number | null;
+  warn?: number | null;
+  critical: boolean;
+  value: number | boolean | string | null;
+  status: string;
+}
+
+export interface ResearchScorecardStage {
+  id: string;
+  name: string;
+  desc?: string;
+  verdict: string;
+  filled: number;
+  total: number;
+  kpis?: ResearchScorecardKpi[];
+}
+
+export interface ResearchScorecard {
+  strategy_id?: string;
+  name?: string;
+  book?: string;
+  variant?: string;
+  date?: string;
+  overall: string;
+  window?: { start?: string | null; end?: string | null };
+  banner?: Record<string, number | string | null | undefined>;
+  notes?: string[];
+  stages: ResearchScorecardStage[];
+  rule_sketch?: string;
+  instruments?: string;
+  holding_period?: string;
+  pnl_by_year?: { year: string; trades: number; pnl_usd: number }[];
+  pnl_by_month?: { month: string; pnl_usd: number }[];
+  trade_details?: ResearchTradeDetail[];
+  trade_count_total?: number;
+  trade_details_truncated?: boolean;
+  avg_monthly_net_usd?: number | null;
+}
+
+export interface ResearchTradeDetail {
+  entry_time?: string;
+  exit_time?: string;
+  symbol?: string;
+  side?: string;
+  qty?: number | null;
+  entry_price?: number | null;
+  exit_price?: number | null;
+  pnl?: number;
+  hold_days?: number | null;
+}
+
+export interface ResearchStrategy {
+  id: string;
+  name: string;
+  book: string;
+  instruments: string;
+  holding_period: string;
+  summary: string;
+  rule_sketch: string;
+  data_sources: string[];
+  modes: string[];
+  days: string[];
+  variants?: string[];
+  latest: ResearchRun | null;
+  scorecard?: ResearchScorecard | null;
+}
+
+export interface ResearchOpsStatus {
+  event?: string;
+  phase?: string;
+  title?: string;
+  body?: string;
+  approval?: string | null;
+  at?: string;
+  source?: string;
+}
+
+export interface ResearchOpsInboxItem {
+  id: string;
+  at: string;
+  text: string;
+  action: string;
+  acked: boolean;
+  source: string;
+}
+
+export interface ResearchOps {
+  status: ResearchOpsStatus | null;
+  inbox: ResearchOpsInboxItem[];
+  writable: boolean;
+}
+
 export interface AlgoOnboard {
   id: string;
   name: string;

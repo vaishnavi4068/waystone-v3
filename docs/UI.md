@@ -17,6 +17,7 @@ KPI / compare pages. Algo onboarding on **Compare** writes the registry on the r
 
 | Screen | Shows |
 |---|---|
+| **Strategies** (`/strategies`) | Research sleeves by book + dated Mac Studio backtest results from GCS |
 | **Daily** (`/ibkr`) | IBKR blotter: NLV, day P&L, futures vs options, fills (GCS dump) |
 | **Compare** (`/compare`) | Per-algo live paper vs same-day replay; onboard more algos |
 | **Options KPIs** (`/options-kpis`) | Strategy 5 weekly paper scorecard (stages 1–5 + slippage) |

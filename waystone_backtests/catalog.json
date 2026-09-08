@@ -1,0 +1,624 @@
+{
+ "version": 1,
+ "strategies": [
+  {
+   "id": "01_mean_reversion",
+   "folder": "strategies/01_mean_reversion",
+   "name": "Mean reversion",
+   "book": "equities",
+   "instruments": "~500 liquid US large caps (NSDQ250 universe), SPY regime",
+   "holding_period": "2\u20136 sessions",
+   "summary": "Cross-sectional pullback portfolio: buy the most oversold names (RSI-2) inside their own 200-day uptrend, \u226410 names at once, exit on the first strength. bb / nr7 single-symbol modes remain in the script for reference.",
+   "rule_sketch": "Signal at close t: close > SMA200, RSI(2) < entry, no earnings inside the hold window. Rank by RSI; resting limit at close - k\u00d7ATR(14) for the next session (passive fill, no spread crossing), \u226410 names, equal notional. Exit at the close when RSI(2) > 70 or close > SMA5, or after max_hold sessions.",
+   "data_sources": [
+    "nsdq250",
+    "massive",
+    "yahoo"
+   ],
+   "daily_symbols": [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "JPM",
+    "XOM",
+    "UNH"
+   ],
+   "intraday_roots": [],
+   "modes": [
+    "pullback"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--mode",
+      "pullback",
+      "--universe",
+      "nsdq250.csv",
+      "--max-positions",
+      "10",
+      "--entry-atr",
+      "1.0",
+      "--rsi-entry",
+      "10",
+      "--rsi-exit",
+      "60",
+      "--max-hold",
+      "6"
+     ],
+     "grid": {
+      "--entry-atr": [
+       0.75,
+       1.0,
+       1.25
+      ],
+      "--rsi-entry": [
+       10,
+       15
+      ],
+      "--rsi-exit": [
+       60,
+       70
+      ],
+      "--max-hold": [
+       4,
+       5,
+       6
+      ]
+     },
+     "constraints": {
+      "min_trades": 200,
+      "max_dd_pct": 15
+     }
+    }
+   ]
+  },
+  {
+   "id": "02_gex_dealer_gamma",
+   "folder": "strategies/02_gex_dealer_gamma",
+   "name": "Dealer gamma (GEX)",
+   "book": "futures",
+   "instruments": "MES/ES (signal from SPX options)",
+   "holding_period": "Intraday, open to close",
+   "summary": "Dealer gamma positioning sets the intraday regime: long-gamma pins and mean-reverts; short-gamma trends. Reads positioning, not price.",
+   "rule_sketch": "Build GEX from the SPX chain (OI \u00d7 gamma). Trade MES/ES gap-fade or wall-revert when gex_z and walls agree. Signal from the prior close / overnight snapshot.",
+   "data_sources": [
+    "nsdq250",
+    "massive"
+   ],
+   "daily_symbols": [
+    "AAPL"
+   ],
+   "intraday_roots": [
+    "MNQ"
+   ],
+   "modes": [
+    "gap_fade",
+    "wall_revert"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--mode",
+      "gap_fade"
+     ]
+    },
+    {
+     "args": [
+      "--mode",
+      "wall_revert"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "03_vol_carry_put_spreads",
+   "folder": "strategies/03_vol_carry_put_spreads",
+   "name": "Vol carry put spreads",
+   "book": "options",
+   "instruments": "XSP / SPX put credit spreads",
+   "holding_period": "10\u201325 days (45 DTE \u2192 21 DTE)",
+   "summary": "Harvest the variance risk premium by selling put spreads only in VIX/VIX3M contango. Mirror image of the VWAP book, which buys premium.",
+   "rule_sketch": "Gate on VIX/VIX3M < 0.95 and VIX not at the cheap extreme. Sell ~15-delta put, buy 1% lower. Exit at 50% max profit, 2\u00d7 credit stop, or 21 DTE.",
+   "data_sources": [
+    "yahoo",
+    "massive"
+   ],
+   "daily_symbols": [
+    "^GSPC",
+    "^VIX",
+    "^VIX3M"
+   ],
+   "intraday_roots": [],
+   "modes": [
+    "default"
+   ],
+   "scripts": [
+    {}
+   ]
+  },
+  {
+   "id": "04_calendar_effects",
+   "folder": "strategies/04_calendar_effects",
+   "name": "Calendar effects",
+   "book": "futures",
+   "instruments": "MES/ES (or SPY)",
+   "holding_period": "A few sessions around the event",
+   "summary": "Turn-of-month drift, FOMC announcement drift, and opex-week patterns on the index future.",
+   "rule_sketch": "Long around month-end / FOMC / opex windows from fomc_dates.csv. Fill next open; flat after the window. Costs always on.",
+   "data_sources": [
+    "nsdq250",
+    "massive",
+    "yahoo"
+   ],
+   "daily_symbols": [
+    "SPY",
+    "QQQ"
+   ],
+   "intraday_roots": [],
+   "modes": [
+    "tom",
+    "fomc",
+    "opex"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--mode",
+      "tom"
+     ]
+    },
+    {
+     "args": [
+      "--mode",
+      "fomc"
+     ]
+    },
+    {
+     "args": [
+      "--mode",
+      "opex"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "05_orderflow_cvd_mnq",
+   "folder": "strategies/05_orderflow_cvd_mnq",
+   "name": "MNQ CVD / VWAP",
+   "book": "futures",
+   "instruments": "MNQ (then NQ)",
+   "holding_period": "Minutes; flat by 15:55 ET",
+   "summary": "Absorption: price makes a new session extreme but CVD does not. Fade back to VWAP. Microstructure, not Renko/MCO.",
+   "rule_sketch": "Session CVD + VWAP \u03c3-bands on 1-minute MNQ. Enter on divergence at the band; target VWAP; time stop 60 bars.",
+   "data_sources": [
+    "nsdq250",
+    "massive"
+   ],
+   "daily_symbols": [],
+   "intraday_roots": [
+    "MNQ"
+   ],
+   "modes": [
+    "default"
+   ],
+   "scripts": [
+    {}
+   ]
+  },
+  {
+   "id": "06_sector_rotation",
+   "folder": "strategies/06_sector_rotation",
+   "name": "Sector rotation",
+   "book": "equities",
+   "instruments": "11 SPDR sector ETFs + 13 liquid industry ETFs",
+   "holding_period": "One month per rebalance",
+   "summary": "Cross-sectional momentum across sector and industry ETFs: long the leaders, book vol-targeted, cash (T-bill yield) when the 200-day filter fails.",
+   "rule_sketch": "Rank the 24 sector/industry ETFs on blended 3/6/12-month return (skip last week). Hold top N above their SMA200, else that slot is cash earning ^IRX. Equal weights, book scaled to an ex-ante vol target (gross <= 1), monthly rebalance at the next open, 5 bps turnover cost.",
+   "data_sources": [
+    "massive",
+    "yahoo"
+   ],
+   "daily_symbols": [
+    "SPY",
+    "XLK",
+    "XLF",
+    "XLV",
+    "XLE",
+    "XLI",
+    "XLY",
+    "XLP",
+    "XLU",
+    "XLB",
+    "XLRE",
+    "XLC",
+    "SMH",
+    "SOXX",
+    "XBI",
+    "IBB",
+    "IGV",
+    "KRE",
+    "KBE",
+    "XOP",
+    "XME",
+    "GDX",
+    "ITB",
+    "XHB",
+    "XRT",
+    "^IRX"
+   ],
+   "intraday_roots": [],
+   "modes": [
+    "default"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--universe",
+      "industries",
+      "--weighting",
+      "equal",
+      "--top-n",
+      "5",
+      "--vol-target",
+      "8",
+      "--rebalance",
+      "M"
+     ],
+     "grid": {
+      "--top-n": [
+       4,
+       5,
+       6
+      ],
+      "--vol-target": [
+       8,
+       10,
+       12
+      ],
+      "--rebalance": [
+       "M",
+       "SM"
+      ]
+     },
+     "constraints": {
+      "min_trades": 0,
+      "max_dd_pct": 20
+     }
+    }
+   ]
+  },
+  {
+   "id": "07_breadth_regime",
+   "folder": "strategies/07_breadth_regime",
+   "name": "Breadth regime",
+   "book": "equities",
+   "instruments": "Regime switch from ~500-name breadth; P&L shown on SPY",
+   "holding_period": "Regime, not a trade",
+   "summary": "Breadth (% of NSDQ250 names above their 50-day) as a regime input for the equity sleeves. Tested as switch, hysteresis switch and position-sizer on a SPY/SMA200 base.",
+   "rule_sketch": "Base = SPY long above its SMA200. 'scaled': full size when >thr% of names are above their 50-day, `floor` size otherwise. 'hyst': ON above thr, OFF below thr-band. 'pct50': hard switch. Writes results/07_breadth_regime_regime.csv for 01 (--regime-file). Finding: gating 01's pullback entries on breadth lowers return more than drawdown (a dip-buyer wants washed-out breadth), so 01 runs ungated.",
+   "data_sources": [
+    "nsdq250",
+    "massive",
+    "yahoo"
+   ],
+   "daily_symbols": [
+    "SPY",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "AVGO",
+    "TSLA"
+   ],
+   "intraday_roots": [],
+   "modes": [
+    "default"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--floor",
+      "0.5",
+      "--mode",
+      "hyst",
+      "--thr",
+      "40"
+     ],
+     "grid": {
+      "--mode": [
+       "scaled",
+       "hyst",
+       "pct50"
+      ],
+      "--thr": [
+       40,
+       50,
+       60
+      ]
+     },
+     "constraints": {
+      "min_trades": 0,
+      "max_dd_pct": 25
+     }
+    }
+   ],
+   "gate_profile": "regime_filter"
+  },
+  {
+   "id": "08_pead_implied_move",
+   "folder": "strategies/08_pead_implied_move",
+   "name": "PEAD / implied move",
+   "book": "equities",
+   "instruments": "NSDQ250 / S&P large-cap universe (~520 names with earnings history)",
+   "holding_period": "20 trading days after the reaction day",
+   "summary": "Post-earnings drift, conditioned on a real EPS beat: long names whose reaction beat the expected move AND whose EPS surprise is >= 10%, skipping reaction days that closed at the top of their range. No stop (post-event noise triggers stops and forfeits the drift).",
+   "rule_sketch": "Reaction = first post-announcement close / pre close - 1; expected move = mean |reaction| of the last 8 events. Long at the next open when reaction >= move_mult x expected (floor 2%), EPS beat >= 10%, reaction-day close <= 80% of its range. Hold 20 days, no stop, 20 equal slots, biggest surprise first. Event study (9.6k events): unconditioned drift is SPY beta; EPS-beat filter carries +0.7%/20d excess (t=2.6); shorts after misses have positive drift so are excluded.",
+   "data_sources": [
+    "nsdq250",
+    "massive",
+    "yahoo"
+   ],
+   "daily_symbols": [
+    "SPY",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "JPM",
+    "XOM",
+    "UNH"
+   ],
+   "intraday_roots": [],
+   "modes": [
+    "default"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--list",
+      "nsdq250.csv",
+      "--max-positions",
+      "20",
+      "--min-eps-surprise",
+      "0.2",
+      "--hold",
+      "30",
+      "--max-clv",
+      "0.8",
+      "--stop-atr",
+      "0",
+      "--move-mult",
+      "1.0"
+     ],
+     "grid": {
+      "--min-eps-surprise": [
+       0.05,
+       0.1,
+       0.2
+      ],
+      "--hold": [
+       10,
+       20,
+       30
+      ],
+      "--max-clv": [
+       0.8,
+       1.0
+      ],
+      "--stop-atr": [
+       0,
+       2.0
+      ],
+      "--move-mult": [
+       0.5,
+       1.0
+      ]
+     },
+     "constraints": {
+      "min_trades": 200,
+      "max_dd_pct": 15
+     }
+    }
+   ]
+  },
+  {
+   "book": "overlay",
+   "kind": "overlay",
+   "folder": "ml",
+   "data_sources": [
+    "nsdq250",
+    "yahoo"
+   ],
+   "daily_symbols": [],
+   "intraday_roots": [],
+   "modes": [
+    "default"
+   ],
+   "constraints": {
+    "min_trades": 0,
+    "max_dd_pct": 20
+   },
+   "id": "ml_meta_08_pead",
+   "name": "ML meta-label on PEAD trades",
+   "script": "ml/meta_label.py",
+   "instruments": "08_pead_implied_move trades.csv (long post-earnings drift), features from daily bars + ^VIX + SPX HMM regime",
+   "holding_period": "inherits the primary (20-30 trading days)",
+   "summary": "Overlay, not a trade generator: a LightGBM meta-model scores each PEAD entry on the primary's own trades and either skips it (p < m_skip x breakeven) or doubles it (p >= m_boost x breakeven). Purged walk-forward folds with a 2-day embargo, thresholds tuned inside each fold, DSR against the shared trial_log family.",
+   "rule_sketch": "ml/meta_label.py --primary trades --trades-csv results/08_pead_implied_move/trades.csv. Label = pnl > 0 on the primary's fills; features at signal time only (returns, vol, dollar volume, VIX percentile, SPX regime state). Verdict = base vs meta on the same out-of-fold trades.",
+   "inputs": [
+    "results/08_pead_implied_move/trades.csv",
+    "data/regime/spx_states.csv"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--primary",
+      "trades",
+      "--trades-csv",
+      "results/08_pead_implied_move/trades.csv",
+      "--vol-symbol",
+      "^VIX",
+      "--market-symbol",
+      "SPY",
+      "--regime",
+      "spx",
+      "--tune",
+      "--no-sens",
+      "--name",
+      "ml_meta_08_pead"
+     ]
+    }
+   ]
+  },
+  {
+   "book": "overlay",
+   "kind": "overlay",
+   "folder": "ml",
+   "data_sources": [
+    "nsdq250",
+    "yahoo"
+   ],
+   "daily_symbols": [],
+   "intraday_roots": [],
+   "modes": [
+    "default"
+   ],
+   "constraints": {
+    "min_trades": 0,
+    "max_dd_pct": 20
+   },
+   "id": "ml_meta_01_pullback",
+   "name": "ML meta-label on pullback trades",
+   "script": "ml/meta_label.py",
+   "instruments": "01_mean_reversion pullback trades.csv (RSI-2 pullbacks above SMA200, ~500 names), features from daily bars + ^VIX + SPX HMM regime",
+   "holding_period": "inherits the primary (1-6 trading days)",
+   "summary": "Overlay on the tuned pullback sleeve: meta-model decides which limit-fill pullbacks to skip or size up. Same purged walk-forward protocol; judged only on the uplift over the ungated primary on identical out-of-fold trades.",
+   "rule_sketch": "ml/meta_label.py --primary trades --trades-csv results/01_mean_reversion_pullback/trades.csv. Skip below 1.0x breakeven probability, boost above the tuned multiple; live thresholds p_skip_live / p_boost_live are written to metrics.json for the paper phase.",
+   "inputs": [
+    "results/01_mean_reversion_pullback/trades.csv",
+    "data/regime/spx_states.csv"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--primary",
+      "trades",
+      "--trades-csv",
+      "results/01_mean_reversion_pullback/trades.csv",
+      "--vol-symbol",
+      "^VIX",
+      "--market-symbol",
+      "SPY",
+      "--regime",
+      "spx",
+      "--tune",
+      "--no-sens",
+      "--name",
+      "ml_meta_01_pullback"
+     ]
+    }
+   ]
+  },
+  {
+   "book": "overlay",
+   "kind": "overlay",
+   "folder": "ml",
+   "data_sources": [
+    "nsdq250",
+    "yahoo"
+   ],
+   "daily_symbols": [],
+   "intraday_roots": [],
+   "modes": [
+    "default"
+   ],
+   "constraints": {
+    "min_trades": 0,
+    "max_dd_pct": 20
+   },
+   "id": "ml_meta_v221",
+   "name": "ML meta-label on V221 (MNQ)",
+   "script": "ml/meta_label.py",
+   "instruments": "MNQ 1-min bars (V221 renko/brick primary re-simulated), ^VXN vol, SPX HMM regime",
+   "holding_period": "intraday (inherits V221 exits)",
+   "summary": "Does a meta-model on V221's trades earn its keep? The primary is the live futures bot's rule set re-simulated on MNQ 1-min bars; the overlay skips or sizes those trades. Margin per unit 2500 for the Reg-T/margin KPI.",
+   "rule_sketch": "ml/meta_label.py --primary v221 --symbol MNQ --vol-symbol ^VXN --regime spx. Read the base-vs-meta block and the P&L of the skipped trades before anything else. Passing card -> paper for three months with p_skip_live / p_boost_live from metrics.json; nothing changes the live bot.",
+   "inputs": [
+    "data/intraday/MNQ_1min.csv",
+    "data/regime/spx_states.csv"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--primary",
+      "v221",
+      "--symbol",
+      "MNQ",
+      "--vol-symbol",
+      "^VXN",
+      "--market-symbol",
+      "SPY",
+      "--regime",
+      "spx",
+      "--tune",
+      "--no-sens",
+      "--margin-per-unit",
+      "2500",
+      "--name",
+      "ml_meta_v221"
+     ]
+    }
+   ]
+  },
+  {
+   "book": "overlay",
+   "kind": "overlay",
+   "folder": "ml",
+   "data_sources": [
+    "nsdq250",
+    "yahoo"
+   ],
+   "daily_symbols": [],
+   "intraday_roots": [],
+   "modes": [
+    "default"
+   ],
+   "constraints": {
+    "min_trades": 0,
+    "max_dd_pct": 20
+   },
+   "id": "ml_regime_gate_08",
+   "name": "HMM regime gate on PEAD trades",
+   "script": "ml/regime_hmm.py",
+   "instruments": "^GSPC / ^VIX daily -> 3-state Gaussian HMM (prefix-decoded, refit every 63 days); gates 08_pead_implied_move trades",
+   "holding_period": "inherits the primary",
+   "summary": "Regime overlay: trades are only allowed in states whose trailing 252-day per-state expectancy on the primary's own trades is positive (min 15 trades). Prefix decoding and dwell time keep the state causal.",
+   "rule_sketch": "ml/regime_hmm.py --symbol ^GSPC --vol-symbol ^VIX --trades-csv results/08_pead_implied_move/trades.csv --name gate_08. Output = the gated trade list and equity; compare with the ungated primary.",
+   "inputs": [
+    "results/08_pead_implied_move/trades.csv"
+   ],
+   "scripts": [
+    {
+     "args": [
+      "--symbol",
+      "^GSPC",
+      "--vol-symbol",
+      "^VIX",
+      "--trades-csv",
+      "results/08_pead_implied_move/trades.csv",
+      "--name",
+      "gate_08"
+     ]
+    }
+   ]
+  }
+ ]
+}
