@@ -21,6 +21,7 @@ tools/ib_fetch_bars.py  fills data/intraday from IB Gateway (run on the VM) — 
 """
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -35,6 +36,28 @@ DAILY_COLS = ["open", "high", "low", "close", "volume"]
 
 class DataMissing(FileNotFoundError):
     pass
+
+
+def holdout_status(metrics: dict | Path | None = None, results_dir: Path | None = None) -> dict:
+    """Holdout unlocked unless metrics.json says otherwise (slice-1 stub).
+
+    Locked if metrics has holdout_unlocked=false, holdout_locked=true, or holdout=="locked".
+    A missing metrics file is treated as unlocked so paper sleeves still size.
+    """
+    if metrics is None and results_dir is not None:
+        p = Path(results_dir) / "metrics.json"
+        if p.exists():
+            metrics = json.loads(p.read_text())
+    if isinstance(metrics, (str, Path)):
+        p = Path(metrics)
+        metrics = json.loads(p.read_text()) if p.exists() else None
+    if not metrics:
+        return {"unlocked": True, "reason": "stub: no metrics, assume unlocked"}
+    if metrics.get("holdout_unlocked") is False or metrics.get("holdout_locked") is True:
+        return {"unlocked": False, "reason": "metrics lock"}
+    if str(metrics.get("holdout", "")).lower() == "locked":
+        return {"unlocked": False, "reason": "metrics lock"}
+    return {"unlocked": True, "reason": "metrics unlocked"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
