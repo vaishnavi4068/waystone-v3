@@ -5,10 +5,13 @@ const backend = (
   "http://127.0.0.1:9200"
 ).replace(/\/$/, "");
 
+function isLoopbackHost(host) {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
 function shouldProxyApi(url) {
   try {
-    const host = new URL(url).hostname;
-    return host === "localhost" || host === "127.0.0.1";
+    return isLoopbackHost(new URL(url).hostname);
   } catch {
     return false;
   }
@@ -16,7 +19,7 @@ function shouldProxyApi(url) {
 
 const nextConfig = {
   output: "standalone",
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  allowedDevOrigins: ["127.0.0.1", "localhost", "[::1]"],
   async rewrites() {
     // Local preview: browser talks only to the UI origin; Next forwards /api to FastAPI.
     // Production images bake a public NEXT_PUBLIC_API_BASE — ingress already routes /api.
