@@ -20,9 +20,8 @@ from ml.book_io import (  # noqa: E402
     drawdown_pct, format_report, g_regime_of, incubation_months, is_first_session_of_month,
     kpi_ok, load_book, load_equity, load_events, load_kpi, load_regime, load_state,
     naive_date, next_session, r4, read_instruction, round_units, save_json, save_state,
-    stitch_live, to_et,
+    holdout_status, stitch_live, to_et,
 )
-from wsbt.data import holdout_status  # noqa: E402
 
 G_DD = {"normal": 1.0, "half": 0.5, "brake": 0.0}
 
@@ -174,7 +173,8 @@ def step_brake(st: dict, dd: float, equity: float, dd_half: float, dd_off: float
     st = dict(st)
     s = st.get("state") or "normal"
     if reset and s == "brake":
-        s, st["recover_count"] = "half", 0
+        st["state"], st["recover_count"], st["last_equity"] = "half", 0, equity
+        return st, G_DD["half"]
     if s == "normal" and dd >= dd_half:
         s = "half"
     if s == "half" and dd >= dd_off:
@@ -341,7 +341,10 @@ def allocate(book: dict, for_session, root: Path, state: dict | None = None,
             row["reasons"].append("event_blackout")
         if g_dd != 1:
             row["reasons"].append(f"dd={ss['state']}")
-        gate_chg = any(abs(float(ss.get(k) or 1) - g) > 1e-12 for k, g in
+        def _gprev(k, default=1.0):
+            v = ss.get(k)
+            return default if v is None else float(v)
+        gate_chg = any(abs(_gprev(k) - g) > 1e-12 for k, g in
                        (("g_regime", g_reg), ("g_event", g_ev), ("g_dd", g_dd)))
         raw = m_raw.get(sid, 0.0)
         raw = apply_hysteresis(raw, ss.get("m_raw"), first_mo, hyst, gate_chg)

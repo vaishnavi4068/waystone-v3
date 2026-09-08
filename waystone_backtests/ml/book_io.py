@@ -5,6 +5,7 @@ No network. YAML via PyYAML when installed; otherwise JSON or a small indent par
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -18,6 +19,17 @@ sys.path.insert(0, str(ROOT))
 ET = "America/New_York"
 STATUSES = ("live", "paper", "shadow", "off", "brake")
 KPI_MIN = {"sharpe": 1.5, "dsr": 0.95, "oosis": 0.6, "coststress": 1.0, "ntrades": 200}
+
+
+def _holdout_status_fn():
+    """Load wsbt.data.holdout_status without importing wsbt/__init__ (that pulls scipy)."""
+    spec = importlib.util.spec_from_file_location("_wsbt_data_holdout", ROOT / "wsbt" / "data.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.holdout_status
+
+
+holdout_status = _holdout_status_fn()
 
 
 def r4(x):

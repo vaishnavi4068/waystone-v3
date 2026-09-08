@@ -19,10 +19,9 @@ from ml.allocator import (  # noqa: E402
     solve_erc, step_brake,
 )
 from ml.book_io import (  # noqa: E402
-    default_state, derive_for_session, load_book, next_session_on_or_after,
-    read_instruction, round_units, save_json,
+    default_state, derive_for_session, holdout_status, load_book,
+    next_session_on_or_after, read_instruction, round_units, save_json,
 )
-from wsbt.data import holdout_status  # noqa: E402
 
 PASS_KPI = {"sharpe": 2.0, "dsr": 0.99, "oosis": 0.8, "coststress": 1.2,
             "ntrades": 250, "paramsens": 10, "holdout_unlocked": True}
@@ -201,21 +200,22 @@ def test_hysteresis():
 
 
 def test_hysteresis_persisted_mid_month(tmp_path):
+    # Gentle paths so DD brakes stay normal and gates do not flip between calls.
+    n, start = 90, "2023-01-02"
+    pnl = {s: np.full(n, 10.0) + 5.0 * np.sin(np.arange(n) / 8.0) for s in ("a", "b")}
     sleeves = {"a": _cfg("a"), "b": _cfg("b")}
-    book = make_world(tmp_path, sleeves, n=90, start="2023-01-02")
+    book = make_world(tmp_path, sleeves, n=n, start=start, pnl=pnl)
     fs = pd.Timestamp("2023-05-10")  # mid-month weekday
     out1 = allocate(book, fs, tmp_path)
-    state = out1["state"]
-    # park previous m_raw 10% away — within 20% so it must stick
-    for sid in ("a", "b"):
-        mr = state["sleeves"][sid]["m_raw"]
+    parked = {sid: out1["state"]["sleeves"][sid]["m_raw"] for sid in ("a", "b")}
+    state = json.loads(json.dumps(out1["state"]))  # copy; allocate mutates state dicts
+    for sid, mr in parked.items():
         if mr:
             state["sleeves"][sid]["m_raw"] = mr * 1.10
     out2 = allocate(book, fs, tmp_path, state=state)
-    for sid in ("a", "b"):
-        if out1["state"]["sleeves"][sid]["m_raw"]:
-            assert out2["state"]["sleeves"][sid]["m_raw"] == pytest.approx(
-                out1["state"]["sleeves"][sid]["m_raw"] * 1.10, rel=1e-6)
+    for sid, mr in parked.items():
+        if mr:
+            assert out2["state"]["sleeves"][sid]["m_raw"] == pytest.approx(mr * 1.10, rel=1e-6)
 
 
 # ── 6. Rounding ──────────────────────────────────────────────────────────────
@@ -428,3 +428,8 @@ def test_cli_dry_run_and_ops(tmp_path):
 def test_holdout_stub_unlocked_without_metrics():
     assert holdout_status(None)["unlocked"] is True
     assert holdout_status({"holdout": "locked"})["unlocked"] is False
+    spec = __import__("importlib.util", fromlist=["util"]).spec_from_file_location(
+        "wsbt_data_probe", ROOT / "wsbt" / "data.py")
+    mod = __import__("importlib.util", fromlist=["util"]).module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.holdout_status({"holdout_unlocked": False})["unlocked"] is False
