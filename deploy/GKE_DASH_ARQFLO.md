@@ -34,10 +34,121 @@ the bucket via **Workload Identity** (no JSON key in the cluster).
 | Branch | What the live site will show after GCS is wired |
 |--------|--------------------------------------------------|
 | `restore-dashboard-pr4` | Developer default. IBKR Daily / Options / Account / etc. **No** `/strategies` research scorecards. |
-| `cursor/massive-sentiment-gate-2a31` | Same IBKR pages **plus** `/strategies` from `gs://waystone-data/research/v1/`. Use this if you want the HQ you saw locally. |
+| `cursor/massive-sentiment-gate-2a31` | Same IBKR pages **plus** `/strategies` from `gs://waystone-data/research/v1/`. Use this after PR #12 merges. |
+| `cursor/gke-api-catalog-image` | **Use this now** to fix live `/strategies` 500 (catalog baked into the API image). Same HQ as the sentiment branch. |
 
 Set `BRANCH` in step 1. Do not deploy `main` until the dashboard + research
 code is merged there.
+
+---
+
+## Fix now: Strategies shows “API error 500”
+
+This is the redeploy after the first GKE ship. The site is already up:
+`/api/health` and `/api/research/ops` are 200 (GCS + login work).
+`GET /api/strategies` returns 500 in ~65ms because the API image had `src/`
+only — no `waystone_backtests/catalog.json`.
+
+Do **not** redeploy `restore-dashboard-pr4`. Do **not** rebuild the frontend.
+Do **not** remount a SA JSON. Run this in **Cloud Shell**.
+
+### F1. Variables (API image only)
+
+```sh
+export PROJECT_ID=microdrive-dev
+export REGION=us-east1
+export AR=waystone
+export DOMAIN=dash.arqflo.ai
+export BUCKET=waystone-data
+export CLUSTER=md-dev
+export BRANCH=cursor/gke-api-catalog-image
+
+export TAG=$(date +%Y%m%d-%H%M)
+export API_IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/$AR/waystone-arena:$TAG
+
+gcloud config set project "$PROJECT_ID"
+gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
+echo "Will deploy API image: $API_IMAGE"
+```
+
+After PR #12 merges, you may set `BRANCH=cursor/massive-sentiment-gate-2a31`.
+
+### F2. Clone the fix and confirm the Dockerfile
+
+```sh
+rm -rf ~/waystone-v3-deploy
+git clone -b "$BRANCH" https://github.com/vaishnavi4068/waystone-v3.git ~/waystone-v3-deploy
+cd ~/waystone-v3-deploy
+grep -n WAYSTONE_BACKTESTS_ROOT Dockerfile
+```
+
+You must see `COPY waystone_backtests/catalog.json` and
+`ENV WAYSTONE_BACKTESTS_ROOT=/app/waystone_backtests`.
+
+### F3. Cloud Build the API only
+
+```sh
+gcloud builds submit --tag "$API_IMAGE" .
+```
+
+### F4. Roll only `waystone-dash-api`
+
+```sh
+kubectl set image deployment/waystone-dash-api api=$API_IMAGE -n waystone-dash
+kubectl -n waystone-dash rollout status deploy/waystone-dash-api
+kubectl -n waystone-dash get pods
+```
+
+### F5. Confirm env (fix if needed)
+
+```sh
+kubectl -n waystone-dash exec deploy/waystone-dash-api -- env | grep -E 'IBKR_|WAYSTONE_BACKTESTS'
+```
+
+Want:
+
+```
+IBKR_REPORTS_BUCKET=waystone-data
+IBKR_STAGED=0
+WAYSTONE_BACKTESTS_ROOT=/app/waystone_backtests
+```
+
+If the bucket or staged flag is wrong:
+
+```sh
+kubectl -n waystone-dash set env deploy/waystone-dash-api \
+  IBKR_REPORTS_BUCKET=waystone-data \
+  IBKR_STAGED=0 \
+  IBKR_REPORTS_LOCAL_DIR- \
+  WAYSTONE_BACKTESTS_ROOT=/app/waystone_backtests
+kubectl -n waystone-dash rollout status deploy/waystone-dash-api
+```
+
+### F6. Verify Strategies
+
+```sh
+curl -sS https://dash.arqflo.ai/api/health
+
+TOKEN=$(curl -sf -X POST https://dash.arqflo.ai/api/login \
+  -H 'content-type: application/json' \
+  -d '{"username":"Mark","password":"mark1234"}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+
+curl -sS -m 90 -H "Authorization: Bearer $TOKEN" \
+  https://dash.arqflo.ai/api/strategies \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); print("count", len(d.get("strategies",[])), "first", (d["strategies"][0]["id"] if d.get("strategies") else d))'
+```
+
+Success: `count 12` (or similar) and `01_mean_reversion`.  
+Still `Internal Server Error`:
+
+```sh
+kubectl -n waystone-dash logs deploy/waystone-dash-api --tail=80
+```
+
+Hard-refresh https://dash.arqflo.ai/strategies. First list can take 20–30s.
+Daily/Account can still be empty if no IBKR dump is in the bucket — that is
+not this 500.
 
 ---
 
@@ -50,7 +161,7 @@ export AR=waystone
 export DOMAIN=dash.arqflo.ai
 export BUCKET=waystone-data
 export CLUSTER=md-dev
-export BRANCH=cursor/massive-sentiment-gate-2a31   # or restore-dashboard-pr4
+export BRANCH=cursor/gke-api-catalog-image   # or cursor/massive-sentiment-gate-2a31 after PR #12
 
 export TAG=$(date +%Y%m%d-%H%M)
 export API_IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/$AR/waystone-arena:$TAG
@@ -205,8 +316,8 @@ Browser:
 2. Sign in (Mark / `mark1234` if this stack still uses the default roster)
 3. Daily / Options KPIs should show **published IBKR dumps**, not the
    “STAGED DATA” week of 10 Aug 2026
-4. `/strategies` exists only if you deployed `cursor/massive-sentiment-gate-2a31`
-   (or later). First list can take 20–30s (GCS listing)
+4. `/strategies` exists if you deployed the sentiment branch or
+   `cursor/gke-api-catalog-image`. First list can take 20–30s (GCS listing)
 
 ---
 
@@ -227,6 +338,7 @@ Browser:
 | Symptom | Likely cause |
 |---------|----------------|
 | `/api/health` OK, other pages 500 | WI missing (6b) or env still staged/empty (6a); restart API |
+| `/api/health` + `/api/research/ops` OK, `/strategies` 500 in &lt;1s | API image missing `catalog.json` — follow **Fix now** (rebuild from `cursor/gke-api-catalog-image`) |
 | STAGED DATA banner / date `2026-08-14` | `IBKR_STAGED=1` or no `_SUCCESS` objects in the bucket |
 | `/strategies` 404 | Wrong branch (`restore-dashboard-pr4` has no research UI) |
 | Pod crash-loop, exec format error | Image built on a Mac (arm64). Rebuild with Cloud Build |
