@@ -11,6 +11,11 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --frozen --no-dev
 
+# HQ GET /api/strategies loads waystone_backtests/catalog.json. Without this
+# the GKE image 500s (src-only COPY) even when GCS Workload Identity works.
+COPY waystone_backtests/catalog.json /app/waystone_backtests/catalog.json
+ENV WAYSTONE_BACKTESTS_ROOT=/app/waystone_backtests
+
 # SQLite lives on a mounted volume so players/leaderboard survive restarts.
 ENV WAYSTONE_DB=/data/arena.db
 EXPOSE 9100
