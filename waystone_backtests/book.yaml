@@ -1,0 +1,68 @@
+# Hand-maintained book registry. Human status in this file is paper or shadow only
+# (never live) so a mis-run cannot size a live bot. See ALLOCATOR_SPEC.md §3.1.
+nav: 100000
+target_daily_vol_pct: 0.8
+max_gross_multiplier: 1.5
+max_risk_share: 0.45
+kelly_fraction: 0.5
+shrink_corr: 0.3
+vol_halflife_days: 20
+corr_window_days: 120
+rebalance:
+  schedule: monthly
+  hysteresis_pct: 20
+regime:
+  name: spx
+book_brake:
+  dd_half_pct: 6
+  dd_off_pct: 10
+  monthly_loss_off_pct: 5
+sleeves:
+  v221_mnq:
+    status: paper
+    results_dir: results/base_v221
+    live_dir: results/live/v221_mnq
+    unit_type: contracts
+    unit_size: 2
+    unit_step: 1
+    instrument: MNQ
+    margin_per_unit: 2500
+    regime_rules:
+      off_in_states: []
+      half_in_states: [2]
+    event_blackout: []
+    dd_half_pct: 8
+    dd_off_pct: 12
+    recover_sessions: 10
+    min_incubation_months: 3
+  vwap_options:
+    status: paper
+    results_dir: results/base_vwap
+    live_dir: results/live/vwap_options
+    unit_type: contracts
+    unit_size: 1
+    unit_step: 1
+    instrument: OPTIONS
+    margin_per_unit: null
+    regime_rules:
+      off_in_states: [2]
+      half_in_states: [1]
+    event_blackout: [FOMC]
+    dd_half_pct: 6
+    dd_off_pct: 10
+    recover_sessions: 10
+    min_incubation_months: 3
+  pullback_bb:
+    status: shadow
+    results_dir: results/01_mean_reversion_bb
+    unit_type: notional_usd
+    unit_size: 25000
+    unit_step: 1000
+    instrument: STOCKS
+    regime_rules:
+      off_in_states: [2]
+    event_blackout: [FOMC]
+    dd_half_pct: 6
+    dd_off_pct: 10
+    recover_sessions: 10
+    min_incubation_months: 3
