@@ -11,7 +11,7 @@ export default function QueryGate({
   isLoading: boolean;
   isError: boolean;
   error?: unknown;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   if (isLoading) return <div className="text-slate-400">Loading…</div>;
   if (isError) {
