@@ -4,7 +4,8 @@ import { Suspense } from "react";
 
 import { Chip } from "@/components/hq";
 import { HqFrame } from "@/components/hq-filters";
-import { History, KpiPanel, StrategyCards } from "@/components/hq-views";
+import { AllKpis, StrategyKpis } from "@/components/hq-kpis";
+import { History, StrategyCards } from "@/components/hq-views";
 import QueryGate from "@/components/query-gate";
 import type { HqStrategy } from "@/lib/types";
 
@@ -36,18 +37,13 @@ export default function Page() {
           selected ? (
             <>
               <StrategyHeader s={selected} />
-              <KpiPanel code={selected.strategy_code} date={date} />
+              <StrategyKpis strategy={selected} date={date} />
               <History code={selected.strategy_code} date={date} onPickDate={setDate} />
             </>
           ) : (
             <>
               <StrategyCards strategies={strategies} onPick={setStrategy} />
-              {futures.map((s) => (
-                <div key={s.strategy_code} className="mt-8">
-                  <StrategyHeader s={s} />
-                  <KpiPanel code={s.strategy_code} date={date} />
-                </div>
-              ))}
+              <AllKpis strategies={futures} date={date} />
             </>
           )
         }

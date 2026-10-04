@@ -1,14 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
 
-import { Chip, frac, kpiTarget, kpiValue, num, signTone, stamp, usd } from "@/components/hq";
+import { Chip, frac, num, signTone, stamp, usd } from "@/components/hq";
 import QueryGate from "@/components/query-gate";
-import { getHqDaily, getHqKpis, getHqReturns, getHqStatus } from "@/lib/api";
-import type { HqKpi, HqStrategy } from "@/lib/types";
-
-const WINDOWS = ["ITD", "MTD", "WEEK"] as const;
+import { getHqDaily, getHqReturns, getHqStatus } from "@/lib/api";
+import type { HqStrategy } from "@/lib/types";
 
 export function Section({
   title,
@@ -77,96 +74,6 @@ export function StrategyCards({ strategies, onPick }: { strategies: HqStrategy[]
 }
 
 /* ----------------------------------------------------------- one strategy, one date */
-
-export function KpiPanel({ code, date }: { code: string; date: string }) {
-  const [win, setWin] = useState<(typeof WINDOWS)[number]>("ITD");
-  const kpis = useQuery({ queryKey: ["hq-kpis", code, date], queryFn: () => getHqKpis(code, date) });
-  if (kpis.isLoading || kpis.isError) {
-    return <QueryGate isLoading={kpis.isLoading} isError={kpis.isError} error={kpis.error} />;
-  }
-  const data = kpis.data!;
-  if (!data.as_of_date) {
-    return (
-      <Section title="KPI scorecard">
-        <div className="px-5 py-4 text-sm text-slate-500">No KPIs up to {date}.</div>
-      </Section>
-    );
-  }
-  const sections = new Map<string, HqKpi[]>();
-  for (const k of data.kpis.filter((k) => k.kpi_window === win)) {
-    sections.set(k.section_name, [...(sections.get(k.section_name) ?? []), k]);
-  }
-  const labels: Record<string, string> = { ITD: "Since start", MTD: "Month to date", WEEK: "This week" };
-  return (
-    <Section
-      title="KPI scorecard"
-      subtitle={`Workbook KPIs as of ${data.as_of_date}`}
-      right={
-        <div className="flex gap-1">
-          {WINDOWS.map((w) => (
-            <button
-              key={w}
-              onClick={() => setWin(w)}
-              className={`rounded px-3 py-1 text-sm ${win === w ? "bg-emerald-600/20 text-emerald-300" : "text-slate-400 hover:bg-slate-800"}`}
-            >
-              {labels[w]}
-            </button>
-          ))}
-        </div>
-      }
-    >
-      {(() => {
-        const c = data.scorecard.find((s) => s.kpi_window === win);
-        return c ? (
-          <div className="flex flex-wrap items-center gap-6 border-b border-slate-800 px-5 py-4">
-            <Stat label="Net P&L" value={usd(c.net_pnl)} tone={signTone(c.net_pnl)} />
-            <Stat label="Return" value={frac(c.return_pct)} tone={signTone(c.return_pct)} />
-            <Stat label="Days / trades" value={`${c.trading_days ?? "—"} / ${c.trades ?? "—"}`} />
-            <Stat label="Window" value={`${c.window_start ?? "—"} → ${c.window_end ?? "—"}`} />
-            <div className="max-w-md">
-              <div className="mb-1 text-xs text-slate-500">Verdict</div>
-              <Chip wrap value={c.overall_gate} />
-            </div>
-          </div>
-        ) : null;
-      })()}
-      <table className="hq-table w-full text-sm">
-        <thead className="bg-slate-900/60 text-left text-slate-500">
-          <tr>
-            <th className="px-5 py-2">KPI</th>
-            <th>Value</th>
-            <th>Status</th>
-            <th>Green</th>
-            <th className="pr-5">Amber</th>
-          </tr>
-        </thead>
-        {[...sections.entries()]
-          .filter(([, rows]) => rows[0]?.section !== "header")
-          .map(([name, rows]) => (
-            <tbody key={name}>
-              <tr className="border-t border-slate-800 bg-slate-900/40">
-                <td colSpan={5} className="px-5 py-1.5 text-xs uppercase tracking-wide text-slate-500">
-                  {name}
-                </td>
-              </tr>
-              {rows.map((k) => (
-                <tr key={k.kpi_code} className="border-t border-slate-800 align-top">
-                  <td className="wrap-cell px-5 py-2">
-                    <div className="font-medium">{k.label}</div>
-                    {k.description ? <div className="mt-1 max-w-lg text-xs text-slate-500">{k.description}</div> : null}
-                  </td>
-                  <td className="whitespace-nowrap">{kpiValue(k)}</td>
-                  <td><Chip value={k.status} /></td>
-                  <td className="text-slate-400">{kpiTarget(k, k.green_at)}</td>
-                  <td className="pr-5 text-slate-400">{kpiTarget(k, k.amber_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          ))}
-      </table>
-    </Section>
-  );
-}
 
 export function History({ code, date, onPickDate }: { code: string; date: string; onPickDate: (d: string) => void }) {
   const daily = useQuery({ queryKey: ["hq-daily", code], queryFn: () => getHqDaily(code) });
