@@ -21,6 +21,7 @@ import { usePathname } from "next/navigation";
 import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
 
 const NAV = [
+  { href: "/hq", label: "Futures HQ", icon: Gauge },
   { href: "/ibkr", label: "Daily", icon: CalendarDays },
   { href: "/strategies", label: "Strategies", icon: BookOpen },
   { href: "/compare", label: "Compare", icon: GitCompare },
@@ -54,7 +55,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="flex flex-1 flex-col gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {
-            const active = href === "/strategies" ? pathname.startsWith("/strategies") : pathname === href;
+            const active =
+              href === "/strategies" || href === "/hq" ? pathname.startsWith(href) : pathname === href;
             return (
               <Link
                 key={href}

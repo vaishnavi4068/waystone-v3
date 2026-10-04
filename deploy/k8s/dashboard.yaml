@@ -56,6 +56,14 @@ spec:
               value: ""
             - name: IBKR_STAGED
               value: "1"
+            # HQ database (Futures HQ pages). `deploy/db/bootstrap_gcp.sh dash` fills the
+            # host and grants this KSA read access to the secret; empty host = HQ pages off.
+            - name: WAYSTONE_HQ_DB_HOST
+              value: "__HQ_DB_HOST__"
+            - name: WAYSTONE_HQ_DB_USER
+              value: waystone_read
+            - name: WAYSTONE_HQ_DB_PASSWORD_SECRET
+              value: projects/__PROJECT__/secrets/waystone-db-read-password/versions/latest
           envFrom:
             - secretRef: { name: waystone-dash-secrets }
           volumeMounts:

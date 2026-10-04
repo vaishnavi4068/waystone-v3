@@ -7,6 +7,10 @@
 #   deploy/db/bootstrap_gcp.sh infra      # APIs, network, Cloud SQL, secrets, bucket, IAM
 #   deploy/db/bootstrap_gcp.sh sql        # create/upgrade schemas, tables, views, seed data
 #   deploy/db/bootstrap_gcp.sh vm         # install the hourly GCS sync on the trading VM
+#   deploy/db/bootstrap_gcp.sh loader     # build the image, deploy the load-logs Cloud Run jobs + schedules
+#   deploy/db/bootstrap_gcp.sh backfill   # one-off: load every file already in the bucket
+#   deploy/db/bootstrap_gcp.sh dash       # point the GKE dashboard API at the database (read-only)
+#     (MCP server too: DASH_NAMESPACE=waystone-arena DASH_KSA=waystone-arena DASH_DEPLOYMENT=waystone-arena)
 #   deploy/db/bootstrap_gcp.sh summary    # print the connection details to hand over
 #
 # Every setting below can be overridden from the environment, e.g.
@@ -35,6 +39,14 @@ BACKTEST_DIR="${BACKTEST_DIR:-/root/BACK_TEST_DAILY}"
 PROXY_PORT="${PROXY_PORT:-6543}"
 KEEP_PUBLIC_IP="${KEEP_PUBLIC_IP:-false}"
 ENABLE_VERSIONING="${ENABLE_VERSIONING:-true}"
+SUBNET="${SUBNET:-}"
+DASH_NAMESPACE="${DASH_NAMESPACE:-waystone-dash}"
+DASH_KSA="${DASH_KSA:-waystone-dash}"
+DASH_DEPLOYMENT="${DASH_DEPLOYMENT:-waystone-dash-api}"
+AR_REPO="${AR_REPO:-waystone}"
+LOADER_IMAGE="${LOADER_IMAGE:-}"
+PAPER_LOAD_CRON="${PAPER_LOAD_CRON:-35 * * * *}"
+BACKTEST_LOAD_CRON="${BACKTEST_LOAD_CRON:-35 16,17 * * 1-5}"
 
 SECRET_PG="waystone-db-postgres-password"
 SECRET_LOAD="waystone-db-load-password"
@@ -357,6 +369,107 @@ install_vm_sync() {
         <"$HERE/vm/install_vm_sync.sh"
 }
 
+loader_image() {
+    if [ -n "$LOADER_IMAGE" ]; then
+        info "using image $LOADER_IMAGE"
+        return
+    fi
+    command -v git >/dev/null || die "git not found"
+    local root tag
+    root="$(cd "$HERE/../.." && pwd)"
+    tag="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || date +%Y%m%d-%H%M)"
+    LOADER_IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/waystone-arena:loader-$tag"
+    g services enable artifactregistry.googleapis.com cloudbuild.googleapis.com
+    g artifacts repositories describe "$AR_REPO" --location="$REGION" >/dev/null 2>&1 \
+        || g artifacts repositories create "$AR_REPO" --repository-format=docker --location="$REGION"
+    info "building $LOADER_IMAGE with Cloud Build (root Dockerfile)"
+    g builds submit --tag "$LOADER_IMAGE" "$root"
+}
+
+deploy_load_job() {
+    local name="$1" job="$2" host="$3" subnet="$4"
+    g run jobs deploy "$name" --region="$REGION" --image="$LOADER_IMAGE" \
+        --command=/app/.venv/bin/waystone3 --args="load-logs,--job,$job" \
+        --service-account="$LOADER_SA" \
+        --network="$NETWORK" --subnet="$subnet" --vpc-egress=private-ranges-only \
+        --set-env-vars="PGHOST=$host,PGPORT=5432,PGDATABASE=$DB_NAME,PGUSER=waystone_load,PGSSLMODE=require,WAYSTONE_LOGS_SOURCE=gs://$BUCKET" \
+        --set-secrets="PGPASSWORD=$SECRET_LOAD:latest" \
+        --tasks=1 --max-retries=1 --task-timeout=30m --cpu=1 --memory=1Gi >/dev/null
+    g run jobs add-iam-policy-binding "$name" --region="$REGION" \
+        --member="serviceAccount:$LOADER_SA" --role=roles/run.invoker >/dev/null
+    info "Cloud Run job $name: load-logs --job $job"
+}
+
+schedule_load_job() {
+    local name="$1" cron="$2"
+    local uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$name:run"
+    local verb=create
+    if g scheduler jobs describe "$name" --location="$REGION" >/dev/null 2>&1; then verb=update; fi
+    g scheduler jobs "$verb" http "$name" --location="$REGION" \
+        --schedule="$cron" --time-zone="America/New_York" \
+        --uri="$uri" --http-method=POST \
+        --oauth-service-account-email="$LOADER_SA" \
+        --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" >/dev/null
+    info "schedule $name: '$cron' America/New_York"
+}
+
+deploy_loader() {
+    log "Log loader: Cloud Run jobs + Cloud Scheduler (runs as $LOADER_SA, private IP only)"
+    resolve_service_accounts
+    detect_network
+    local host subnet
+    host="$(sql_private_ip)"
+    [ -n "$host" ] || die "instance $INSTANCE has no private IP; run: $0 infra"
+    subnet="${SUBNET:-$(g container clusters describe "$GKE_CLUSTER" --location "$GKE_LOCATION" \
+        --format='value(subnetwork)' 2>/dev/null || true)}"
+    [ -n "$subnet" ] || die "could not read the subnet of GKE cluster $GKE_CLUSTER; set SUBNET=<subnet in $REGION>"
+    info "Cloud SQL private IP $host via $NETWORK/$subnet"
+    loader_image
+    # Paper logs land at :25 each hour; replays land at 16:20 and 17:20 ET.
+    deploy_load_job waystone-load-paper paper "$host" "$subnet"
+    deploy_load_job waystone-load-backtest backtest "$host" "$subnet"
+    deploy_load_job waystone-load-backfill backfill "$host" "$subnet"
+    schedule_load_job waystone-load-paper "$PAPER_LOAD_CRON"
+    schedule_load_job waystone-load-backtest "$BACKTEST_LOAD_CRON"
+    info "backfill job is manual: $0 backfill"
+}
+
+run_backfill() {
+    log "One-off backfill: every file in gs://$BUCKET/raw, then KPIs (waits for it to finish)"
+    g run jobs execute waystone-load-backfill --region="$REGION" --wait
+    info "logs: gcloud logging read 'resource.type=cloud_run_job AND resource.labels.job_name=waystone-load-backfill' --project $PROJECT_ID --limit 50 --format='value(textPayload)'"
+}
+
+sql_private_ip() {
+    g sql instances describe "$INSTANCE" --format=json | python3 -c \
+        'import json,sys; print(next((a["ipAddress"] for a in json.load(sys.stdin).get("ipAddresses", []) if a.get("type") == "PRIVATE"), ""))'
+}
+
+wire_dashboard() {
+    log "Dashboard API -> HQ database (read-only, private IP, password read from Secret Manager)"
+    command -v kubectl >/dev/null || die "kubectl not found (gcloud components install kubectl)"
+    local pool num principal host
+    pool="$(g container clusters describe "$GKE_CLUSTER" --location "$GKE_LOCATION" \
+        --format='value(workloadIdentityConfig.workloadPool)')"
+    [ -n "$pool" ] || die "Workload Identity is off on $GKE_CLUSTER; the pod cannot read Secret Manager"
+    num="$(g projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+    principal="principal://iam.googleapis.com/projects/$num/locations/global/workloadIdentityPools/$pool/subject/ns/$DASH_NAMESPACE/sa/$DASH_KSA"
+    g secrets add-iam-policy-binding "$SECRET_READ" --member="$principal" \
+        --role=roles/secretmanager.secretAccessor >/dev/null
+    info "k8s $DASH_NAMESPACE/$DASH_KSA can read $SECRET_READ (no Google service account needed)"
+    host="$(sql_private_ip)"
+    [ -n "$host" ] || die "instance $INSTANCE has no private IP; run: $0 infra"
+    g container clusters get-credentials "$GKE_CLUSTER" --location "$GKE_LOCATION" >/dev/null
+    kubectl -n "$DASH_NAMESPACE" get serviceaccount "$DASH_KSA" >/dev/null \
+        || die "k8s service account $DASH_NAMESPACE/$DASH_KSA not found; apply deploy/k8s/dashboard.yaml first"
+    kubectl -n "$DASH_NAMESPACE" set env "deploy/$DASH_DEPLOYMENT" \
+        WAYSTONE_HQ_DB_HOST="$host" WAYSTONE_HQ_DB_NAME="$DB_NAME" WAYSTONE_HQ_DB_USER=waystone_read \
+        WAYSTONE_HQ_DB_SSLMODE=require \
+        WAYSTONE_HQ_DB_PASSWORD_SECRET="projects/$PROJECT_ID/secrets/$SECRET_READ/versions/latest"
+    kubectl -n "$DASH_NAMESPACE" rollout status "deploy/$DASH_DEPLOYMENT" --timeout=180s
+    info "$DASH_DEPLOYMENT now reads api.* views on $host as waystone_read"
+}
+
 summary() {
     log "Hand-over details (no passwords; those stay in Secret Manager)"
     resolve_service_accounts
@@ -390,8 +503,11 @@ main() {
             enable_apis; detect_network; private_services_access; secrets; cloud_sql; bucket; iam; summary ;;
         sql) run_sql ;;
         vm) install_vm_sync ;;
+        loader) deploy_loader ;;
+        backfill) run_backfill ;;
+        dash) wire_dashboard ;;
         summary) summary ;;
-        *) die "unknown step '$step' (use: all | infra | sql | vm | summary)" ;;
+        *) die "unknown step '$step' (use: all | infra | sql | vm | loader | backfill | dash | summary)" ;;
     esac
     log "Done: $step"
 }

@@ -1,0 +1,36 @@
+2026-10-02 08:55:04 V221 futures engine starting (R2 MNQ)
+2026-10-02 08:55:04 params fp : bb6649148c  (R2_best_risk_adj, DTV221 STAYINMARKET)
+2026-10-02 08:55:04 size / stop : 1 contracts / hard stop -0.5%
+2026-10-02 08:55:04 caps : daily loss limit $-2,500 · max 12 trades/day · flatten 15:55 ET
+2026-10-02 08:55:04 account : DUR842609
+2026-10-02 08:55:05 [IB] connecting 127.0.0.1:4002 clientId=88
+2026-10-02 08:55:06 [ACCOUNT] {"account": "DUR842609", "NetLiquidation": "980,248.09"}
+2026-10-02 08:55:06 [CONTRACT] MNQZ6 exp=20261218
+2026-10-02 09:36:00 [TRIGGER] BUY on bar 09:35 close=31112.50 -> PASS
+2026-10-02 09:36:00 *** ENTRY BUY 1 MNQZ6 @mkt signal bar 09:35 close=31112.50
+2026-10-02 09:36:02 [ORDER] #21 BUY 1 MNQZ6 MKT FILLED 1/1 @ 31113.00 commission=$0.61 execs=[0000e0d5.66ff...]
+2026-10-02 09:36:02 [FILLED] #21 px 31113.00 slip=0.50
+2026-10-02 10:05:00 *** EXIT stop_loss #21
+2026-10-02 10:05:01 [ORDER] #21 SELL 1 MNQZ6 MKT FILLED 1/1 @ 30958.25 commission=$0.61 execs=[0000e0d5.6700...]
+2026-10-02 10:05:01 [CLOSED] #21 LONG 1 MNQZ6 entry 31113.00 @ 09:36:02 exit 30958.25 @ 10:05:01
+2026-10-02 10:05:01     pts=-154.75 gross=$-309.50 commission=$1.22 net=$-310.72 held=29m MAE=-160.00 MFE=12.25
+2026-10-02 11:21:00 [TRIGGER] SELL on bar 11:20 close=31201.00 -> PASS
+2026-10-02 11:21:00 *** ENTRY SELL 1 MNQZ6 @mkt signal bar 11:20 close=31201.00
+2026-10-02 11:21:01 [ORDER] #22 SELL 1 MNQZ6 MKT FILLED 1/1 @ 31200.75 commission=$0.61 execs=[0000e0d5.6705...]
+2026-10-02 11:21:01 [FILLED] #22 px 31200.75 slip=0.25
+2026-10-02 12:02:00 *** EXIT yeah_its_failing #22
+2026-10-02 12:02:01 [ORDER] #22 BUY 1 MNQZ6 MKT FILLED 1/1 @ 31310.00 commission=$0.61 execs=[0000e0d5.6709...]
+2026-10-02 12:02:01 [CLOSED] #22 SHORT 1 MNQZ6 entry 31200.75 @ 11:21:01 exit 31310.00 @ 12:02:01
+2026-10-02 12:02:01     pts=-109.25 gross=$-218.50 commission=$1.22 net=$-219.72 held=41m MAE=-112.00 MFE=8.00
+2026-10-02 14:10:00 [TRIGGER] SELL on bar 14:09 close=31330.00 -> PASS
+2026-10-02 14:10:00 *** ENTRY SELL 1 MNQZ6 @mkt signal bar 14:09 close=31330.00
+2026-10-02 14:10:01 [ORDER] #23 SELL 1 MNQZ6 MKT FILLED 1/1 @ 31329.50 commission=$0.61 execs=[0000e0d5.670c...]
+2026-10-02 14:10:01 [FILLED] #23 px 31329.50 slip=0.50
+2026-10-02 15:55:00 *** EXIT SESSION_FLATTEN #23
+2026-10-02 15:55:01 [ORDER] #23 BUY 1 MNQZ6 MKT FILLED 1/1 @ 31364.25 commission=$0.61 execs=[0000e0d5.6711...]
+2026-10-02 15:55:01 [CLOSED] #23 SHORT 1 MNQZ6 entry 31329.50 @ 14:10:01 exit 31364.25 @ 15:55:01
+2026-10-02 15:55:01     pts=-34.75 gross=$-69.50 commission=$1.22 net=$-70.72 held=105m MAE=-41.25 MFE=6.75
+2026-10-02 17:00:00 DAILY SUMMARY 2026-10-02 MNQZ6 params=bb6649148c
+2026-10-02 17:00:00   triggers 3 · entries 3 · closed 3 · wins 0 · win rate 0.0%
+2026-10-02 17:00:00   P&L: net $-601.16 (gross $-597.50, commission $3.66)
+2026-10-02 17:00:00   account DUR842609 NetLiq 980,248.09 -> 972,126.48
