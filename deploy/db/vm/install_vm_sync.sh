@@ -41,6 +41,23 @@ add_source s5_options "$S5_PAPER_DIR"
 [ -d "$BACKTEST_DIR" ] && echo "backtest: $BACKTEST_DIR -> gs://$BUCKET/raw/backtest/" \
     || echo "WARNING: $BACKTEST_DIR not found; backtest sync will skip until it exists" >&2
 
+echo "Checking this VM can write to gs://$BUCKET ..."
+if ! write_err="$(printf 'ok\n' | "$GCLOUD" storage cp - "gs://$BUCKET/raw/.vm-write-test" 2>&1)"; then
+    scopes="$(curl -s -H 'Metadata-Flavor: Google' \
+        http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes || true)"
+    echo "ERROR: this VM cannot write to gs://$BUCKET. Nothing was installed." >&2
+    echo "gcloud said: $write_err" >&2
+    echo "gcloud account: $("$GCLOUD" auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null)" >&2
+    echo "VM access scopes:" >&2
+    printf '%s\n' "$scopes" | sed 's/^/  /' >&2
+    case "$scopes" in
+        *devstorage.read_write*|*devstorage.full_control*|*cloud-platform*) ;;
+        *) echo "Fix: stop the VM, set Storage access to Read Write, start it, then re-run this installer." >&2 ;;
+    esac
+    exit 1
+fi
+echo "OK"
+
 cat >/etc/waystone-sync.conf <<EOF
 BUCKET="$BUCKET"
 GCLOUD="$GCLOUD"
@@ -57,8 +74,10 @@ MODE="${1:?usage: waystone-sync paper|backtest}"
 exec 9>"/run/waystone-sync-$MODE.lock"
 flock -n 9 || { echo "previous $MODE sync still running; skipping"; exit 0; }
 
-# Live SQLite files can be mid-write, so they are never copied.
-COMMON_EXCLUDE='(^|/)(state|[^/]*\.(db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
+# Live SQLite files can be mid-write, so they are never copied. Patterns are
+# anchored to work whether gcloud matches the relative or the full path.
+PAPER_EXCLUDE='^(.*/)?(state|__pycache__/.*|[^/]*\.(db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
+BACKTEST_EXCLUDE='^(.*/)?(__pycache__/.*|[^/]*\.(csv|db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
 rc=0
 sync_dir() {
     local src="$1" dst="$2" exclude="$3"
@@ -73,10 +92,10 @@ sync_dir() {
 case "$MODE" in
     paper)
         for entry in $PAPER_SOURCES; do
-            sync_dir "${entry#*=}" "gs://$BUCKET/raw/paper/${entry%%=*}/" "$COMMON_EXCLUDE"
+            sync_dir "${entry#*=}" "gs://$BUCKET/raw/paper/${entry%%=*}/" "$PAPER_EXCLUDE"
         done ;;
     backtest)
-        sync_dir "$BACKTEST_DIR" "gs://$BUCKET/raw/backtest/" '(^|/)([^/]*\.(csv|db|py|pyc|tmp|swp))$' ;;
+        sync_dir "$BACKTEST_DIR" "gs://$BUCKET/raw/backtest/" "$BACKTEST_EXCLUDE" ;;
     *) echo "unknown mode $MODE" >&2; exit 2 ;;
 esac
 exit $rc
