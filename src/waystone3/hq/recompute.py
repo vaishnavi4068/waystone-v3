@@ -95,7 +95,8 @@ def recompute(conn: Conn, ref: RefData, strategy: Strategy, now: datetime) -> No
         )
         loss_cap_at = {r["session_date"]: r["at"] for r in cur.fetchall()}
         cur.execute(
-            "SELECT i.symbol FROM core.paper_session ps JOIN ref.instrument i USING (instrument_id) "
+            "SELECT i.symbol FROM core.paper_session ps "
+            "JOIN ref.instrument i USING (instrument_id) "
             "WHERE ps.strategy_id = %s ORDER BY ps.session_date DESC LIMIT 1",
             (sid,),
         )
@@ -168,22 +169,22 @@ def recompute(conn: Conn, ref: RefData, strategy: Strategy, now: datetime) -> No
                     "WHERE strategy_id = %s AND session_date = %s",
                     (Jsonb({"sync_notes": row.notes}), sid, day),
                 )
-        for r in kpis.sync_rolling(sync_points):
+        for roll in kpis.sync_rolling(sync_points):
             upsert(
                 cur,
                 "kpi.sync_rolling",
                 {
                     "strategy_id": sid,
-                    "as_of_date": r.as_of,
-                    "days_logged": r.days_logged,
-                    "all_time_trades": r.all_time_trades,
-                    "all_time_live_pnl": _r(r.all_time_live_pnl),
-                    "all_time_bt_pnl": _r(r.all_time_bt_pnl),
-                    "avg_pnl_delta_pct": _r(r.avg_pnl_delta_pct, 4),
-                    "all_time_flags": r.all_time_flags,
-                    "flag_rate": _r(r.flag_rate, 4),
-                    "last7_live_pnl": _r(r.last7_live_pnl),
-                    "last7_flags": r.last7_flags,
+                    "as_of_date": roll.as_of,
+                    "days_logged": roll.days_logged,
+                    "all_time_trades": roll.all_time_trades,
+                    "all_time_live_pnl": _r(roll.all_time_live_pnl),
+                    "all_time_bt_pnl": _r(roll.all_time_bt_pnl),
+                    "avg_pnl_delta_pct": _r(roll.avg_pnl_delta_pct, 4),
+                    "all_time_flags": roll.all_time_flags,
+                    "flag_rate": _r(roll.flag_rate, 4),
+                    "last7_live_pnl": _r(roll.last7_live_pnl),
+                    "last7_flags": roll.last7_flags,
                 },
             )
         _write_kpis(cur, ref, strategy, paper_rows, days, now)
@@ -276,12 +277,29 @@ def _write_kpis(
         _DAILY_PNL_COLS,
         (
             (
-                sid, d.session_date, d.week_end, d.month_start, d.trades, _r(d.gross_pnl),
-                _r(d.commission), _r(d.slippage_cost), _r(d.net_pnl), _r(d.hold_min_total),
-                _r(d.equity_start), _r(d.equity_end), _r(d.daily_return, 10), _r(d.peak_itd),
-                _r(d.dd_itd, 10), d.uw_days_itd, _r(d.peak_week), _r(d.dd_week, 10),
-                d.uw_days_week, _r(d.peak_month), _r(d.dd_month, 10), d.uw_days_month,
-            )  # fmt: skip
+                sid,
+                d.session_date,
+                d.week_end,
+                d.month_start,
+                d.trades,
+                _r(d.gross_pnl),
+                _r(d.commission),
+                _r(d.slippage_cost),
+                _r(d.net_pnl),
+                _r(d.hold_min_total),
+                _r(d.equity_start),
+                _r(d.equity_end),
+                _r(d.daily_return, 10),
+                _r(d.peak_itd),
+                _r(d.dd_itd, 10),
+                d.uw_days_itd,
+                _r(d.peak_week),
+                _r(d.dd_week, 10),
+                d.uw_days_week,
+                _r(d.peak_month),
+                _r(d.dd_month, 10),
+                d.uw_days_month,
+            )
             for d in rows
         ),
     )

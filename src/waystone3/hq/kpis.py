@@ -298,7 +298,11 @@ def score_window(result: WindowResult, defs: dict[str, KpiDef]) -> ScoredWindow:
     statuses: dict[str, str] = {}
     for code, value in result.values.items():
         kpi = defs.get(code)
-        if kpi is None or code.startswith("hdr_") or (code == "fut_trade_count" and result.window != "ITD"):
+        if (
+            kpi is None
+            or code.startswith("hdr_")
+            or (code == "fut_trade_count" and result.window != "ITD")
+        ):
             statuses[code] = "INFO"
         else:
             statuses[code] = status_for(value, kpi)
@@ -347,10 +351,11 @@ class PeriodRow:
 def period_returns(
     rows: list[DailyRow], trades: list[ClosedTrade], settings: Settings, by: str
 ) -> list[PeriodRow]:
-    """Workbook tabs 5/6/7: one row per week (Mon–Fri) or calendar month reached."""
+    """Workbook tabs 5/6/7: one row per week (Mon-Fri) or calendar month reached."""
     groups: dict[date, list[DailyRow]] = {}
-    for row in rows:
-        groups.setdefault(row.week_end if by == "week" else row.month_start, []).append(row)
+    for day_row in rows:
+        key_date = day_row.week_end if by == "week" else day_row.month_start
+        groups.setdefault(key_date, []).append(day_row)
     out: list[PeriodRow] = []
     capital = settings.starting_capital
     cum = 0.0

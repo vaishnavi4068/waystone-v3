@@ -36,7 +36,7 @@ _TRIGGER = re.compile(
     re.I,
 )
 _CLOSE_PX = re.compile(r"\bclose\s*=\s*(" + _NUM + ")")
-_NO_ENTRIES = re.compile(r"^no entries\s*[—–-]+\s*(.+)$", re.I)
+_NO_ENTRIES = re.compile("^no entries\\s*[\u2014\u2013-]+\\s*(.+)$", re.I)
 _ENTRY = re.compile(
     r"^\*{3}\s*ENTRY\s+(BUY|SELL|LONG|SHORT)\s+(\d+)\s+(\S+)(?:.*?signal bar\s+(\S+))?", re.I
 )
@@ -55,7 +55,7 @@ _CLOSED = re.compile(r"^\[CLOSED\]\s+#(\d+)\s*(?P<rest>.*)$", re.I)
 _TOTALS_KEYS = ("pts", "gross", "commission", "net")
 _KV = re.compile(r"\b([A-Za-z]+)\s*=\s*(" + _NUM + r"|\d+(?:\.\d+)?[mh]?)")
 _DIRECTION = re.compile(r"\b(LONG|SHORT|BUY|SELL)\b")
-_QTY_AFTER_DIR = re.compile(r"\b(?:LONG|SHORT|BUY|SELL)\s*(?:x|×)?\s*(\d+)\b")
+_QTY_AFTER_DIR = re.compile("\\b(?:LONG|SHORT|BUY|SELL)\\s*(?:x|\u00d7)?\\s*(\\d+)\\b")
 _ENTRY_PX = re.compile(r"\b(?:entry|in)\s*[=:@]?\s*(" + _NUM + ")", re.I)
 _EXIT_PX = re.compile(r"\b(?:exit|out)\s*[=:@]?\s*(" + _NUM + ")", re.I)
 _ARROW_PX = re.compile(r"(" + _NUM + r")\s*(?:->|→)\s*(" + _NUM + ")")

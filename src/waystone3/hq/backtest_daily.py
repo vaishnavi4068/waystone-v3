@@ -1,4 +1,6 @@
-"""Parser for the after-hours same-day backtest replay (BACK_TEST_DAILY/<PREFIX>YYYY-MM-DD_back_daily.txt).
+"""Parser for the after-hours same-day backtest replay.
+
+VM files: BACK_TEST_DAILY/<PREFIX>YYYY-MM-DD_back_daily.txt.
 
 The replay output is not formally specified, so this parser accepts the shapes the
 replay scripts produce: ``key: value`` header lines, a trade table (whitespace, ``|``

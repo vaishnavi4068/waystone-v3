@@ -190,7 +190,8 @@ def daily_sync(
         row.bt_exit_reason = compared[-1].exit_reason
     if excluded:
         row.notes.append(
-            f"{len(excluded)} backtest trade(s) excluded: live correctly blocked by the daily loss cap"
+            f"{len(excluded)} backtest trade(s) excluded: "
+            "live correctly blocked by the daily loss cap"
         )
 
     if row.live_net_pnl is not None and row.bt_net_pnl is not None:

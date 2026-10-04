@@ -151,7 +151,8 @@ def test_rerun_is_noop_and_growing_log_replaces_in_place(db: str, tmp_path: Path
     versions = _rows(
         db,
         "SELECT is_current, (SELECT count(*) FROM raw.source_line l WHERE l.file_id = f.file_id) "
-        "AS lines FROM raw.source_file f WHERE gcs_uri LIKE '%nq_v221/2026-10-02.log' ORDER BY file_id",
+        "AS lines FROM raw.source_file f WHERE gcs_uri LIKE '%nq_v221/2026-10-02.log' "
+        "ORDER BY file_id",
     )
     assert [(v["is_current"], v["lines"]) for v in versions] == [(False, 0), (True, 36)]
     assert _rows(db, "SELECT count(*) AS n FROM core.paper_trade")[0]["n"] == 5

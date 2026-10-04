@@ -148,7 +148,9 @@ class Loader:
 
     def _ingest_backtests(self, report: RunReport, selected: list[Strategy]) -> set[int]:
         by_prefix = {
-            s.backtest_file_prefix: s for s in selected if s.backtest_file_prefix and s.backtest_prefix
+            s.backtest_file_prefix: s
+            for s in selected
+            if s.backtest_file_prefix and s.backtest_prefix
         }
         touched: set[int] = set()
         for prefix in sorted({s.backtest_prefix for s in by_prefix.values() if s.backtest_prefix}):
@@ -445,8 +447,8 @@ class PaperWriter:
                 "maint_margin": snap.maint_margin,
                 "line_no": snap.line_no,
             }
-            conflict = ("strategy_id", "snapshot_ts", "broker_account")
-            upsert(cur, "core.account_snapshot", snapshot, conflict, update=False)
+            snap_key = ("strategy_id", "snapshot_ts", "broker_account")
+            upsert(cur, "core.account_snapshot", snapshot, snap_key, update=False)
         for sig in day.signals:
             signal = {
                 **base,
@@ -472,8 +474,8 @@ class PaperWriter:
                 "leg_role": fill.role,
                 "line_no": fill.line_no,
             }
-            conflict = ("strategy_id", "fill_ts", "action", "price", "quantity")
-            upsert(cur, "core.paper_fill", row, conflict, update=False)
+            fill_key = ("strategy_id", "fill_ts", "action", "price", "quantity")
+            upsert(cur, "core.paper_fill", row, fill_key, update=False)
         for event in day.events:
             row = {
                 **base,
@@ -638,9 +640,9 @@ def _write_backtest(
     expected = settings["expected_bar_count"]
     if expected and parsed.bar_count is not None and parsed.bar_count < expected:
         status = "DATA_INCOMPLETE"
-    elif parsed.trades_reported is not None and parsed.trades_reported != len(parsed.trades):
-        status = "INCOMPLETE"
-    elif not parsed.trades and parsed.unparsed:
+    elif (parsed.trades_reported not in (None, len(parsed.trades))) or (
+        not parsed.trades and parsed.unparsed
+    ):
         status = "INCOMPLETE"
     else:
         status = "COMPLETE"
@@ -675,7 +677,9 @@ def _write_backtest(
     comm_rt = dec(settings["commission_rt_per_contract"]) or Decimal(0)
     for t in parsed.trades:
         inferred = t.contracts is None
-        contracts = t.contracts if t.contracts is not None else Decimal(settings["default_contracts"])
+        contracts = (
+            t.contracts if t.contracts is not None else Decimal(settings["default_contracts"])
+        )
         sign = Decimal(1) if t.direction == "LONG" else Decimal(-1)
         points = t.points
         if points is None and t.entry_px is not None and t.exit_px is not None:
