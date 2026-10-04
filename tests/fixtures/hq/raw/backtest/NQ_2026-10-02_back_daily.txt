@@ -1,0 +1,8 @@
+NQ same-day replay 2026-10-02
+config: V221-BHQ-BASELINE-v3 (NQ)
+params fp: 7636aa0c66
+bars file: NQ_1min_2026-10-02.csv
+bars: 961
+vol index: VXN
+#1 SHORT entry=09:31 entry_px=31079.00 exit=10:05 exit_px=31229.00 pts=-150.00 contracts=2 net=-6008.96 reason=yeah_its_failing
+total trades: 1  total net: -6008.96  maxdd: 0.61%

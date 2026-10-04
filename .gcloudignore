@@ -1,0 +1,13 @@
+# Files never uploaded by `gcloud builds submit` (Cloud Build source tarball).
+#!include:.gitignore
+.git
+.venv
+.env*
+**/*.pem
+**/*.key
+**/*credentials*.json
+**/*-sa.json
+**/*webhook*
+deploy/db/waystone-db-connection.txt
+reports/
+tests/
