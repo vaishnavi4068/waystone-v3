@@ -1,0 +1,16 @@
+BACKTEST DAILY REPLAY — ES 2026-10-01 (run_daily_backtest.py)
+config      : V221-BHQ-BASELINE-v3
+params fp   : f36bb2a138
+bars file   : ES_1min_2026-10-01.csv
+bars        : 961
+vol index   : VXN
+sentiment   : FnG (CNN)
+point value : 50
+flatten     : 15:55
+loss cap    : -2500
+
+#   dir     entry_time   entry_px   exit_time   exit_px   pts      contracts   net        reason
+1   SHORT   09:31        5812.25    12:40       5856.50   -44.25   2           -4434.00   yeah_its_failing
+2   LONG    12:42        5857.00    15:55       5846.75   -10.25   2           -1034.00   SESSION_FLATTEN
+
+trades: 2   total net: -5468.00   maxdd: 5.47%

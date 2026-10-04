@@ -312,6 +312,47 @@ def ibkr_export(
     )
 
 
+@app.command("load-logs")
+def load_logs(
+    job: str = typer.Option(
+        "paper", "--job", help="paper (hourly) | backtest (after replays) | backfill | recompute."
+    ),
+    source: str = typer.Option(
+        "gs://waystone-data",
+        "--source",
+        envvar="WAYSTONE_LOGS_SOURCE",
+        help="gs://bucket, or a local directory laid out like the bucket.",
+    ),
+    dsn: str = typer.Option(
+        "",
+        "--dsn",
+        envvar="WAYSTONE_DB_DSN",
+        help="Postgres DSN. Empty uses the libpq PGHOST/PGUSER/PGPASSWORD/PGDATABASE env vars.",
+    ),
+    strategy: list[str] = typer.Option(
+        [], "--strategy", help="Limit to these strategy codes (repeatable). Default: all active."
+    ),
+) -> None:
+    """Load VM trading logs from GCS into the HQ database and recompute KPIs."""
+    from waystone3.hq.loader import JOBS, Loader, connect
+    from waystone3.hq.sources import open_source
+
+    if job not in JOBS:
+        raise typer.BadParameter(f"--job must be one of {', '.join(JOBS)}")
+    with connect(dsn) as conn:
+        report = Loader(conn, open_source(source), triggered_by=f"cli:{job}").run(
+            job, strategy or None
+        )
+    console.print(
+        f"load-logs {job} run {report.run_id}: {report.status} — {report.files_loaded} of "
+        f"{report.files_seen} file(s) loaded; recomputed {', '.join(report.recomputed) or 'nothing'}."
+    )
+    for failure in report.failures:
+        console.print(f"  [red]FAILED[/red] {failure}")
+    if report.status == "FAILED":
+        raise typer.Exit(1)
+
+
 @app.command("ibkr-seed-demo")
 def ibkr_seed_demo(
     out: str = typer.Option(
