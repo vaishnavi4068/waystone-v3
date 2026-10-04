@@ -42,6 +42,9 @@ add_source s5_options "$S5_PAPER_DIR"
     || echo "WARNING: $BACKTEST_DIR not found; backtest sync will skip until it exists" >&2
 
 echo "Checking this VM can write to gs://$BUCKET ..."
+# gcloud caches access tokens for up to an hour; a token minted before an
+# access-scope change still carries the old scopes, so start from a fresh one.
+rm -f "${HOME:-/root}/.config/gcloud/access_tokens.db"
 if ! write_err="$(printf 'ok\n' | "$GCLOUD" storage cp - "gs://$BUCKET/raw/.vm-write-test" 2>&1)"; then
     scopes="$(curl -s -H 'Metadata-Flavor: Google' \
         http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes || true)"
@@ -51,7 +54,10 @@ if ! write_err="$(printf 'ok\n' | "$GCLOUD" storage cp - "gs://$BUCKET/raw/.vm-w
     echo "VM access scopes:" >&2
     printf '%s\n' "$scopes" | sed 's/^/  /' >&2
     case "$scopes" in
-        *devstorage.read_write*|*devstorage.full_control*|*cloud-platform*) ;;
+        *cloud-platform*|*devstorage.full_control*) ;;
+        *devstorage.read_write*)
+            echo "Storage scope is already Read Write. Hierarchical-namespace buckets may also need the" >&2
+            echo "cloud-platform scope, which opens every API to the VM's service account roles." >&2 ;;
         *) echo "Fix: stop the VM, set Storage access to Read Write, start it, then re-run this installer." >&2 ;;
     esac
     exit 1
