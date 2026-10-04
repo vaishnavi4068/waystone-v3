@@ -13,7 +13,7 @@ VALUES
     ('nq_v221', 'NQ V221', 'future', 'NQ', 'nq_futures',
      'raw/paper/nq_v221/', 'raw/backtest/', 'NQ_',
      NULL, 1, NULL,
-     'CONFIRM: broker account, paper start date, log folder on the VM.'),
+     'Paper logs: /root/NQ_FUTURE/v221_logs on the VM. CONFIRM: broker account, paper start date.'),
     ('r2_mnq', 'R2 MNQ (best risk-adj)', 'future', 'MNQ', 'r2_mnq',
      'raw/paper/r2_mnq/', 'raw/backtest/', 'R2_',
      'DUR842609', 88, DATE '2026-09-25',

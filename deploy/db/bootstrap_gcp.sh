@@ -10,7 +10,7 @@
 #   deploy/db/bootstrap_gcp.sh summary    # print the connection details to hand over
 #
 # Every setting below can be overridden from the environment, e.g.
-#   VM_ZONE=us-east1-b NQ_PAPER_DIR=/root/NQ_ALGO/v221_logs deploy/db/bootstrap_gcp.sh vm
+#   VM_ZONE=us-east4-c S5_PAPER_DIR=/root/S5_ALGO/logs deploy/db/bootstrap_gcp.sh vm
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-microdrive-dev}"
@@ -28,7 +28,7 @@ LOADER_SA="${LOADER_SA:-}"
 VM_NAME="${VM_NAME:-waystone}"
 VM_ZONE="${VM_ZONE:-}"
 ES_PAPER_DIR="${ES_PAPER_DIR:-/root/ES_ALGO/v221_logs}"
-NQ_PAPER_DIR="${NQ_PAPER_DIR:-}"
+NQ_PAPER_DIR="${NQ_PAPER_DIR:-/root/NQ_FUTURE/v221_logs}"
 R2_PAPER_DIR="${R2_PAPER_DIR:-/root/R2_MNQ_ALGO/R2_MNQ/v221_logs}"
 S5_PAPER_DIR="${S5_PAPER_DIR:-}"
 BACKTEST_DIR="${BACKTEST_DIR:-/root/BACK_TEST_DAILY}"

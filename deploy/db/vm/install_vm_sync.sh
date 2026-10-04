@@ -10,7 +10,7 @@ set -euo pipefail
 
 BUCKET="${BUCKET:-waystone-data}"
 ES_PAPER_DIR="${ES_PAPER_DIR:-/root/ES_ALGO/v221_logs}"
-NQ_PAPER_DIR="${NQ_PAPER_DIR:-}"
+NQ_PAPER_DIR="${NQ_PAPER_DIR:-/root/NQ_FUTURE/v221_logs}"
 R2_PAPER_DIR="${R2_PAPER_DIR:-/root/R2_MNQ_ALGO/R2_MNQ/v221_logs}"
 S5_PAPER_DIR="${S5_PAPER_DIR:-}"
 BACKTEST_DIR="${BACKTEST_DIR:-/root/BACK_TEST_DAILY}"
