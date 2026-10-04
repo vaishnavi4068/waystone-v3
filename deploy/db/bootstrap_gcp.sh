@@ -42,6 +42,7 @@ LOADER_SA="${LOADER_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SQL_DIR="$HERE/sql"
 PROXY_PID=""
+HNS=false
 
 log()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -167,12 +168,48 @@ cloud_sql() {
     fi
 }
 
+bucket_is_hns() {
+    g storage buckets describe "gs://$BUCKET" --format=json \
+        | tr -d ' \n' | grep -qi '"hierarchical_namespace":{"enabled":true}'
+}
+
+ensure_folder() {
+    local prefix="$1"
+    if [ "$HNS" = "true" ]; then
+        g storage folders create --recursive "gs://$BUCKET/$prefix" >/dev/null 2>&1 || true
+    else
+        printf '' | g storage cp - "gs://$BUCKET/${prefix}.keep" >/dev/null 2>&1
+    fi
+    info "gs://$BUCKET/$prefix"
+}
+
 bucket() {
-    log "Bucket gs://$BUCKET: versioning, lifecycle, folders"
+    log "Bucket gs://$BUCKET: recovery settings and folders"
     g storage buckets describe "gs://$BUCKET" --format='value(name)' >/dev/null \
         || die "bucket gs://$BUCKET not found"
-    if [ "$ENABLE_VERSIONING" = "true" ]; then
-        g storage buckets update "gs://$BUCKET" --versioning >/dev/null
+    HNS=false
+    local err=""
+    if bucket_is_hns; then
+        HNS=true
+    elif [ "$ENABLE_VERSIONING" = "true" ]; then
+        if ! err="$(g storage buckets update "gs://$BUCKET" --versioning 2>&1 >/dev/null)"; then
+            case "$err" in
+                *ierarchical*) HNS=true ;;
+                *) printf '%s\n' "$err" >&2; die "could not enable versioning on gs://$BUCKET" ;;
+            esac
+        fi
+    fi
+    if [ "$HNS" = "true" ]; then
+        info "hierarchical namespace bucket: object versioning is not supported, so it is skipped"
+        local soft_delete
+        soft_delete="$(g storage buckets describe "gs://$BUCKET" --format=json \
+            | tr -d ' \n' | sed -n 's/.*"retentionDurationSeconds":"\{0,1\}\([0-9]*\).*/\1/p')"
+        if [ -n "$soft_delete" ] && [ "$soft_delete" != "0" ]; then
+            info "soft delete keeps overwritten or deleted logs for $((soft_delete / 86400)) days"
+        else
+            warn "could not confirm soft delete. Check Bucket > Protection > Soft delete policy is on (it keeps overwritten logs recoverable)."
+        fi
+    elif [ "$ENABLE_VERSIONING" = "true" ]; then
         info "object versioning on (overwritten or deleted logs stay recoverable)"
         if g storage buckets describe "gs://$BUCKET" --format=json | grep -q '"lifecycle'; then
             warn "bucket already has lifecycle rules; left unchanged. Add 'delete noncurrent versions after 90 days' in the console if wanted."
@@ -187,13 +224,10 @@ bucket() {
     fi
     local prefix code
     for code in $STRATEGIES; do
-        prefix="raw/paper/$code/"
-        printf '' | g storage cp - "gs://$BUCKET/${prefix}.keep" >/dev/null 2>&1
-        info "gs://$BUCKET/$prefix"
+        ensure_folder "raw/paper/$code/"
     done
     for prefix in raw/backtest/ raw/comparison/; do
-        printf '' | g storage cp - "gs://$BUCKET/${prefix}.keep" >/dev/null 2>&1
-        info "gs://$BUCKET/$prefix"
+        ensure_folder "$prefix"
     done
 }
 
