@@ -80,10 +80,10 @@ MODE="${1:?usage: waystone-sync paper|backtest}"
 exec 9>"/run/waystone-sync-$MODE.lock"
 flock -n 9 || { echo "previous $MODE sync still running; skipping"; exit 0; }
 
-# Live SQLite files can be mid-write, so they are never copied. Patterns are
-# anchored to work whether gcloud matches the relative or the full path.
-PAPER_EXCLUDE='^(.*/)?(state|__pycache__/.*|[^/]*\.(db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
-BACKTEST_EXCLUDE='^(.*/)?(__pycache__/.*|[^/]*\.(csv|db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
+# Live SQLite files can be mid-write, so they are never copied. The patterns
+# must not start with '^': gcloud reads a leading ^...^ as a list delimiter.
+PAPER_EXCLUDE='(.*/)?(state|__pycache__/.*|[^/]*\.(db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
+BACKTEST_EXCLUDE='(.*/)?(__pycache__/.*|[^/]*\.(csv|db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
 rc=0
 sync_dir() {
     local src="$1" dst="$2" exclude="$3"
