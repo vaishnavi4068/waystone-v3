@@ -423,3 +423,203 @@ export interface AlgoOnboard {
   enabled?: boolean;
   notes?: string;
 }
+
+export type HqStatus = "GREEN" | "AMBER" | "RED" | "NA" | "INFO" | string;
+
+export interface HqStrategy {
+  strategy_code: string;
+  display_name: string;
+  asset_class: string;
+  instrument_root: string | null;
+  paper_start_date: string | null;
+  is_active: boolean;
+  notes: string | null;
+  as_of_date: string | null;
+  trading_days: number | null;
+  trades: number | null;
+  net_pnl: number | null;
+  return_pct: number | null;
+  equity_end: number | null;
+  red_count: number | null;
+  amber_count: number | null;
+  green_count: number | null;
+  overall_gate: string | null;
+  last_session: string | null;
+  paper_status: string | null;
+  backtest_status: string | null;
+  sync_status: string | null;
+  kpi_dates?: string[];
+}
+
+export interface HqScorecard {
+  kpi_window: string;
+  window_start: string | null;
+  window_end: string | null;
+  trading_days: number | null;
+  trades: number | null;
+  net_pnl: number | null;
+  return_pct: number | null;
+  equity_end: number | null;
+  red_count: number;
+  amber_count: number;
+  green_count: number;
+  overall_gate: string | null;
+}
+
+export interface HqKpi {
+  kpi_window: string;
+  section: string;
+  section_name: string;
+  sort_order: number;
+  kpi_code: string;
+  label: string;
+  description: string | null;
+  direction: string | null;
+  green_at: number | null;
+  amber_at: number | null;
+  unit: string | null;
+  num_value: number | null;
+  text_value: string | null;
+  status: HqStatus | null;
+}
+
+export interface HqKpis {
+  strategy_code: string;
+  as_of_date: string | null;
+  scorecard: HqScorecard[];
+  kpis: HqKpi[];
+}
+
+export interface HqSyncRow {
+  strategy_code: string;
+  display_name: string;
+  session_date: string;
+  instrument_symbol: string | null;
+  live_trades: number | null;
+  live_win_rate: number | null;
+  live_points: number | null;
+  live_net_pnl: number | null;
+  live_exit_reason: string | null;
+  bt_trades: number | null;
+  bt_points: number | null;
+  bt_net_pnl: number | null;
+  bt_exit_reason: string | null;
+  pnl_delta: number | null;
+  pnl_delta_pct: number | null;
+  exit_reason_match: boolean | null;
+  exit_time_gap_min: number | null;
+  loss_cap_hit: boolean | null;
+  sync_status: string | null;
+  notes_auto: string | null;
+  notes_manual: string | null;
+  paper_status: string | null;
+  backtest_status: string | null;
+}
+
+export interface HqDailyPnl {
+  session_date: string;
+  trades: number;
+  gross_pnl: number | null;
+  commission: number | null;
+  slippage_cost: number | null;
+  net_pnl: number | null;
+  equity_start: number | null;
+  equity_end: number | null;
+  daily_return: number | null;
+  dd_itd: number | null;
+}
+
+export interface HqPaperTrade {
+  session_date: string;
+  trade_no: number;
+  instrument: string | null;
+  direction: string;
+  contracts: number;
+  entry_ts: string | null;
+  exit_ts: string | null;
+  entry_px: number | null;
+  exit_px: number | null;
+  entry_slip_pts: number | null;
+  exit_slip_pts: number | null;
+  exit_reason: string | null;
+  points: number | null;
+  gross_pnl: number | null;
+  commission: number | null;
+  slippage_cost: number | null;
+  net_pnl: number | null;
+  hold_min: number | null;
+  mae_pts: number | null;
+  mfe_pts: number | null;
+}
+
+export interface HqMatch {
+  match_seq: number;
+  match_type: string;
+  unmatched_reason: string | null;
+  live_entry_ts: string | null;
+  bt_entry_ts: string | null;
+  live_exit_ts: string | null;
+  bt_exit_ts: string | null;
+  live_exit_reason: string | null;
+  bt_exit_reason: string | null;
+  live_points: number | null;
+  bt_points: number | null;
+  live_net_pnl: number | null;
+  bt_net_pnl: number | null;
+  entry_gap_s: number | null;
+  pnl_delta: number | null;
+}
+
+export interface HqCompare {
+  strategy_code: string;
+  session_date: string;
+  sync: HqSyncRow | null;
+  matches: HqMatch[];
+  paper_trades: HqPaperTrade[];
+}
+
+export interface HqWeek {
+  week_no: number;
+  week_start: string;
+  week_end: string;
+  trades: number;
+  net_pnl: number;
+  return_pct: number | null;
+  max_dd: number | null;
+  account_value: number | null;
+}
+
+export interface HqMonth {
+  month_no: number;
+  month_start: string;
+  trades: number;
+  net_pnl: number;
+  return_pct: number | null;
+  max_dd: number | null;
+  sharpe: number | null;
+  account_value: number | null;
+}
+
+export interface HqReturns {
+  weekly: HqWeek[];
+  monthly: HqMonth[];
+  sync_rolling: {
+    as_of_date: string;
+    days_logged: number;
+    all_time_live_pnl: number | null;
+    all_time_bt_pnl: number | null;
+    all_time_flags: number;
+    flag_rate: number | null;
+    last7_live_pnl: number | null;
+  } | null;
+}
+
+export interface HqLoadRun {
+  job: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  files_seen: number;
+  files_loaded: number;
+  error: string | null;
+}
