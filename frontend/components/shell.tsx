@@ -16,10 +16,11 @@ import {
   Wallet,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
-import { HQ_PAGES, savedSelection } from "@/lib/hq-selection";
+import { HQ_PAGES, onSelectionChange, savedSelection } from "@/lib/hq-selection";
 
 const NAV = [
   { href: "/paper", label: "Paper trades", icon: ListOrdered },
@@ -41,7 +42,11 @@ const NAV = [
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
+  const [selection, setSelection] = useState("");
+  useEffect(() => {
+    setSelection(savedSelection());
+    return onSelectionChange(() => setSelection(savedSelection()));
+  }, []);
   const acct = useQuery({ queryKey: ["account"], queryFn: getAccount });
 
   function logout() {
@@ -63,14 +68,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             return (
               <Link
                 key={href}
-                href={href}
-                onClick={(e) => {
-                  const saved = HQ_PAGES.includes(href) ? savedSelection() : "";
-                  if (saved) {
-                    e.preventDefault();
-                    router.push(`${href}?${saved}`);
-                  }
-                }}
+                href={HQ_PAGES.includes(href) && selection ? `${href}?${selection}` : href}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
                   active
                     ? "bg-emerald-600/20 text-emerald-300"
