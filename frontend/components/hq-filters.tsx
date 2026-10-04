@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect } from "react";
 
 import { LoaderStatus } from "@/components/hq-views";
 import QueryGate from "@/components/query-gate";
@@ -10,6 +11,7 @@ import { getHqDaily, getHqStrategies, getHqSync, isNotFound } from "@/lib/api";
 import type { HqStrategy } from "@/lib/types";
 
 export const ALL = "all";
+const STORE = "hq-selection";
 
 export interface HqSelection {
   strategies: HqStrategy[];
@@ -27,6 +29,15 @@ export function useHqSelection() {
   const params = useSearchParams();
   const strategy = params.get("strategy") ?? ALL;
   const requested = params.get("date");
+  const query = params.toString();
+
+  useEffect(() => {
+    if (query) sessionStorage.setItem(STORE, query);
+    else {
+      const saved = sessionStorage.getItem(STORE);
+      if (saved) router.replace(`${pathname}?${saved}`, { scroll: false });
+    }
+  }, [query, pathname, router]);
 
   const strategies = useQuery({ queryKey: ["hq-strategies"], queryFn: getHqStrategies });
   const allDates = useQuery({ queryKey: ["hq-sync-dates"], queryFn: () => getHqSync(), enabled: strategy === ALL });
@@ -46,6 +57,7 @@ export function useHqSelection() {
     const d = next.date === undefined ? date : next.date;
     if (s !== ALL) q.set("strategy", s);
     if (d) q.set("date", d);
+    sessionStorage.setItem(STORE, q.toString());
     router.replace(`${pathname}${q.toString() ? `?${q}` : ""}`, { scroll: false });
   }
 

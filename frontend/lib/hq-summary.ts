@@ -38,8 +38,20 @@ const money = (n: number, signed = true) =>
 const pts = (n: number) => `${n > 0 ? "+" : ""}${n.toFixed(2)} pt`;
 const hhmm = (t: string | null | undefined) => (t ? t.slice(0, 5) : null);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const REASONS: Record<string, string> = {
+  stop_loss: "the stop loss",
+  take_profit: "the profit target",
+  SESSION_FLATTEN: "the session flatten",
+  MISSING: "missing",
+  PENDING: "pending",
+};
 const readable = (reason: string | null | undefined) =>
-  (reason ?? "unknown").replace(/_/g, " ").toLowerCase();
+  reason ? (REASONS[reason] ?? `"${reason}"`) : "unknown";
+const minutesApart = (a: string | null | undefined, b: string | null | undefined) =>
+  a && b ? (new Date(a).getTime() - new Date(b).getTime()) / 60000 : null;
+const LOSS_LIMIT = /daily loss limit \$(-?[\d,.]+)/i;
+
+export const capWasHit = (flag: string | boolean | null | undefined) => flag === true || flag === "Y";
 
 export function buildPairs(d: HqCompare): TradePair[] {
   const byLive = new Map(d.paper_trades.map((t) => [t.entry_ts, t]));
@@ -133,7 +145,12 @@ export function summarize(name: string, d: HqCompare): DaySummary {
   const checks = dollarChecks(d, pairs);
   const sentences: string[] = [];
   const warnings: string[] = [];
-  const cap = ctx.settings?.daily_loss_cap ?? null;
+  const capBlocks = ctx.signals.filter((g) => g.outcome === "BLOCKED" && LOSS_LIMIT.test(g.block_reason ?? ""));
+  const otherBlocks = ctx.signals.filter((g) => g.outcome === "BLOCKED" && !LOSS_LIMIT.test(g.block_reason ?? ""));
+  const engineCap = capBlocks.length
+    ? Number(LOSS_LIMIT.exec(capBlocks[0].block_reason ?? "")![1].replace(/,/g, ""))
+    : null;
+  const cap = engineCap ?? ctx.settings?.daily_loss_cap ?? null;
   const pointValue = ctx.settings?.point_value ?? null;
 
   if (!s || s.live_net_pnl == null) {
@@ -154,7 +171,7 @@ export function summarize(name: string, d: HqCompare): DaySummary {
 
   const live = s.live_net_pnl;
   const liveTrades = s.live_trades ?? 0;
-  const capHit = Boolean(s.loss_cap_hit) || (cap != null && live <= cap);
+  const capHit = capWasHit(s.loss_cap_hit) || capBlocks.length > 0;
   let tone: DaySummary["tone"] = live > 0 ? "good" : live < 0 ? "bad" : "neutral";
   const kind =
     live > 0
@@ -196,7 +213,11 @@ export function summarize(name: string, d: HqCompare): DaySummary {
     if (matched.length === pairs.length && reasonMismatch.length === 0) {
       sentences.push(
         matched.length === 1
-          ? `It was the same trade on both sides: same direction, entry within ${Math.round(Math.abs(matched[0].match!.entry_gap_s ?? 0) / 60)} min, and both exited on ${readable(matched[0].match!.live_exit_reason)}.`
+          ? `It was the same trade on both sides: same direction, ${
+              Math.abs(matched[0].match!.entry_gap_s ?? 0) < 60
+                ? "entry in the same minute"
+                : `entries ${Math.round(Math.abs(matched[0].match!.entry_gap_s ?? 0) / 60)} min apart`
+            }, and both exited on ${readable(matched[0].match!.live_exit_reason)}.`
           : `All ${matched.length} trades lined up on both sides with the same exit reasons.`,
       );
     } else {
@@ -209,13 +230,23 @@ export function summarize(name: string, d: HqCompare): DaySummary {
     }
     const gaps = matched
       .filter((p) => p.match!.live_points != null && p.match!.bt_points != null)
-      .map((p) => ({ n: p.n, gap: p.match!.live_points! - p.match!.bt_points! }));
+      .map((p) => ({
+        n: p.n,
+        gap: p.match!.live_points! - p.match!.bt_points!,
+        exitGap: minutesApart(p.live?.exit_ts, p.bt?.exit_ts),
+        liveExit: p.live?.exit_ts,
+        btExit: p.bt?.exit_ts,
+      }));
     const worst = gaps.sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap))[0];
     if (worst && Math.abs(worst.gap) >= 0.25) {
       sentences.push(
         `The biggest execution gap was ${pts(worst.gap)} on trade ${worst.n}${
           pointValue ? ` (about ${money(Math.abs(worst.gap) * pointValue, false)} per contract)` : ""
-        } — that is fill slippage and timing, not a different signal.`,
+        }${
+          worst.exitGap != null && Math.abs(worst.exitGap) >= 2
+            ? `, mostly because live exited at ${time(worst.liveExit)} ET and the backtest at ${time(worst.btExit)} ET`
+            : ", which is fill slippage rather than a different signal"
+        }.`,
       );
     }
     const liveOnly = pairs.filter((p) => p.match?.match_type === "PAPER_ONLY");
@@ -228,7 +259,7 @@ export function summarize(name: string, d: HqCompare): DaySummary {
     }
   }
 
-  const blocked = ctx.signals.filter((g) => g.outcome === "BLOCKED").reduce((a, g) => a + g.n, 0);
+  const blocked = capBlocks.reduce((a, g) => a + g.n, 0);
   const capBlocked = pairs.filter((p) => p.match?.unmatched_reason === "LOSS_CAP_BLOCKED");
   if (capHit) {
     sentences.push(
@@ -243,6 +274,20 @@ export function summarize(name: string, d: HqCompare): DaySummary {
   } else if (cap != null) {
     sentences.push(`The ${money(cap)} daily loss cap was not triggered.`);
   }
+  if (otherBlocks.length) {
+    const n = otherBlocks.reduce((a, g) => a + g.n, 0);
+    sentences.push(
+      `${plural(n, "other signal")} ${n === 1 ? "was" : "were"} filtered by the strategy's own rules (${otherBlocks
+        .map((g) => g.block_reason)
+        .join("; ")}).`,
+    );
+  }
+  const refCap = ctx.settings?.daily_loss_cap;
+  if (engineCap != null && refCap != null && Math.abs(engineCap - refCap) > TOLERANCE) {
+    warnings.push(
+      `The engine enforced a ${money(engineCap)} loss cap but the reference settings say ${money(refCap)} — update ref.strategy_settings so KPIs use the real cap.`,
+    );
+  }
 
   const liveFlat = hhmm(ctx.settings?.flatten_time);
   const btFlat = hhmm(ctx.backtest_run?.flatten_time);
@@ -252,7 +297,7 @@ export function summarize(name: string, d: HqCompare): DaySummary {
       `Config mismatch: live flattens at ${liveFlat} ET but this backtest run used ${btFlat} ET. Any trade still open between ${[liveFlat, btFlat].sort()[0]} and ${[liveFlat, btFlat].sort()[1]} is not an apples-to-apples comparison.`,
     );
   }
-  const liveCap = ctx.settings?.daily_loss_cap;
+  const liveCap = cap;
   const btCap = ctx.backtest_run?.daily_loss_cap;
   if (liveCap != null && btCap != null && Math.abs(liveCap - btCap) > TOLERANCE) {
     tone = "warn";

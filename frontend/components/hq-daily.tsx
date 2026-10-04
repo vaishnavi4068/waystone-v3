@@ -7,7 +7,7 @@ import { Chip, num, signTone, time, usd } from "@/components/hq";
 import { Section } from "@/components/hq-views";
 import QueryGate from "@/components/query-gate";
 import { getHqCompare } from "@/lib/api";
-import { summarize, type DaySummary, type TradePair } from "@/lib/hq-summary";
+import { capWasHit, summarize, type DaySummary, type TradePair } from "@/lib/hq-summary";
 import type { HqCompare, HqStrategy } from "@/lib/types";
 
 const longDate = (d: string) =>
@@ -75,7 +75,7 @@ function SideBySide({ pair, d }: { pair: TradePair | undefined; d: HqCompare }) 
       <span key="b" className={signTone(s?.bt_net_pnl)}>{usd(s?.bt_net_pnl)}</span>,
       null,
     ],
-    ["Daily loss cap", s?.loss_cap_hit ? "Triggered" : "Not triggered", "", null],
+    ["Daily loss cap", capWasHit(s?.loss_cap_hit) ? "Triggered" : "Not triggered", "", null],
   ];
   return (
     <table className="hq-table w-full text-sm">

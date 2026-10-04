@@ -508,7 +508,7 @@ export interface HqSyncRow {
   pnl_delta_pct: number | null;
   exit_reason_match: boolean | null;
   exit_time_gap_min: number | null;
-  loss_cap_hit: boolean | null;
+  loss_cap_hit: string | null;
   sync_status: string | null;
   notes_auto: string | null;
   notes_manual: string | null;
