@@ -24,7 +24,7 @@ DB_TIER="${DB_TIER:-db-custom-2-8192}"
 BUCKET="${BUCKET:-waystone-data}"
 STRATEGIES="${STRATEGIES:-es_v221 nq_v221 s5_options}"
 DASH_SA="${DASH_SA:-waystone-dash@${PROJECT_ID}.iam.gserviceaccount.com}"
-LOADER_SA_NAME="${LOADER_SA_NAME:-waystone-loader}"
+LOADER_SA="${LOADER_SA:-}"
 VM_NAME="${VM_NAME:-waystone}"
 VM_ZONE="${VM_ZONE:-}"
 ES_PAPER_DIR="${ES_PAPER_DIR:-/root/ES_ALGO/v221_logs}"
@@ -38,7 +38,7 @@ ENABLE_VERSIONING="${ENABLE_VERSIONING:-true}"
 SECRET_PG="waystone-db-postgres-password"
 SECRET_LOAD="waystone-db-load-password"
 SECRET_READ="waystone-db-read-password"
-LOADER_SA="${LOADER_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+VM_SA=""
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SQL_DIR="$HERE/sql"
 PROXY_PID=""
@@ -238,18 +238,34 @@ vm_lookup() {
     [ -n "$VM_ZONE" ] || die "VM $VM_NAME not found in $PROJECT_ID; set VM_NAME / VM_ZONE"
 }
 
+# Sets VM_SA and, unless overridden, LOADER_SA (the loader reuses the VM's account).
+resolve_service_accounts() {
+    vm_lookup
+    VM_SA="$(g compute instances describe "$VM_NAME" --zone="$VM_ZONE" --format='value(serviceAccounts[0].email)')"
+    [ -n "$VM_SA" ] || die "VM $VM_NAME has no service account attached"
+    LOADER_SA="${LOADER_SA:-$VM_SA}"
+}
+
 iam() {
-    log "Service accounts and permissions"
-    if ! g iam service-accounts describe "$LOADER_SA" >/dev/null 2>&1; then
-        g iam service-accounts create "$LOADER_SA_NAME" --display-name="Waystone log loader (Cloud Run Job)"
-    fi
+    log "Service accounts and permissions (no new accounts are created)"
+    resolve_service_accounts
+    g iam service-accounts describe "$LOADER_SA" >/dev/null 2>&1 \
+        || die "loader service account $LOADER_SA not found"
+
+    # objectUser (not objectCreator): rsync must overwrite the day's growing log file.
+    g storage buckets add-iam-policy-binding "gs://$BUCKET" --member="serviceAccount:$VM_SA" \
+        --role=roles/storage.objectUser >/dev/null
+    info "VM $VM_NAME ($VM_ZONE) runs as $VM_SA: bucket read/write"
+
     g projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$LOADER_SA" \
         --role=roles/cloudsql.client --condition=None >/dev/null
-    g storage buckets add-iam-policy-binding "gs://$BUCKET" --member="serviceAccount:$LOADER_SA" \
-        --role=roles/storage.objectViewer >/dev/null
+    if [ "$LOADER_SA" != "$VM_SA" ]; then
+        g storage buckets add-iam-policy-binding "gs://$BUCKET" --member="serviceAccount:$LOADER_SA" \
+            --role=roles/storage.objectViewer >/dev/null
+    fi
     g secrets add-iam-policy-binding "$SECRET_LOAD" --member="serviceAccount:$LOADER_SA" \
         --role=roles/secretmanager.secretAccessor >/dev/null
-    info "$LOADER_SA: Cloud SQL client, bucket read, load password"
+    info "loader (Cloud Run Job) runs as $LOADER_SA: Cloud SQL client, bucket access, load password"
 
     if g iam service-accounts describe "$DASH_SA" >/dev/null 2>&1; then
         g projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$DASH_SA" \
@@ -261,19 +277,8 @@ iam() {
         warn "dashboard service account $DASH_SA not found; skipped (set DASH_SA)"
     fi
 
-    vm_lookup
-    local vm_sa scopes
-    vm_sa="$(g compute instances describe "$VM_NAME" --zone="$VM_ZONE" --format='value(serviceAccounts[0].email)')"
+    local scopes
     scopes="$(g compute instances describe "$VM_NAME" --zone="$VM_ZONE" --format='value(serviceAccounts[0].scopes)')"
-    [ -n "$vm_sa" ] || die "VM $VM_NAME has no service account attached"
-    # objectUser (not objectCreator): rsync must overwrite the day's growing log file.
-    g storage buckets add-iam-policy-binding "gs://$BUCKET" --member="serviceAccount:$vm_sa" \
-        --role=roles/storage.objectUser >/dev/null
-    info "VM $VM_NAME ($VM_ZONE) runs as $vm_sa: bucket read/write"
-    case "$vm_sa" in
-        *-compute@developer.gserviceaccount.com)
-            warn "the VM uses the default compute service account; every VM using it can now write to the bucket." ;;
-    esac
     case "$scopes" in
         *cloud-platform*|*devstorage.read_write*|*devstorage.full_control*) info "VM API scopes allow Storage writes" ;;
         *) warn "VM API scopes do not allow Storage writes. Stop the VM outside trading hours, then Edit > Access scopes > Storage: Read Write (or 'Allow full access'). Current: $scopes" ;;
@@ -353,6 +358,7 @@ install_vm_sync() {
 
 summary() {
     log "Hand-over details (no passwords; those stay in Secret Manager)"
+    resolve_service_accounts
     local out="$HERE/waystone-db-connection.txt"
     {
         echo "project:              $PROJECT_ID"
@@ -364,7 +370,7 @@ summary() {
         echo "load user / secret:   waystone_load / $SECRET_LOAD"
         echo "read user / secret:   waystone_read / $SECRET_READ"
         echo "admin user / secret:  postgres / $SECRET_PG"
-        echo "loader SA:            $LOADER_SA"
+        echo "VM / loader SA:       $VM_SA / $LOADER_SA"
         echo "dashboard SA:         $DASH_SA"
         echo "bucket:               gs://$BUCKET/raw/{paper/<strategy>,backtest,comparison}/"
         echo "vpc network:          ${NETWORK:-(run infra to detect)}"
