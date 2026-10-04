@@ -242,6 +242,15 @@ def test_dashboard_api_reads_views_as_waystone_read(db: str, tmp_path: Path) -> 
     assert {r["job"] for r in client.get("/api/hq/status", headers=auth).json()["loads"]} == {
         "backfill"
     }
+    paper = client.get("/api/hq/paper?date=2026-10-02", headers=auth).json()
+    assert paper["dates"][-1] == "2026-10-02"
+    assert {t["strategy_code"] for t in paper["trades"]} == {"nq_v221", "r2_mnq"}
+    assert paper["fills"] and paper["signals"] and paper["events"]
+    nq = {f["strategy_code"]: f for f in paper["freshness"]}["nq_v221"]
+    assert nq["paper_status"] == "FINAL" and nq["last_log_line_ts"] and nq["gcs_updated_at"]
+    one = client.get("/api/hq/paper?strategy=nq_v221", headers=auth).json()
+    assert one["session_date"] == "2026-10-02" and len(one["freshness"]) == 1
+    assert client.get("/api/hq/paper?strategy=nope", headers=auth).status_code == 404
     assert client.get("/api/hq/strategies/nope", headers=auth).status_code == 404
     assert client.get("/api/hq/sync?date=bad", headers=auth).status_code == 400
 
@@ -295,6 +304,9 @@ def test_mcp_hq_tools_read_views(db: str, tmp_path: Path) -> None:
         kpis = call("hq_kpis", {"strategy": "r2_mnq"})
         assert kpis["scorecard"][-1]["overall_gate"].startswith("INSUFFICIENT SAMPLE")
         assert call("hq_daily_pnl", {"strategy": "nq_v221"})[-1]["equity_end"] == 92016.04
+        paper = call("hq_paper_day", {"strategy": "r2_mnq"})
+        assert paper["session_date"] == "2026-10-02"
+        assert [t["trade_no"] for t in paper["trades"]] == [21, 22, 23]
         with pytest.raises(Exception, match="unknown strategy"):
             asyncio.run(mcp.call_tool("hq_kpis", {"strategy": "nope"}))
     finally:

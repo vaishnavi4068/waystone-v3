@@ -106,6 +106,18 @@ def build_hq_router(reader: HqReader | None, session: Callable[..., Any]) -> API
         rows = _call(lambda: _reader().daily_sync(None, day, day)) if day else []
         return {"dates": dates, "session_date": day.isoformat() if day else None, "rows": rows}
 
+    @router.get("/paper")
+    def hq_paper(date: str | None = None, strategy: str | None = None) -> dict[str, Any]:
+        """Paper engine activity for one session (latest by default), one or all strategies."""
+        if strategy:
+            _strategy(strategy)
+        dates = _call(lambda: _reader().paper_dates(strategy))
+        day = _day(date, "date") or (_day(dates[-1], "date") if dates else None)
+        if day is None:
+            return {"dates": dates, "session_date": None, "strategy_code": strategy}
+        picked = day
+        return {"dates": dates, **_call(lambda: _reader().paper_day(strategy, picked))}
+
     @router.get("/status")
     def hq_status(start: str | None = None, end: str | None = None) -> dict[str, Any]:
         lo, hi = _day(start, "start"), _day(end, "end")
