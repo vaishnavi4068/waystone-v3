@@ -133,9 +133,10 @@ Claude then sees the read-only tools `hq_strategies`, `hq_sync`, `hq_compare`, `
 
    -- Parsed trades vs the engine's own DAILY SUMMARY (net_match/closed_match should be true)
    SELECT strategy_code, session_date, paper_status,
-          checks->>'trades_parsed' AS parsed, checks->>'closed_reported' AS reported,
-          checks->>'net_parsed' AS net_parsed, checks->>'net_reported' AS net_reported,
-          checks->>'net_match' AS net_ok, checks->>'unparsed_lines' AS unparsed
+          checks->'paper'->>'trades_parsed' AS parsed, checks->'paper'->>'closed_reported' AS reported,
+          checks->'paper'->>'net_parsed' AS net_parsed, checks->'paper'->>'net_reported' AS net_reported,
+          checks->'paper'->>'net_match' AS net_ok, checks->'paper'->>'unparsed_lines' AS unparsed,
+          checks->'backtest'->>'run_status' AS replay
    FROM api.v_day_status ORDER BY 1, 2;
 
    -- Same columns as the workbook's daily sync sheet: compare row by row for R2 and ES
