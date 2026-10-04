@@ -71,7 +71,7 @@ def test_account_is_shared(client_and_token) -> None:
 def test_positions_orders_activity(client_and_token) -> None:
     client, token = client_and_token
     assert client.get("/api/positions", headers=_auth(token)).json()  # has a position
-    assert client.get("/api/orders", headers=_auth(token)).json()     # has an order
+    assert client.get("/api/orders", headers=_auth(token)).json()  # has an order
     activity = client.get("/api/activity", headers=_auth(token)).json()
     assert any(a["action"] == "run_cycle" for a in activity)
 
@@ -91,3 +91,18 @@ def test_backtest_and_news(client_and_token) -> None:
     ).json()
     assert bt["metrics"]["trades"] >= 1
     assert client.get("/api/news?symbols=AAPL", headers=_auth(token)).json() == []  # no key
+
+
+def test_hq_routes_404_without_database(client_and_token) -> None:
+    client, token = client_and_token
+    assert client.get("/api/hq/strategies", headers=_auth(token)).status_code == 404
+
+
+def test_hq_dsn_from_env() -> None:
+    from waystone3.hq.reader import hq_dsn_from_env
+
+    assert hq_dsn_from_env({}) is None
+    assert hq_dsn_from_env({"WAYSTONE_HQ_DSN": "host=x"}) == "host=x"
+    dsn = hq_dsn_from_env({"WAYSTONE_HQ_DB_HOST": "10.1.2.3", "WAYSTONE_HQ_DB_PASSWORD": "p w"})
+    assert dsn is not None
+    assert "host=10.1.2.3" in dsn and "user=waystone_read" in dsn and "sslmode=require" in dsn

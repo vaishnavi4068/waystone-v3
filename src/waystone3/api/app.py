@@ -18,8 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from waystone3.api.hq import build_hq_router
 from waystone3.core.types import Timeframe
 from waystone3.fusion.fuse import fuse
+from waystone3.hq.reader import HqReader, hq_dsn_from_env
 from waystone3.ibkr.algo_registry import AlgoConfig, ensure_registry, save_registry
 from waystone3.ibkr.compare import compare_algo_day, list_compare_days
 from waystone3.ibkr.futures_kpis import compute_futures_kpis
@@ -115,6 +117,7 @@ def build_app(
     report_store: ReportStore | None = None,
     *,
     ibkr_paper: bool | None = None,
+    hq_reader: HqReader | None = None,
 ) -> FastAPI:
     # Default: one workspace for the process. Building Alpaca/Polygon clients on every
     # request (the old per-call factory) made the dashboard feel hung under 15s polling.
@@ -129,6 +132,8 @@ def build_app(
     store = report_store if report_store is not None else build_report_store_from_env()
     strategies = research_store(store)
     paper = IbkrSettings().ibkr_paper if ibkr_paper is None else ibkr_paper
+    hq_dsn = hq_dsn_from_env()
+    hq = hq_reader if hq_reader is not None else (HqReader(hq_dsn) if hq_dsn else None)
 
     app = FastAPI(title="Waystone v3 — read-only dashboard API")
     app.add_middleware(
@@ -148,6 +153,8 @@ def build_app(
         if name is None:
             raise HTTPException(status_code=401, detail="invalid token")
         return ws, name
+
+    app.include_router(build_hq_router(hq, _session))
 
     @app.get("/api/health")
     async def health() -> dict[str, bool]:
