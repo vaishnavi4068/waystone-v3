@@ -3,7 +3,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Check, X } from "lucide-react";
 
-import { Chip, num, signTone, time, usd } from "@/components/hq";
+import { Chip, num, signTone, stamp, time, usd } from "@/components/hq";
 import { Section } from "@/components/hq-views";
 import QueryGate from "@/components/query-gate";
 import { getHqCompare } from "@/lib/api";
@@ -18,6 +18,8 @@ const longDate = (d: string) =>
     day: "numeric",
     timeZone: "UTC",
   });
+
+const REFRESH_MS = 15 * 60 * 1000;
 
 const TONE = {
   good: "border-emerald-500/60 bg-emerald-500/5",
@@ -43,6 +45,19 @@ function SummaryBox({ summary }: { summary: DaySummary }) {
       ) : null}
     </div>
   );
+}
+
+function LoadTimes({ d }: { d: HqCompare }) {
+  const st = d.context.day_status;
+  if (!st) return null;
+  const bits = [
+    `Paper log loaded ${stamp(st.paper_loaded_at)}`,
+    st.finalized_at ? `day finalized ${stamp(st.finalized_at)}` : "day not final yet",
+    st.backtest_loaded_at
+      ? `backtest replay loaded ${stamp(st.backtest_loaded_at)}`
+      : "backtest replay not loaded yet (runs 16:35 and 17:35 ET)",
+  ];
+  return <div className="mx-5 -mt-2 mb-3 text-xs text-slate-500">{bits.join(" · ")}</div>;
 }
 
 function Same({ ok }: { ok: boolean | null }) {
@@ -274,6 +289,7 @@ function StrategyReport({ strategy, d, details }: { strategy: HqStrategy; d: HqC
         }
       >
         <SummaryBox summary={summary} />
+        <LoadTimes d={d} />
         {summary.pairs.length === 0 ? (
           <div className="px-5 pb-4 text-sm text-slate-500">No trades on either side this session.</div>
         ) : summary.pairs.length === 1 ? (
@@ -292,6 +308,7 @@ export function StrategyDay({ strategy, date }: { strategy: HqStrategy; date: st
   const cmp = useQuery({
     queryKey: ["hq-compare", strategy.strategy_code, date],
     queryFn: () => getHqCompare(strategy.strategy_code, date),
+    refetchInterval: REFRESH_MS,
   });
   if (cmp.isLoading || cmp.isError) {
     return <QueryGate isLoading={cmp.isLoading} isError={cmp.isError} error={cmp.error} />;
@@ -312,6 +329,7 @@ export function AllStrategiesReport({
     queries: strategies.map((s) => ({
       queryKey: ["hq-compare", s.strategy_code, date],
       queryFn: () => getHqCompare(s.strategy_code, date),
+      refetchInterval: REFRESH_MS,
     })),
   });
   const loaded = strategies

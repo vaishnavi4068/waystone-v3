@@ -330,7 +330,8 @@ class HqReader:
             (code, day),
         )
         status = self._one(
-            "SELECT paper_status, backtest_status, sync_status, checks FROM api.v_day_status "
+            "SELECT paper_status, backtest_status, sync_status, checks, paper_loaded_at, "
+            "backtest_loaded_at, finalized_at FROM api.v_day_status "
             "WHERE strategy_code = %s AND session_date = %s",
             (code, day),
         )

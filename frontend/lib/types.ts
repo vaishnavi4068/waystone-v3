@@ -687,6 +687,9 @@ export interface HqDayContext {
     backtest_status: string;
     sync_status: string;
     checks: { paper?: HqPaperChecks; sync_notes?: string[] } | null;
+    paper_loaded_at: string | null;
+    backtest_loaded_at: string | null;
+    finalized_at: string | null;
   } | null;
 }
 
