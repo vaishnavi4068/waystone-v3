@@ -183,3 +183,58 @@ def test_bad_file_fails_alone(db: str, tmp_path: Path) -> None:
     }
     assert statuses == {"paper_log": "PARSED", "paper_events": "PARTIAL", "paper_info": "SKIPPED"}
     assert _rows(db, "SELECT count(*) AS n FROM raw.source_event")[0]["n"] == 1
+
+
+def test_dashboard_api_reads_views_as_waystone_read(db: str, tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from waystone3.api.app import build_app
+    from waystone3.brokers.paper import PaperBroker
+    from waystone3.data.stub import StubDataSource
+    from waystone3.hq.reader import HqReader
+    from waystone3.workspace.workspace import TradingWorkspace
+
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+    read_dsn = conninfo.make_conninfo(db, user="waystone_read", password="test-read")
+    ws = TradingWorkspace(StubDataSource(), PaperBroker())
+    token = ws.register_member("Manoj").token
+    client = TestClient(build_app(workspace_factory=lambda: ws, hq_reader=HqReader(read_dsn)))
+    auth = {"Authorization": f"Bearer {token}"}
+
+    assert client.get("/api/hq/strategies").status_code == 401
+    codes = [
+        s["strategy_code"]
+        for s in client.get("/api/hq/strategies", headers=auth).json()["strategies"]
+    ]
+    assert {"es_v221", "nq_v221", "r2_mnq"} <= set(codes)
+
+    r2 = client.get("/api/hq/strategies/r2_mnq", headers=auth).json()
+    assert r2["overall_gate"].startswith("INSUFFICIENT SAMPLE") and r2["kpi_dates"]
+
+    kpis = client.get("/api/hq/strategies/es_v221/kpis", headers=auth).json()
+    assert [c["kpi_window"] for c in kpis["scorecard"]] == ["WEEK", "MTD", "ITD"]
+    assert any(k["kpi_code"] == "fut_sharpe" for k in kpis["kpis"])
+
+    compare = client.get("/api/hq/strategies/es_v221/compare", headers=auth).json()
+    assert compare["session_date"] == "2026-10-01"
+    assert compare["sync"]["pnl_delta"] == 75.04
+    assert [m["unmatched_reason"] for m in compare["matches"]] == [None, "LOSS_CAP_BLOCKED"]
+
+    sync = client.get("/api/hq/sync?date=2026-10-02", headers=auth).json()
+    by_code = {r["strategy_code"]: r for r in sync["rows"]}
+    assert by_code["nq_v221"]["sync_status"] == "FLAG"
+    assert by_code["r2_mnq"]["backtest_status"] == "MISSING"
+
+    daily = client.get("/api/hq/strategies/nq_v221/daily?start=2026-10-01", headers=auth).json()
+    assert daily["days"][-1]["equity_end"] == 92016.04
+    trades = client.get("/api/hq/strategies/r2_mnq/trades", headers=auth).json()["trades"]
+    assert [t["trade_no"] for t in trades] == [21, 22, 23]
+    assert client.get("/api/hq/strategies/nq_v221/returns", headers=auth).json()["weekly"]
+    assert {r["job"] for r in client.get("/api/hq/status", headers=auth).json()["loads"]} == {
+        "backfill"
+    }
+    assert client.get("/api/hq/strategies/nope", headers=auth).status_code == 404
+    assert client.get("/api/hq/sync?date=bad", headers=auth).status_code == 400

@@ -104,10 +104,20 @@ kubectl -n waystone-dash get secret waystone-dash-secrets \
 Fill placeholders and apply [k8s/dashboard.yaml](k8s/dashboard.yaml):
 
 ```sh
+# Futures HQ database private IP (empty = HQ pages show "not connected")
+export HQ_DB_HOST=$(gcloud sql instances describe waystone-hq \
+  --format='value(ipAddresses[0].ipAddress)')
+
 sed -e "s|__IMAGE__|$IMAGE|g" \
     -e "s|__FRONTEND_IMAGE__|$FRONTEND_IMAGE|g" \
     -e "s|__DASH_DOMAIN__|$DOMAIN|g" \
+    -e "s|__HQ_DB_HOST__|$HQ_DB_HOST|g" \
+    -e "s|__PROJECT__|$PROJECT|g" \
     deploy/k8s/dashboard.yaml | kubectl apply -f -
+
+# Lets the pod's k8s service account read waystone-db-read-password and re-points
+# the API at the private IP (safe to re-run; no Google service account is created).
+deploy/db/bootstrap_gcp.sh dash
 ```
 
 Do **not** apply `arena.yaml` / `ingress.yaml` / `trader.yaml` for this stack.
@@ -204,5 +214,8 @@ Rebuild the frontend whenever `$DOMAIN` changes (`NEXT_PUBLIC_API_BASE` is baked
 | `IBKR_PAPER` | `true` |
 | `WAYSTONE_BROKER` | `paper` (no Alpaca) |
 | `IBKR_STAGED` | `1` for preview sample data; `0` after you point GCS |
+| `WAYSTONE_HQ_DB_HOST` | Cloud SQL `waystone-hq` private IP (Futures HQ pages) |
+| `WAYSTONE_HQ_DB_USER` | `waystone_read` |
+| `WAYSTONE_HQ_DB_PASSWORD_SECRET` | `projects/<project>/secrets/waystone-db-read-password/versions/latest`, read at startup via Workload Identity |
 
 Leave `IBKR_REPORTS_LOCAL_DIR` unset in the cluster.

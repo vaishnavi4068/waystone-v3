@@ -10,6 +10,14 @@ import type {
   BacktestResult,
   Bar,
   CompareDays,
+  HqCompare,
+  HqDailyPnl,
+  HqKpis,
+  HqLoadRun,
+  HqPaperTrade,
+  HqReturns,
+  HqStrategy,
+  HqSyncRow,
   IbkrDays,
   IbkrFuturesKpis,
   IbkrOptionsKpis,
@@ -186,3 +194,25 @@ export const runBacktest = (params: {
   get<BacktestResult>(
     `/api/backtest?symbols=${params.symbols}&start=${params.start}&end=${params.end}&weights=${encodeURIComponent(params.weights)}`,
   );
+
+const q = (params: Record<string, string | undefined>) => {
+  const search = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) search.set(k, v);
+  const text = search.toString();
+  return text ? `?${text}` : "";
+};
+export const getHqStrategies = () => get<{ strategies: HqStrategy[] }>("/api/hq/strategies");
+export const getHqStrategy = (code: string) => get<HqStrategy>(`/api/hq/strategies/${code}`);
+export const getHqKpis = (code: string, asOf?: string) =>
+  get<HqKpis>(`/api/hq/strategies/${code}/kpis${q({ as_of: asOf })}`);
+export const getHqDaily = (code: string) =>
+  get<{ days: HqDailyPnl[]; sync: HqSyncRow[] }>(`/api/hq/strategies/${code}/daily`);
+export const getHqTrades = (code: string, start?: string, end?: string) =>
+  get<{ trades: HqPaperTrade[] }>(`/api/hq/strategies/${code}/trades${q({ start, end })}`);
+export const getHqCompare = (code: string, date?: string) =>
+  get<HqCompare>(`/api/hq/strategies/${code}/compare${q({ date })}`);
+export const getHqReturns = (code: string) => get<HqReturns>(`/api/hq/strategies/${code}/returns`);
+export const getHqSync = (date?: string) =>
+  get<{ dates: string[]; session_date: string | null; rows: HqSyncRow[] }>(`/api/hq/sync${q({ date })}`);
+export const getHqStatus = () =>
+  get<{ loads: HqLoadRun[]; days: unknown[] }>("/api/hq/status");

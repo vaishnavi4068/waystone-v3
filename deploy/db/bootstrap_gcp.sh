@@ -9,6 +9,7 @@
 #   deploy/db/bootstrap_gcp.sh vm         # install the hourly GCS sync on the trading VM
 #   deploy/db/bootstrap_gcp.sh loader     # build the image, deploy the load-logs Cloud Run jobs + schedules
 #   deploy/db/bootstrap_gcp.sh backfill   # one-off: load every file already in the bucket
+#   deploy/db/bootstrap_gcp.sh dash       # point the GKE dashboard API at the database (read-only)
 #   deploy/db/bootstrap_gcp.sh summary    # print the connection details to hand over
 #
 # Every setting below can be overridden from the environment, e.g.
@@ -38,6 +39,8 @@ PROXY_PORT="${PROXY_PORT:-6543}"
 KEEP_PUBLIC_IP="${KEEP_PUBLIC_IP:-false}"
 ENABLE_VERSIONING="${ENABLE_VERSIONING:-true}"
 SUBNET="${SUBNET:-}"
+DASH_NAMESPACE="${DASH_NAMESPACE:-waystone-dash}"
+DASH_KSA="${DASH_KSA:-waystone-dash}"
 AR_REPO="${AR_REPO:-waystone}"
 LOADER_IMAGE="${LOADER_IMAGE:-}"
 PAPER_LOAD_CRON="${PAPER_LOAD_CRON:-35 * * * *}"
@@ -413,8 +416,7 @@ deploy_loader() {
     resolve_service_accounts
     detect_network
     local host subnet
-    host="$(g sql instances describe "$INSTANCE" --format=json | python3 -c \
-        'import json,sys; print(next((a["ipAddress"] for a in json.load(sys.stdin).get("ipAddresses", []) if a.get("type") == "PRIVATE"), ""))')"
+    host="$(sql_private_ip)"
     [ -n "$host" ] || die "instance $INSTANCE has no private IP; run: $0 infra"
     subnet="${SUBNET:-$(g container clusters describe "$GKE_CLUSTER" --location "$GKE_LOCATION" \
         --format='value(subnetwork)' 2>/dev/null || true)}"
@@ -434,6 +436,36 @@ run_backfill() {
     log "One-off backfill: every file in gs://$BUCKET/raw, then KPIs (waits for it to finish)"
     g run jobs execute waystone-load-backfill --region="$REGION" --wait
     info "logs: gcloud logging read 'resource.type=cloud_run_job AND resource.labels.job_name=waystone-load-backfill' --project $PROJECT_ID --limit 50 --format='value(textPayload)'"
+}
+
+sql_private_ip() {
+    g sql instances describe "$INSTANCE" --format=json | python3 -c \
+        'import json,sys; print(next((a["ipAddress"] for a in json.load(sys.stdin).get("ipAddresses", []) if a.get("type") == "PRIVATE"), ""))'
+}
+
+wire_dashboard() {
+    log "Dashboard API -> HQ database (read-only, private IP, password read from Secret Manager)"
+    command -v kubectl >/dev/null || die "kubectl not found (gcloud components install kubectl)"
+    local pool num principal host
+    pool="$(g container clusters describe "$GKE_CLUSTER" --location "$GKE_LOCATION" \
+        --format='value(workloadIdentityConfig.workloadPool)')"
+    [ -n "$pool" ] || die "Workload Identity is off on $GKE_CLUSTER; the pod cannot read Secret Manager"
+    num="$(g projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+    principal="principal://iam.googleapis.com/projects/$num/locations/global/workloadIdentityPools/$pool/subject/ns/$DASH_NAMESPACE/sa/$DASH_KSA"
+    g secrets add-iam-policy-binding "$SECRET_READ" --member="$principal" \
+        --role=roles/secretmanager.secretAccessor >/dev/null
+    info "k8s $DASH_NAMESPACE/$DASH_KSA can read $SECRET_READ (no Google service account needed)"
+    host="$(sql_private_ip)"
+    [ -n "$host" ] || die "instance $INSTANCE has no private IP; run: $0 infra"
+    g container clusters get-credentials "$GKE_CLUSTER" --location "$GKE_LOCATION" >/dev/null
+    kubectl -n "$DASH_NAMESPACE" get serviceaccount "$DASH_KSA" >/dev/null \
+        || die "k8s service account $DASH_NAMESPACE/$DASH_KSA not found; apply deploy/k8s/dashboard.yaml first"
+    kubectl -n "$DASH_NAMESPACE" set env deploy/waystone-dash-api \
+        WAYSTONE_HQ_DB_HOST="$host" WAYSTONE_HQ_DB_NAME="$DB_NAME" WAYSTONE_HQ_DB_USER=waystone_read \
+        WAYSTONE_HQ_DB_SSLMODE=require \
+        WAYSTONE_HQ_DB_PASSWORD_SECRET="projects/$PROJECT_ID/secrets/$SECRET_READ/versions/latest"
+    kubectl -n "$DASH_NAMESPACE" rollout status deploy/waystone-dash-api --timeout=180s
+    info "API pod now reads api.* views on $host as waystone_read"
 }
 
 summary() {
@@ -471,8 +503,9 @@ main() {
         vm) install_vm_sync ;;
         loader) deploy_loader ;;
         backfill) run_backfill ;;
+        dash) wire_dashboard ;;
         summary) summary ;;
-        *) die "unknown step '$step' (use: all | infra | sql | vm | loader | backfill | summary)" ;;
+        *) die "unknown step '$step' (use: all | infra | sql | vm | loader | backfill | dash | summary)" ;;
     esac
     log "Done: $step"
 }
