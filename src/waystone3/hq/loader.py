@@ -106,7 +106,9 @@ class Loader:
                             touched.add(strategy.strategy_id)
             if job in ("backtest", "backfill"):
                 touched |= self._ingest_backtests(report, selected)
-            if job == "recompute":
+            # Backtest day status is time-based (PENDING turns MISSING after the
+            # replay deadline), so the backtest job rescores even with no new files.
+            if job in ("backtest", "recompute"):
                 touched = {s.strategy_id for s in selected}
             for strategy_id in sorted(touched):
                 strategy = self.ref.strategies[strategy_id]
