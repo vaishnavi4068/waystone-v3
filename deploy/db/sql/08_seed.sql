@@ -14,6 +14,10 @@ VALUES
      'raw/paper/nq_v221/', 'raw/backtest/', 'NQ_',
      NULL, 1, NULL,
      'CONFIRM: broker account, paper start date, log folder on the VM.'),
+    ('r2_mnq', 'R2 MNQ (best risk-adj)', 'future', 'MNQ', 'r2_mnq',
+     'raw/paper/r2_mnq/', 'raw/backtest/', 'R2_',
+     'DUR842609', 88, DATE '2026-09-25',
+     'R2_best_risk_adj (DTV221 STAYINMARKET), 1 contract, flatten 15:55 ET. Shares IB account DUR842609 with es_v221. CONFIRM: backtest replay file prefix.'),
     ('s5_options', 'Strategy 5 options', 'option', 'TBD', 's5_options',
      'raw/paper/s5_options/', 'raw/backtest/', 'S5_',
      NULL, 42, NULL,
@@ -40,6 +44,8 @@ FROM (VALUES
      -2500.00, 12, 961, 'From ES_Futures_KPI_Dashboard.xlsx Settings tab.'),
     ('nq_v221', DATE '2026-09-01', 100000.00, 20.0, 0.25, 2, 4.50, 5.00, 1380, 18, TIME '15:55',
      -2500.00, 12, 961, 'CONFIRM: copied from ES with NQ point value ($20).'),
+    ('r2_mnq', DATE '2026-09-25', 100000.00, 2.0, 0.25, 1, 1.22, 0.50, 1380, 18, TIME '15:55',
+     -2500.00, 12, 961, 'From the paper log: IBKR $0.61/side, backtest slip 0.125pt/side. CONFIRM: starting capital.'),
     ('s5_options', DATE '2026-09-01', 100000.00, 100.0, 0.01, 1, 1.30, 4.00, 390, 18, NULL,
      NULL, NULL, NULL, 'CONFIRM: commission and slippage are placeholders.')
 ) AS v(code, valid_from, capital, point_value, tick, contracts, comm, slip, session_minutes,
@@ -52,10 +58,16 @@ SELECT strategy_id, 'f36bb2a138', 'V221-BHQ-BASELINE-v3', DATE '2026-10-02'
 FROM ref.strategy WHERE strategy_code = 'es_v221'
 ON CONFLICT DO NOTHING;
 
+INSERT INTO ref.strategy_config (strategy_id, params_fp, config_label, first_seen_date)
+SELECT strategy_id, 'bb6649148c', 'R2_best_risk_adj (DTV221 STAYINMARKET)', DATE '2026-10-02'
+FROM ref.strategy WHERE strategy_code = 'r2_mnq'
+ON CONFLICT DO NOTHING;
+
 INSERT INTO ref.instrument (symbol, root, asset_class, exchange, multiplier, expiry)
 VALUES
     ('ESZ6', 'ES', 'future', 'CME', 50, DATE '2026-12-18'),
-    ('NQZ6', 'NQ', 'future', 'CME', 20, DATE '2026-12-18')
+    ('NQZ6', 'NQ', 'future', 'CME', 20, DATE '2026-12-18'),
+    ('MNQZ6', 'MNQ', 'future', 'CME', 2, DATE '2026-12-18')
 ON CONFLICT (symbol) DO NOTHING;
 
 -- Full-closure days from the workbook Settings tab.

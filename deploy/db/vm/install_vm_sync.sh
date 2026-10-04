@@ -11,6 +11,7 @@ set -euo pipefail
 BUCKET="${BUCKET:-waystone-data}"
 ES_PAPER_DIR="${ES_PAPER_DIR:-/root/ES_ALGO/v221_logs}"
 NQ_PAPER_DIR="${NQ_PAPER_DIR:-}"
+R2_PAPER_DIR="${R2_PAPER_DIR:-/root/R2_MNQ_ALGO/R2_MNQ/v221_logs}"
 S5_PAPER_DIR="${S5_PAPER_DIR:-}"
 BACKTEST_DIR="${BACKTEST_DIR:-/root/BACK_TEST_DAILY}"
 TZ_NAME="America/New_York"
@@ -37,6 +38,7 @@ add_source() {
 }
 add_source es_v221 "$ES_PAPER_DIR"
 add_source nq_v221 "$NQ_PAPER_DIR"
+add_source r2_mnq "$R2_PAPER_DIR"
 add_source s5_options "$S5_PAPER_DIR"
 [ -d "$BACKTEST_DIR" ] && echo "backtest: $BACKTEST_DIR -> gs://$BUCKET/raw/backtest/" \
     || echo "WARNING: $BACKTEST_DIR not found; backtest sync will skip until it exists" >&2

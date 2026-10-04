@@ -22,13 +22,14 @@ INSTANCE="${INSTANCE:-waystone-hq}"
 DB_NAME="${DB_NAME:-waystone}"
 DB_TIER="${DB_TIER:-db-custom-2-8192}"
 BUCKET="${BUCKET:-waystone-data}"
-STRATEGIES="${STRATEGIES:-es_v221 nq_v221 s5_options}"
+STRATEGIES="${STRATEGIES:-es_v221 nq_v221 r2_mnq s5_options}"
 DASH_SA="${DASH_SA:-waystone-dash@${PROJECT_ID}.iam.gserviceaccount.com}"
 LOADER_SA="${LOADER_SA:-}"
 VM_NAME="${VM_NAME:-waystone}"
 VM_ZONE="${VM_ZONE:-}"
 ES_PAPER_DIR="${ES_PAPER_DIR:-/root/ES_ALGO/v221_logs}"
 NQ_PAPER_DIR="${NQ_PAPER_DIR:-}"
+R2_PAPER_DIR="${R2_PAPER_DIR:-/root/R2_MNQ_ALGO/R2_MNQ/v221_logs}"
 S5_PAPER_DIR="${S5_PAPER_DIR:-}"
 BACKTEST_DIR="${BACKTEST_DIR:-/root/BACK_TEST_DAILY}"
 PROXY_PORT="${PROXY_PORT:-6543}"
@@ -352,7 +353,7 @@ install_vm_sync() {
     log "Installing the GCS sync timers on VM $VM_NAME"
     vm_lookup
     g compute ssh "$VM_NAME" --zone="$VM_ZONE" --command \
-        "sudo env BUCKET='$BUCKET' ES_PAPER_DIR='$ES_PAPER_DIR' NQ_PAPER_DIR='$NQ_PAPER_DIR' S5_PAPER_DIR='$S5_PAPER_DIR' BACKTEST_DIR='$BACKTEST_DIR' bash -s" \
+        "sudo env BUCKET='$BUCKET' ES_PAPER_DIR='$ES_PAPER_DIR' NQ_PAPER_DIR='$NQ_PAPER_DIR' R2_PAPER_DIR='$R2_PAPER_DIR' S5_PAPER_DIR='$S5_PAPER_DIR' BACKTEST_DIR='$BACKTEST_DIR' bash -s" \
         <"$HERE/vm/install_vm_sync.sh"
 }
 
