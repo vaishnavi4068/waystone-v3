@@ -21,6 +21,7 @@ import { usePathname } from "next/navigation";
 import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
 
 const NAV = [
+  { href: "/paper", label: "Paper trades", icon: ListOrdered },
   { href: "/daily", label: "Daily", icon: CalendarDays },
   { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
   { href: "/strategies", label: "Strategies", icon: BookOpen },

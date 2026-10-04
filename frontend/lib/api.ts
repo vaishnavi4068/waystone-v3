@@ -14,6 +14,7 @@ import type {
   HqDailyPnl,
   HqKpis,
   HqLoadRun,
+  HqPaperDay,
   HqPaperTrade,
   HqReturns,
   HqStrategy,
@@ -214,5 +215,7 @@ export const getHqCompare = (code: string, date?: string) =>
 export const getHqReturns = (code: string) => get<HqReturns>(`/api/hq/strategies/${code}/returns`);
 export const getHqSync = (date?: string) =>
   get<{ dates: string[]; session_date: string | null; rows: HqSyncRow[] }>(`/api/hq/sync${q({ date })}`);
+export const getHqPaper = (strategy?: string, date?: string) =>
+  get<HqPaperDay>(`/api/hq/paper${q({ strategy, date })}`);
 export const getHqStatus = () =>
   get<{ loads: HqLoadRun[]; days: unknown[] }>("/api/hq/status");

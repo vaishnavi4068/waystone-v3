@@ -12,6 +12,7 @@ import type { HqStrategy } from "@/lib/types";
 
 export const ALL = "all";
 const STORE = "hq-selection";
+const DATES_REFRESH_MS = 10 * 60 * 1000;
 
 export interface HqSelection {
   strategies: HqStrategy[];
@@ -40,11 +41,17 @@ export function useHqSelection() {
   }, [query, pathname, router]);
 
   const strategies = useQuery({ queryKey: ["hq-strategies"], queryFn: getHqStrategies });
-  const allDates = useQuery({ queryKey: ["hq-sync-dates"], queryFn: () => getHqSync(), enabled: strategy === ALL });
+  const allDates = useQuery({
+    queryKey: ["hq-sync-dates"],
+    queryFn: () => getHqSync(),
+    enabled: strategy === ALL,
+    refetchInterval: DATES_REFRESH_MS,
+  });
   const daily = useQuery({
     queryKey: ["hq-daily", strategy],
     queryFn: () => getHqDaily(strategy),
     enabled: strategy !== ALL,
+    refetchInterval: DATES_REFRESH_MS,
   });
 
   const dates =

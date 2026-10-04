@@ -550,6 +550,69 @@ export interface HqPaperTrade {
   hold_min: number | null;
   mae_pts: number | null;
   mfe_pts: number | null;
+  strategy_code?: string;
+  signal_bar_ts?: string | null;
+  entry_signal_px?: number | null;
+  exit_signal_px?: number | null;
+  fill_latency_s?: number | null;
+  pnl_at_signal?: number | null;
+  is_closed?: boolean;
+}
+
+export interface HqFreshness {
+  strategy_code: string;
+  display_name: string;
+  paper_status: string | null;
+  paper_loaded_at: string | null;
+  finalized_at: string | null;
+  checks: HqPaperChecks | null;
+  gcs_uri: string | null;
+  gcs_updated_at: string | null;
+  size_bytes: number | null;
+  file_loaded_at: string | null;
+  parse_status: string | null;
+  last_log_line_ts: string | null;
+  daily_loss_cap: number | null;
+  starting_capital: number | null;
+  max_trades_per_day: number | null;
+  flatten_time: string | null;
+}
+
+export interface HqPaperDay {
+  dates: string[];
+  session_date: string | null;
+  strategy_code: string | null;
+  freshness?: HqFreshness[];
+  last_paper_load?: HqLoadRun | null;
+  trades?: (HqPaperTrade & { strategy_code: string })[];
+  fills?: {
+    strategy_code: string;
+    fill_ts: string;
+    instrument: string | null;
+    action: string;
+    quantity: number;
+    price: number;
+    commission: number | null;
+    leg_role: string | null;
+    exec_id: string | null;
+    order_ref: string | null;
+  }[];
+  signals?: {
+    strategy_code: string;
+    signal_bar_ts: string;
+    side: string;
+    signal_px: number | null;
+    outcome: string;
+    block_reason: string | null;
+  }[];
+  events?: {
+    strategy_code: string;
+    event_ts: string;
+    category: string;
+    code: string | null;
+    severity: string;
+    message: string;
+  }[];
 }
 
 export interface HqMatch {
