@@ -21,16 +21,16 @@ import { usePathname } from "next/navigation";
 import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
 
 const NAV = [
-  { href: "/hq", label: "Futures HQ", icon: Gauge },
-  { href: "/ibkr", label: "Daily", icon: CalendarDays },
+  { href: "/daily", label: "Daily", icon: CalendarDays },
+  { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
   { href: "/strategies", label: "Strategies", icon: BookOpen },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/options-kpis", label: "Options KPIs", icon: Gauge },
-  { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
   { href: "/", label: "Account", icon: Wallet },
   { href: "/positions", label: "Positions", icon: BarChart3 },
   { href: "/orders", label: "Orders", icon: ListOrdered },
   { href: "/activity", label: "Activity", icon: Activity },
+  { href: "/ibkr", label: "IBKR report", icon: CalendarDays },
   { href: "/signals", label: "Signals", icon: LineChart },
   { href: "/charts", label: "Charts", icon: CandlestickChart },
   { href: "/backtests", label: "Backtests", icon: BarChart3 },
@@ -56,7 +56,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <nav className="flex flex-1 flex-col gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active =
-              href === "/strategies" || href === "/hq" ? pathname.startsWith(href) : pathname === href;
+              href === "/strategies" ? pathname.startsWith(href) : pathname === href;
             return (
               <Link
                 key={href}

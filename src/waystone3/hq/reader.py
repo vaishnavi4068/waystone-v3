@@ -216,6 +216,52 @@ class HqReader:
             "matches": matches,
             "paper_trades": self.paper_trades(code, day, day),
             "backtest_trades": backtest,
+            "context": self.day_context(code, day),
+        }
+
+    def day_context(self, code: str, day: date) -> dict[str, Any]:
+        """Settings, backtest header, signal counts and log checks behind one session."""
+        settings = self._one(
+            "SELECT ss.point_value, ss.default_contracts, ss.commission_rt_per_contract, "
+            "ss.model_slip_rt_per_contract, ss.flatten_time, ss.daily_loss_cap "
+            "FROM ref.strategy_settings ss JOIN ref.strategy s USING (strategy_id) "
+            "WHERE s.strategy_code = %s AND ss.valid_from <= %s "
+            "ORDER BY ss.valid_from DESC LIMIT 1",
+            (code, day),
+        )
+        run = self._one(
+            "SELECT r.config_label, r.params_fp, r.point_value, r.flatten_time, r.daily_loss_cap, "
+            "r.trades_reported, r.total_net_reported, r.status, r.bar_count "
+            "FROM core.backtest_run r JOIN ref.strategy s USING (strategy_id) "
+            "WHERE s.strategy_code = %s AND r.session_date = %s",
+            (code, day),
+        )
+        live_params = self._one(
+            "SELECT c.params_fp, c.config_label, c.params "
+            "FROM core.paper_trade t JOIN ref.strategy s USING (strategy_id) "
+            "JOIN ref.strategy_config c "
+            "ON c.strategy_id = t.strategy_id AND c.params_fp = t.params_fp "
+            "WHERE s.strategy_code = %s AND t.session_date = %s LIMIT 1",
+            (code, day),
+        )
+        signals = self._rows(
+            "SELECT e.outcome, e.block_reason, count(*) AS n "
+            "FROM core.signal_event e JOIN ref.strategy s USING (strategy_id) "
+            "WHERE s.strategy_code = %s AND e.session_date = %s "
+            "GROUP BY 1, 2 ORDER BY 1, 2",
+            (code, day),
+        )
+        status = self._one(
+            "SELECT paper_status, backtest_status, sync_status, checks FROM api.v_day_status "
+            "WHERE strategy_code = %s AND session_date = %s",
+            (code, day),
+        )
+        return {
+            "settings": settings,
+            "backtest_run": run,
+            "live_params": live_params,
+            "signals": signals,
+            "day_status": status,
         }
 
     def returns(self, code: str) -> dict[str, Any]:

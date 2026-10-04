@@ -570,12 +570,71 @@ export interface HqMatch {
   pnl_delta: number | null;
 }
 
+export interface HqBacktestTrade {
+  trade_seq: number;
+  direction: string;
+  entry_ts: string | null;
+  exit_ts: string | null;
+  entry_px: number | null;
+  exit_px: number | null;
+  points: number | null;
+  contracts: number | null;
+  contracts_inferred: boolean;
+  net_pnl: number | null;
+  net_pnl_derived: boolean;
+  exit_reason: string | null;
+  config_label: string | null;
+  params_fp: string | null;
+}
+
+export interface HqPaperChecks {
+  trades_parsed?: number;
+  closed_reported?: number;
+  closed_match?: boolean;
+  net_parsed?: number;
+  net_reported?: number;
+  net_match?: boolean;
+  summary_present?: boolean;
+  unparsed_lines?: number;
+}
+
+export interface HqDayContext {
+  settings: {
+    point_value: number;
+    default_contracts: number;
+    commission_rt_per_contract: number;
+    model_slip_rt_per_contract: number;
+    flatten_time: string | null;
+    daily_loss_cap: number | null;
+  } | null;
+  backtest_run: {
+    config_label: string | null;
+    params_fp: string | null;
+    point_value: number | null;
+    flatten_time: string | null;
+    daily_loss_cap: number | null;
+    trades_reported: number | null;
+    total_net_reported: number | null;
+    status: string;
+  } | null;
+  live_params: { params_fp: string; config_label: string | null } | null;
+  signals: { outcome: string; block_reason: string | null; n: number }[];
+  day_status: {
+    paper_status: string;
+    backtest_status: string;
+    sync_status: string;
+    checks: { paper?: HqPaperChecks; sync_notes?: string[] } | null;
+  } | null;
+}
+
 export interface HqCompare {
   strategy_code: string;
   session_date: string;
   sync: HqSyncRow | null;
   matches: HqMatch[];
   paper_trades: HqPaperTrade[];
+  backtest_trades: HqBacktestTrade[];
+  context: HqDayContext;
 }
 
 export interface HqWeek {

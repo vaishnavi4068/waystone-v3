@@ -222,6 +222,12 @@ def test_dashboard_api_reads_views_as_waystone_read(db: str, tmp_path: Path) -> 
     assert compare["session_date"] == "2026-10-01"
     assert compare["sync"]["pnl_delta"] == 75.04
     assert [m["unmatched_reason"] for m in compare["matches"]] == [None, "LOSS_CAP_BLOCKED"]
+    ctx = compare["context"]
+    assert ctx["settings"]["point_value"] == 50.0
+    assert ctx["backtest_run"]["total_net_reported"] == -5468.0
+    assert ctx["live_params"]["params_fp"] == ctx["backtest_run"]["params_fp"]
+    assert {"outcome": "ENTERED", "block_reason": None, "n": 1} in ctx["signals"]
+    assert ctx["day_status"]["checks"]["paper"]["net_match"] is True
 
     sync = client.get("/api/hq/sync?date=2026-10-02", headers=auth).json()
     by_code = {r["strategy_code"]: r for r in sync["rows"]}
