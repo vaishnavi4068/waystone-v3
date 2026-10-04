@@ -43,6 +43,7 @@ SUBNET="${SUBNET:-}"
 DASH_NAMESPACE="${DASH_NAMESPACE:-waystone-dash}"
 DASH_KSA="${DASH_KSA:-waystone-dash}"
 DASH_DEPLOYMENT="${DASH_DEPLOYMENT:-waystone-dash-api}"
+GKE_DNS_ENDPOINT="${GKE_DNS_ENDPOINT:-true}"
 AR_REPO="${AR_REPO:-waystone}"
 LOADER_IMAGE="${LOADER_IMAGE:-}"
 PAPER_LOAD_CRON="${PAPER_LOAD_CRON:-35 * * * *}"
@@ -459,9 +460,23 @@ wire_dashboard() {
     info "k8s $DASH_NAMESPACE/$DASH_KSA can read $SECRET_READ (no Google service account needed)"
     host="$(sql_private_ip)"
     [ -n "$host" ] || die "instance $INSTANCE has no private IP; run: $0 infra"
-    g container clusters get-credentials "$GKE_CLUSTER" --location "$GKE_LOCATION" >/dev/null
+    # The DNS endpoint is IAM-gated, so it works from laptops outside the authorized networks.
+    if [ "$GKE_DNS_ENDPOINT" = "true" ]; then
+        g container clusters get-credentials "$GKE_CLUSTER" --location "$GKE_LOCATION" --dns-endpoint >/dev/null
+    else
+        g container clusters get-credentials "$GKE_CLUSTER" --location "$GKE_LOCATION" >/dev/null
+    fi
     kubectl -n "$DASH_NAMESPACE" get serviceaccount "$DASH_KSA" >/dev/null \
         || die "k8s service account $DASH_NAMESPACE/$DASH_KSA not found; apply deploy/k8s/dashboard.yaml first"
+    local gsa
+    gsa="$(kubectl -n "$DASH_NAMESPACE" get serviceaccount "$DASH_KSA" \
+        -o jsonpath='{.metadata.annotations.iam\.gke\.io/gcp-service-account}')"
+    if [ -n "$gsa" ]; then
+        # An annotated KSA authenticates as that Google account, not as its own principal.
+        g secrets add-iam-policy-binding "$SECRET_READ" --member="serviceAccount:$gsa" \
+            --role=roles/secretmanager.secretAccessor >/dev/null
+        info "$DASH_KSA is mapped to $gsa: granted it $SECRET_READ too"
+    fi
     kubectl -n "$DASH_NAMESPACE" set env "deploy/$DASH_DEPLOYMENT" \
         WAYSTONE_HQ_DB_HOST="$host" WAYSTONE_HQ_DB_NAME="$DB_NAME" WAYSTONE_HQ_DB_USER=waystone_read \
         WAYSTONE_HQ_DB_SSLMODE=require \
