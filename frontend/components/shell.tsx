@@ -16,9 +16,10 @@ import {
   Wallet,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
+import { HQ_PAGES, savedSelection } from "@/lib/hq-selection";
 
 const NAV = [
   { href: "/paper", label: "Paper trades", icon: ListOrdered },
@@ -40,6 +41,7 @@ const NAV = [
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const acct = useQuery({ queryKey: ["account"], queryFn: getAccount });
 
   function logout() {
@@ -62,6 +64,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               <Link
                 key={href}
                 href={href}
+                onClick={(e) => {
+                  const saved = HQ_PAGES.includes(href) ? savedSelection() : "";
+                  if (saved) {
+                    e.preventDefault();
+                    router.push(`${href}?${saved}`);
+                  }
+                }}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
                   active
                     ? "bg-emerald-600/20 text-emerald-300"

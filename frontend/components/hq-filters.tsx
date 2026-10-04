@@ -8,10 +8,10 @@ import { useEffect } from "react";
 import { LoaderStatus } from "@/components/hq-views";
 import QueryGate from "@/components/query-gate";
 import { getHqDaily, getHqStrategies, getHqSync, isNotFound } from "@/lib/api";
+import { saveSelection, savedSelection } from "@/lib/hq-selection";
 import type { HqStrategy } from "@/lib/types";
 
 export const ALL = "all";
-const STORE = "hq-selection";
 const DATES_REFRESH_MS = 10 * 60 * 1000;
 
 export interface HqSelection {
@@ -33,9 +33,9 @@ export function useHqSelection() {
   const query = params.toString();
 
   useEffect(() => {
-    if (query) sessionStorage.setItem(STORE, query);
+    if (query) saveSelection(query);
     else {
-      const saved = sessionStorage.getItem(STORE);
+      const saved = savedSelection();
       if (saved) router.replace(`${pathname}?${saved}`, { scroll: false });
     }
   }, [query, pathname, router]);
@@ -64,7 +64,7 @@ export function useHqSelection() {
     const d = next.date === undefined ? date : next.date;
     if (s !== ALL) q.set("strategy", s);
     if (d) q.set("date", d);
-    sessionStorage.setItem(STORE, q.toString());
+    saveSelection(q.toString());
     router.replace(`${pathname}${q.toString() ? `?${q}` : ""}`, { scroll: false });
   }
 

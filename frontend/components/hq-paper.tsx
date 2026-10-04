@@ -146,7 +146,7 @@ function DayTiles({ d }: { d: HqPaperDay }) {
         label="Loss cap used"
         value={cap && net < 0 ? frac(net / cap, 0) : "0%"}
         tone={cap && net <= cap ? "text-rose-400" : undefined}
-        sub={cap ? `cap ${usd(cap)}` : undefined}
+        sub={cap ? `${fresh.length > 1 ? "combined caps" : "cap"} ${usd(cap)}` : undefined}
       />
       <Tile
         label="Signals"
