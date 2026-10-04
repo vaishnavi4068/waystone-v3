@@ -238,3 +238,58 @@ def test_dashboard_api_reads_views_as_waystone_read(db: str, tmp_path: Path) -> 
     }
     assert client.get("/api/hq/strategies/nope", headers=auth).status_code == 404
     assert client.get("/api/hq/sync?date=bad", headers=auth).status_code == 400
+
+
+def test_mcp_hq_tools_read_views(db: str, tmp_path: Path) -> None:
+    import asyncio
+    import json
+
+    from waystone3.brokers.paper import PaperBroker
+    from waystone3.data.stub import StubDataSource
+    from waystone3.hq.reader import HqReader
+    from waystone3.mcp_server import _token, build_mcp
+    from waystone3.workspace.service import WorkspaceService
+    from waystone3.workspace.workspace import TradingWorkspace
+
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+    read_dsn = conninfo.make_conninfo(db, user="waystone_read", password="test-read")
+    ws = TradingWorkspace(StubDataSource(), PaperBroker())
+    token = ws.register_member("Manoj").token
+    mcp = build_mcp(WorkspaceService(ws), HqReader(read_dsn))
+
+    def call(name: str, args: dict[str, Any] | None = None) -> Any:
+        result = asyncio.run(mcp.call_tool(name, args or {}))
+        if isinstance(result, tuple):
+            structured = result[1]
+            return structured["result"] if set(structured) == {"result"} else structured
+        return json.loads(result[0].text)  # type: ignore[index, union-attr]
+
+    names = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert {"hq_strategies", "hq_kpis", "hq_sync", "hq_compare", "hq_daily_pnl"} <= names
+
+    reset = _token.set("bogus")
+    try:
+        with pytest.raises(Exception, match="invalid or missing token"):
+            asyncio.run(mcp.call_tool("hq_strategies", {}))
+    finally:
+        _token.reset(reset)
+
+    reset = _token.set(token)
+    try:
+        sync = call("hq_sync", {"date": "2026-10-02"})
+        assert {r["strategy_code"]: r["sync_status"] for r in sync["rows"]} == {
+            "nq_v221": "FLAG",
+            "r2_mnq": "N/A",
+        }
+        es = call("hq_compare", {"strategy": "es_v221"})
+        assert es["session_date"] == "2026-10-01" and es["sync"]["pnl_delta"] == 75.04
+        kpis = call("hq_kpis", {"strategy": "r2_mnq"})
+        assert kpis["scorecard"][-1]["overall_gate"].startswith("INSUFFICIENT SAMPLE")
+        assert call("hq_daily_pnl", {"strategy": "nq_v221"})[-1]["equity_end"] == 92016.04
+        with pytest.raises(Exception, match="unknown strategy"):
+            asyncio.run(mcp.call_tool("hq_kpis", {"strategy": "nope"}))
+    finally:
+        _token.reset(reset)

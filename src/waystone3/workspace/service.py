@@ -28,6 +28,10 @@ class WorkspaceService:
             raise AuthError("invalid or missing token")
         return name
 
+    def member(self, token: str | None) -> str:
+        """Name of the member behind ``token``; raises AuthError when it is not valid."""
+        return self._actor(token)
+
     def register(
         self, admin_token: str | None, name: str, password: str | None = None
     ) -> dict[str, Any]:
@@ -96,9 +100,7 @@ class WorkspaceService:
                 }
                 for o in report.orders
             ],
-            "decisions": [
-                {"symbol": c.symbol, "score": float(c.score)} for c in report.composites
-            ],
+            "decisions": [{"symbol": c.symbol, "score": float(c.score)} for c in report.composites],
         }
 
     async def account(self, token: str | None) -> dict[str, Any]:

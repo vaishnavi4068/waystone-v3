@@ -10,17 +10,19 @@ each tool reads; the organizer holds an admin token (``WAYSTONE_ADMIN_TOKEN``) t
 from __future__ import annotations
 
 import contextvars
+import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from waystone3.hq.reader import HqReader, hq_dsn_from_env
 from waystone3.workspace.service import AuthError, WorkspaceService
 
 _token: contextvars.ContextVar[str | None] = contextvars.ContextVar("token", default=None)
 
 
-def build_mcp(service: WorkspaceService) -> FastMCP:
+def build_mcp(service: WorkspaceService, hq: HqReader | None = None) -> FastMCP:
     mcp = FastMCP(
         "waystone-arena",
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
@@ -29,6 +31,12 @@ def build_mcp(service: WorkspaceService) -> FastMCP:
             "operates together. Set the shared strategy, run cycles (which submit real orders "
             "to the shared account on live Polygon data), and inspect account/positions/orders. "
             "Tools act on the ONE shared account and are attributed to the calling member."
+            + (
+                " The hq_* tools are read-only: futures paper trading vs backtest replay, "
+                "daily P&L and workbook KPIs for es_v221, nq_v221 and r2_mnq."
+                if hq is not None
+                else ""
+            )
         ),
     )
 
@@ -104,14 +112,22 @@ def build_mcp(service: WorkspaceService) -> FastMCP:
         """Organizer-only: add a team member and return their access token."""
         return service.register(admin_token, name)
 
+    if hq is not None:
+        from waystone3.hq.mcp_tools import register_hq_tools
+
+        def authorize() -> None:
+            service.member(_token.get())
+
+        register_hq_tools(mcp, hq, authorize)
+
     return mcp
 
 
-def build_app(service: WorkspaceService) -> Any:
+def build_app(service: WorkspaceService, hq: HqReader | None = None) -> Any:
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse, PlainTextResponse
 
-    mcp = build_mcp(service)
+    mcp = build_mcp(service, hq)
     app = mcp.streamable_http_app()
 
     class _Auth(BaseHTTPMiddleware):
@@ -136,12 +152,20 @@ def run(transport: str = "stdio", host: str = "127.0.0.1", port: int = 9100) -> 
     from waystone3.workspace.runtime import build_service_from_env
 
     service = build_service_from_env()
+    try:
+        dsn = hq_dsn_from_env()
+    except Exception as exc:  # the trading tools must still start
+        logging.getLogger(__name__).error(
+            "HQ tools disabled: could not read the password (%s)", exc
+        )
+        dsn = None
+    hq = HqReader(dsn) if dsn else None
     if transport in ("http", "streamable-http"):
         import uvicorn
 
-        uvicorn.run(build_app(service), host=host, port=port, log_level="warning")
+        uvicorn.run(build_app(service, hq), host=host, port=port, log_level="warning")
         return
-    build_mcp(service).run(transport="stdio")
+    build_mcp(service, hq).run(transport="stdio")
 
 
 __all__ = ["AuthError", "build_app", "build_mcp", "run"]

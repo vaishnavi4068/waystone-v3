@@ -10,6 +10,7 @@
 #   deploy/db/bootstrap_gcp.sh loader     # build the image, deploy the load-logs Cloud Run jobs + schedules
 #   deploy/db/bootstrap_gcp.sh backfill   # one-off: load every file already in the bucket
 #   deploy/db/bootstrap_gcp.sh dash       # point the GKE dashboard API at the database (read-only)
+#     (MCP server too: DASH_NAMESPACE=waystone-arena DASH_KSA=waystone-arena DASH_DEPLOYMENT=waystone-arena)
 #   deploy/db/bootstrap_gcp.sh summary    # print the connection details to hand over
 #
 # Every setting below can be overridden from the environment, e.g.
@@ -41,6 +42,7 @@ ENABLE_VERSIONING="${ENABLE_VERSIONING:-true}"
 SUBNET="${SUBNET:-}"
 DASH_NAMESPACE="${DASH_NAMESPACE:-waystone-dash}"
 DASH_KSA="${DASH_KSA:-waystone-dash}"
+DASH_DEPLOYMENT="${DASH_DEPLOYMENT:-waystone-dash-api}"
 AR_REPO="${AR_REPO:-waystone}"
 LOADER_IMAGE="${LOADER_IMAGE:-}"
 PAPER_LOAD_CRON="${PAPER_LOAD_CRON:-35 * * * *}"
@@ -460,12 +462,12 @@ wire_dashboard() {
     g container clusters get-credentials "$GKE_CLUSTER" --location "$GKE_LOCATION" >/dev/null
     kubectl -n "$DASH_NAMESPACE" get serviceaccount "$DASH_KSA" >/dev/null \
         || die "k8s service account $DASH_NAMESPACE/$DASH_KSA not found; apply deploy/k8s/dashboard.yaml first"
-    kubectl -n "$DASH_NAMESPACE" set env deploy/waystone-dash-api \
+    kubectl -n "$DASH_NAMESPACE" set env "deploy/$DASH_DEPLOYMENT" \
         WAYSTONE_HQ_DB_HOST="$host" WAYSTONE_HQ_DB_NAME="$DB_NAME" WAYSTONE_HQ_DB_USER=waystone_read \
         WAYSTONE_HQ_DB_SSLMODE=require \
         WAYSTONE_HQ_DB_PASSWORD_SECRET="projects/$PROJECT_ID/secrets/$SECRET_READ/versions/latest"
-    kubectl -n "$DASH_NAMESPACE" rollout status deploy/waystone-dash-api --timeout=180s
-    info "API pod now reads api.* views on $host as waystone_read"
+    kubectl -n "$DASH_NAMESPACE" rollout status "deploy/$DASH_DEPLOYMENT" --timeout=180s
+    info "$DASH_DEPLOYMENT now reads api.* views on $host as waystone_read"
 }
 
 summary() {
