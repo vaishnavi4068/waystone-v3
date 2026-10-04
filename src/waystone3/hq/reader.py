@@ -6,8 +6,9 @@ Connections are opened per call as ``waystone_read`` with read-only transactions
 
 from __future__ import annotations
 
+import base64
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
@@ -19,21 +20,44 @@ from psycopg.rows import dict_row
 KPI_WINDOWS = ("DAY", "WEEK", "MTD", "ITD")
 
 
-def hq_dsn_from_env(env: dict[str, str] | None = None) -> str | None:
-    """``WAYSTONE_HQ_DSN``, or one built from ``WAYSTONE_HQ_DB_*``; None when unset."""
+def secret_manager_value(resource: str) -> str:
+    """Read ``projects/P/secrets/S/versions/V`` with the workload's own credentials."""
+    import google.auth
+    from google.auth.transport.requests import AuthorizedSession
+
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    session = AuthorizedSession(credentials)  # type: ignore[no-untyped-call]
+    response = session.get(f"https://secretmanager.googleapis.com/v1/{resource}:access", timeout=10)
+    response.raise_for_status()
+    return base64.b64decode(response.json()["payload"]["data"]).decode()
+
+
+def hq_dsn_from_env(
+    env: Mapping[str, str] | None = None,
+    fetch_secret: Callable[[str], str] = secret_manager_value,
+) -> str | None:
+    """``WAYSTONE_HQ_DSN``, or one built from ``WAYSTONE_HQ_DB_*``; None when unset.
+
+    The password comes from ``WAYSTONE_HQ_DB_PASSWORD`` or, when that is empty, from the
+    Secret Manager version named by ``WAYSTONE_HQ_DB_PASSWORD_SECRET``.
+    """
     e = os.environ if env is None else env
     dsn = e.get("WAYSTONE_HQ_DSN", "").strip()
     if dsn:
         return dsn
     host = e.get("WAYSTONE_HQ_DB_HOST", "").strip()
-    if not host:
+    if not host or host.startswith("__"):  # unfilled manifest placeholder
         return None
+    password = e.get("WAYSTONE_HQ_DB_PASSWORD", "")
+    secret = e.get("WAYSTONE_HQ_DB_PASSWORD_SECRET", "").strip()
+    if not password and secret:
+        password = fetch_secret(secret)
     return make_conninfo(
         host=host,
         port=e.get("WAYSTONE_HQ_DB_PORT", "5432"),
         dbname=e.get("WAYSTONE_HQ_DB_NAME", "waystone"),
         user=e.get("WAYSTONE_HQ_DB_USER", "waystone_read"),
-        password=e.get("WAYSTONE_HQ_DB_PASSWORD", ""),
+        password=password,
         sslmode=e.get("WAYSTONE_HQ_DB_SSLMODE", "require"),
     )
 

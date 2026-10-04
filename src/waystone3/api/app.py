@@ -9,6 +9,7 @@ PaperBroker in tests) is read live. Algo onboarding is POST/PUT/DELETE on ``/api
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -52,6 +53,8 @@ from waystone3.runner.cycle import score_all
 from waystone3.signals.registry import build_contributor
 from waystone3.workspace.runtime import build_workspace_from_env
 from waystone3.workspace.workspace import TradingWorkspace
+
+_log = logging.getLogger(__name__)
 
 
 def _symbols(raw: str) -> list[str]:
@@ -132,8 +135,14 @@ def build_app(
     store = report_store if report_store is not None else build_report_store_from_env()
     strategies = research_store(store)
     paper = IbkrSettings().ibkr_paper if ibkr_paper is None else ibkr_paper
-    hq_dsn = hq_dsn_from_env()
-    hq = hq_reader if hq_reader is not None else (HqReader(hq_dsn) if hq_dsn else None)
+    hq = hq_reader
+    if hq is None:
+        try:
+            hq_dsn = hq_dsn_from_env()
+        except Exception as exc:  # the rest of the dashboard must still start
+            _log.error("HQ database disabled: could not read its password (%s)", exc)
+            hq_dsn = None
+        hq = HqReader(hq_dsn) if hq_dsn else None
 
     app = FastAPI(title="Waystone v3 — read-only dashboard API")
     app.add_middleware(

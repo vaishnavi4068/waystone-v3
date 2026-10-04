@@ -106,3 +106,28 @@ def test_hq_dsn_from_env() -> None:
     dsn = hq_dsn_from_env({"WAYSTONE_HQ_DB_HOST": "10.1.2.3", "WAYSTONE_HQ_DB_PASSWORD": "p w"})
     assert dsn is not None
     assert "host=10.1.2.3" in dsn and "user=waystone_read" in dsn and "sslmode=require" in dsn
+
+
+SECRET = "projects/p/secrets/waystone-db-read-password/versions/latest"
+
+
+def test_hq_password_from_secret_manager() -> None:
+    from waystone3.hq.reader import hq_dsn_from_env
+
+    seen: list[str] = []
+
+    def fetch(resource: str) -> str:
+        seen.append(resource)
+        return "from-sm"
+
+    env = {
+        "WAYSTONE_HQ_DB_HOST": "10.1.2.3",
+        "WAYSTONE_HQ_DB_PASSWORD_SECRET": SECRET,
+    }
+    dsn = hq_dsn_from_env(env, fetch_secret=fetch)
+    assert dsn is not None and "password=from-sm" in dsn
+    assert seen == [SECRET]
+    assert "password=direct" in (
+        hq_dsn_from_env({**env, "WAYSTONE_HQ_DB_PASSWORD": "direct"}, fetch_secret=fetch) or ""
+    )
+    assert len(seen) == 1
