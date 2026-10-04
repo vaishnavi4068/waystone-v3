@@ -84,8 +84,9 @@ flock -n 9 || { echo "previous $MODE sync still running; skipping"; exit 0; }
 
 # Live SQLite files can be mid-write, so they are never copied. The patterns
 # must not start with '^': gcloud reads a leading ^...^ as a list delimiter.
-PAPER_EXCLUDE='(.*/)?(state(/.*)?|__pycache__/.*|[^/]*\.(zip|db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
-BACKTEST_EXCLUDE='(.*/)?(__pycache__/.*|[^/]*\.(zip|csv|db|db-journal|db-wal|db-shm|py|pyc|tmp|swp))$'
+# "\.db([.-].*)?" also covers SQLite sidecars and renamed copies like v221_futures.db.old_2026-09-24.
+PAPER_EXCLUDE='(.*/)?(state(/.*)?|__pycache__/.*|[^/]*\.db([.-][^/]*)?|[^/]*\.(zip|py|pyc|tmp|swp))$'
+BACKTEST_EXCLUDE='(.*/)?(__pycache__/.*|[^/]*\.db([.-][^/]*)?|[^/]*\.(zip|csv|py|pyc|tmp|swp))$'
 rc=0
 sync_dir() {
     local src="$1" dst="$2" exclude="$3"

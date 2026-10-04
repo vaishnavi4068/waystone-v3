@@ -12,8 +12,8 @@ VALUES
      'V221-BHQ-BASELINE-v3, 2 contracts, flatten 15:55 ET. Log clientId 53 (registry default is 2).'),
     ('nq_v221', 'NQ V221', 'future', 'NQ', 'nq_futures',
      'raw/paper/nq_v221/', 'raw/backtest/', 'NQ_',
-     NULL, 1, NULL,
-     'Paper logs: /root/NQ_FUTURE/v221_logs on the VM. CONFIRM: broker account, paper start date.'),
+     'DUR842609', 77, DATE '2026-09-21',
+     'V221-BHQ-BASELINE-v3 (vxn_revisit.py Variant C port), 2 contracts, flatten 15:55 ET. Paper logs: /root/NQ_FUTURE/v221_logs. Shares IB account DUR842609 with es_v221 and r2_mnq.'),
     ('r2_mnq', 'R2 MNQ (best risk-adj)', 'future', 'MNQ', 'r2_mnq',
      'raw/paper/r2_mnq/', 'raw/backtest/', 'R2_',
      'DUR842609', 88, DATE '2026-09-25',
@@ -29,7 +29,10 @@ ON CONFLICT (strategy_code) DO UPDATE SET
     gcs_paper_prefix = EXCLUDED.gcs_paper_prefix,
     gcs_backtest_prefix = EXCLUDED.gcs_backtest_prefix,
     backtest_file_prefix = EXCLUDED.backtest_file_prefix,
-    broker_client_id = EXCLUDED.broker_client_id;
+    broker_account = EXCLUDED.broker_account,
+    broker_client_id = EXCLUDED.broker_client_id,
+    paper_start_date = EXCLUDED.paper_start_date,
+    notes = EXCLUDED.notes;
 
 -- ES values are the workbook's "ES 8. Settings" tab.
 INSERT INTO ref.strategy_settings (strategy_id, valid_from, starting_capital, point_value, tick_size,
@@ -42,8 +45,8 @@ SELECT s.strategy_id, v.valid_from, v.capital, v.point_value, v.tick, v.contract
 FROM (VALUES
     ('es_v221', DATE '2026-09-24', 100000.00, 50.0, 0.25, 2, 4.50, 12.50, 1380, 18, TIME '15:55',
      -2500.00, 12, 961, 'From ES_Futures_KPI_Dashboard.xlsx Settings tab.'),
-    ('nq_v221', DATE '2026-09-01', 100000.00, 20.0, 0.25, 2, 4.50, 5.00, 1380, 18, TIME '15:55',
-     -2500.00, 12, 961, 'CONFIRM: copied from ES with NQ point value ($20).'),
+    ('nq_v221', DATE '2026-09-01', 100000.00, 20.0, 0.25, 2, 4.48, 5.00, 1380, 18, TIME '15:55',
+     -2500.00, 12, 961, 'From the paper log: IBKR $2.24/contract/side, backtest slip 0.125pt/side. CONFIRM: starting capital.'),
     ('r2_mnq', DATE '2026-09-25', 100000.00, 2.0, 0.25, 1, 1.22, 0.50, 1380, 18, TIME '15:55',
      -2500.00, 12, 961, 'From the paper log: IBKR $0.61/side, backtest slip 0.125pt/side. CONFIRM: starting capital.'),
     ('s5_options', DATE '2026-09-01', 100000.00, 100.0, 0.01, 1, 1.30, 4.00, 390, 18, NULL,
@@ -51,11 +54,26 @@ FROM (VALUES
 ) AS v(code, valid_from, capital, point_value, tick, contracts, comm, slip, session_minutes,
        roll_hour, flatten, loss_cap, max_trades, bars, notes)
 JOIN ref.strategy s ON s.strategy_code = v.code
-ON CONFLICT (strategy_id, valid_from) DO NOTHING;
+ON CONFLICT (strategy_id, valid_from) DO UPDATE SET
+    starting_capital = EXCLUDED.starting_capital,
+    point_value = EXCLUDED.point_value,
+    tick_size = EXCLUDED.tick_size,
+    default_contracts = EXCLUDED.default_contracts,
+    commission_rt_per_contract = EXCLUDED.commission_rt_per_contract,
+    model_slip_rt_per_contract = EXCLUDED.model_slip_rt_per_contract,
+    flatten_time = EXCLUDED.flatten_time,
+    daily_loss_cap = EXCLUDED.daily_loss_cap,
+    max_trades_per_day = EXCLUDED.max_trades_per_day,
+    notes = EXCLUDED.notes;
 
 INSERT INTO ref.strategy_config (strategy_id, params_fp, config_label, first_seen_date)
 SELECT strategy_id, 'f36bb2a138', 'V221-BHQ-BASELINE-v3', DATE '2026-10-02'
 FROM ref.strategy WHERE strategy_code = 'es_v221'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO ref.strategy_config (strategy_id, params_fp, config_label, first_seen_date)
+SELECT strategy_id, '7636aa0c66', 'V221-BHQ-BASELINE-v3 (NQ, vxn_revisit.py Variant C port)', DATE '2026-10-02'
+FROM ref.strategy WHERE strategy_code = 'nq_v221'
 ON CONFLICT DO NOTHING;
 
 INSERT INTO ref.strategy_config (strategy_id, params_fp, config_label, first_seen_date)
