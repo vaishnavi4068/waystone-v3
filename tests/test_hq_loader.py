@@ -311,3 +311,55 @@ def test_mcp_hq_tools_read_views(db: str, tmp_path: Path) -> None:
             asyncio.run(mcp.call_tool("hq_kpis", {"strategy": "nope"}))
     finally:
         _token.reset(reset)
+
+
+def test_dashboard_api_serves_read_only_hq_mcp(db: str, tmp_path: Path) -> None:
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from waystone3.api.app import build_app
+    from waystone3.brokers.paper import PaperBroker
+    from waystone3.data.stub import StubDataSource
+    from waystone3.hq.reader import HqReader
+    from waystone3.workspace.workspace import TradingWorkspace
+
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+    read_dsn = conninfo.make_conninfo(db, user="waystone_read", password="test-read")
+    ws = TradingWorkspace(StubDataSource(), PaperBroker())
+    token = ws.register_member("Manoj").token
+    app = build_app(workspace_factory=lambda: ws, hq_reader=HqReader(read_dsn))
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+
+    def rpc(method: str, params: dict[str, object], auth: str | None = token) -> Any:
+        h = {**headers, **({"Authorization": f"Bearer {auth}"} if auth else {})}
+        body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        return client.post("/api/mcp", headers=h, json=body)
+
+    with TestClient(app) as client:
+        assert rpc("tools/list", {}, auth=None).status_code == 401
+        assert rpc("tools/list", {}, auth="wrong").status_code == 401
+        init = rpc(
+            "initialize",
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"},
+            },
+        )
+        assert (
+            init.status_code == 200 and init.json()["result"]["serverInfo"]["name"] == "waystone-hq"
+        )
+        tools = {t["name"] for t in rpc("tools/list", {}).json()["result"]["tools"]}
+        assert {"hq_strategies", "hq_sync", "hq_compare", "hq_paper_day"} <= tools
+        assert not tools & {"set_strategy", "run_cycle", "register_member"}
+        call = rpc("tools/call", {"name": "hq_sync", "arguments": {"date": "2026-10-02"}}).json()
+        payload = json.loads(call["result"]["content"][0]["text"])
+        assert {r["strategy_code"] for r in payload["rows"]} >= {"nq_v221", "r2_mnq"}
+        assert client.get("/api/health").json() == {"ok": True}
