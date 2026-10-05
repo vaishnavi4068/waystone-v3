@@ -10,7 +10,8 @@ PaperBroker in tests) is read live. Algo onboarding is POST/PUT/DELETE on ``/api
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -144,7 +145,29 @@ def build_app(
             hq_dsn = None
         hq = HqReader(hq_dsn) if hq_dsn else None
 
-    app = FastAPI(title="Waystone v3 — read-only dashboard API")
+    def _authenticate(token: str) -> str | None:
+        return factory().authenticate(token) if token else None
+
+    hq_mcp = None
+    if hq is not None:
+        from waystone3.hq.mcp_http import build_hq_mcp
+
+        hq_mcp = build_hq_mcp(hq, _authenticate)
+        hq_mcp_app = hq_mcp.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if hq_mcp is None:
+            yield
+            return
+        async with hq_mcp.session_manager.run():
+            yield
+
+    app = FastAPI(title="Waystone v3 — read-only dashboard API", lifespan=lifespan)
+    if hq_mcp is not None:
+        from waystone3.hq.mcp_http import HqMcpMount
+
+        app.add_middleware(HqMcpMount, mcp_app=hq_mcp_app, authenticate=_authenticate)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

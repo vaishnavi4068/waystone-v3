@@ -91,14 +91,19 @@ This step:
 Open `https://<dash domain>/hq`. You should see a card for each of ES V221, NQ V221 and
 R2 MNQ, plus the live-vs-backtest table.
 
-## 4. MCP server (only if waystone-arena is deployed)
+## 4. MCP for Claude
+
+The dashboard API serves the read-only `hq_*` tools at `https://<dash domain>/api/mcp`, with
+the dashboard login token as the bearer. See [CLAUDE_CONNECTOR.md](../CLAUDE_CONNECTOR.md).
+
+If the separate trading Arena (`waystone-arena`) is deployed, give it the same tools with:
 
 ```sh
 DASH_NAMESPACE=waystone-arena DASH_KSA=waystone-arena DASH_DEPLOYMENT=waystone-arena \
   deploy/db/bootstrap_gcp.sh dash
 ```
 
-Claude then sees the read-only tools `hq_strategies`, `hq_sync`, `hq_compare`, `hq_kpis`,
+Claude then sees the read-only tools `hq_strategies`, `hq_sync`, `hq_compare`, `hq_paper_day`, `hq_kpis`,
 `hq_daily_pnl`, `hq_trades`, `hq_returns` and `hq_load_status`.
 
 ## 5. Backfill and check against the workbook
