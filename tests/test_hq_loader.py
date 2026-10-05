@@ -363,3 +363,60 @@ def test_dashboard_api_serves_read_only_hq_mcp(db: str, tmp_path: Path) -> None:
         payload = json.loads(call["result"]["content"][0]["text"])
         assert {r["strategy_code"] for r in payload["rows"]} >= {"nq_v221", "r2_mnq"}
         assert client.get("/api/health").json() == {"ok": True}
+
+
+def test_recompute_drops_stale_duplicate_trades_and_accepts_gross_summary(
+    db: str, tmp_path: Path
+) -> None:
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO core.paper_trade (strategy_id, session_date, trade_no, direction, "
+                "contracts, entry_ts, exit_ts, entry_px, exit_px, points, gross_pnl, commission, "
+                "net_pnl, file_id) "
+                "SELECT strategy_id, session_date, trade_no, direction, contracts, "
+                "entry_ts + interval '67 milliseconds', exit_ts + interval '467 milliseconds', "
+                "entry_px, exit_px, points, gross_pnl, commission, net_pnl, NULL "
+                "FROM core.paper_trade t JOIN ref.strategy s USING (strategy_id) "
+                "WHERE s.strategy_code = 'nq_v221' AND t.session_date = '2026-10-02'"
+            )
+            cur.execute(
+                "UPDATE ops.day_status d SET paper_status = 'PARTIAL', checks = jsonb_set("
+                "checks, '{paper,net_reported}', to_jsonb((SELECT sum(gross_pnl) "
+                "FROM core.paper_trade t WHERE t.strategy_id = d.strategy_id "
+                "AND t.session_date = d.session_date AND t.file_id IS NOT NULL))) "
+                "FROM ref.strategy s WHERE s.strategy_id = d.strategy_id "
+                "AND s.strategy_code = 'nq_v221' AND d.session_date = '2026-10-02'"
+            )
+        conn.commit()
+        assert (
+            _rows(
+                db,
+                "SELECT live_net_pnl FROM api.v_daily_sync "
+                "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
+            )[0]["live_net_pnl"]
+            is not None
+        )
+        Loader(conn, LocalSource(src), now=NOW).run("recompute", ["nq_v221"])
+        trades = _rows(
+            db,
+            "SELECT trade_no FROM api.v_paper_trades "
+            "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
+        )
+        assert [t["trade_no"] for t in trades] == [9]
+        sync = _rows(
+            db,
+            "SELECT live_trades, live_net_pnl FROM api.v_daily_sync "
+            "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
+        )[0]
+        assert sync["live_trades"] == 1 and float(sync["live_net_pnl"]) == -7983.96
+        status = _rows(
+            db,
+            "SELECT paper_status, checks->'paper' AS paper FROM api.v_day_status "
+            "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
+        )[0]
+        assert status["paper_status"] == "FINAL"
+        assert status["paper"]["net_match"] is True and status["paper"]["net_basis"] == "gross"

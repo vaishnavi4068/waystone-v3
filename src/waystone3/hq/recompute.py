@@ -18,6 +18,7 @@ from waystone3.hq.calendar import NY
 from waystone3.hq.compare import Match, SyncRow, TradeRef, daily_sync, match_trades
 from waystone3.hq.db import Conn, Cursor, Row, copy_rows, delete_for_strategy, upsert
 from waystone3.hq.refdata import RefData, Strategy, dec
+from waystone3.hq.v221_log import reconcile_summary
 
 BACKTEST_DUE = time(17, 30)
 _KPI_TABLES = (
@@ -72,14 +73,84 @@ def backtest_status(strategy: Strategy, day: date, run: Row | None, now: datetim
     return "MISSING" if now >= due else "PENDING"
 
 
+_PAPER_TABLES = ("paper_trade", "paper_fill", "signal_event", "ops_event", "account_snapshot")
+
+
+def drop_stale_paper_rows(cur: Cursor, sid: int) -> int:
+    """Keep only rows written from the current paper log of each session.
+
+    Rows whose file was replaced under another name, or whose file record is gone, would
+    otherwise be counted alongside the current load (the same trade twice).
+    """
+    dropped = 0
+    for table in _PAPER_TABLES:
+        cur.execute(
+            f"DELETE FROM core.{table} x WHERE x.strategy_id = %s AND ("
+            "x.file_id IS NULL OR x.file_id NOT IN ("
+            "SELECT DISTINCT ON (f.session_date) f.file_id FROM raw.source_file f "
+            "WHERE f.strategy_id = %s AND f.source_kind = 'paper_log' AND f.is_current "
+            "ORDER BY f.session_date, f.loaded_at DESC, f.file_id DESC))",
+            (sid, sid),
+        )
+        dropped += cur.rowcount
+    return dropped
+
+
+def _recheck_paper_days(cur: Cursor, sid: int, paper_rows: list[Row]) -> None:
+    """Re-run the DAILY SUMMARY reconciliation against the trades now stored."""
+    cur.execute(
+        "SELECT session_date, paper_status, checks->'paper' AS paper FROM ops.day_status "
+        "WHERE strategy_id = %s AND checks ? 'paper'",
+        (sid,),
+    )
+    for status in cur.fetchall():
+        stored = status["paper"] or {}
+        day = status["session_date"]
+        todays = [r for r in paper_rows if r["session_date"] == day]
+        net = sum((dec(r["net_pnl"]) or Decimal(0) for r in todays), Decimal(0))
+        gross = (
+            None
+            if any(r["gross_pnl"] is None for r in todays)
+            else sum((dec(r["gross_pnl"]) or Decimal(0) for r in todays), Decimal(0))
+        )
+        reported = stored.get("net_reported")
+        checks = {
+            **stored,
+            "trades_parsed": len(todays),
+            **reconcile_summary(
+                len(todays),
+                net,
+                gross,
+                stored.get("closed_reported"),
+                None if reported is None else Decimal(str(reported)),
+            ),
+        }
+        consistent = checks.get("closed_match", True) is not False and (
+            checks.get("net_match", True) is not False
+        )
+        paper_status = status["paper_status"]
+        if paper_status == "PARTIAL" and consistent:
+            paper_status = "FINAL" if checks.get("summary_present") else "PRELIMINARY"
+        elif paper_status in ("FINAL", "PRELIMINARY", "INTRADAY") and not consistent:
+            paper_status = "PARTIAL"
+        cur.execute(
+            "UPDATE ops.day_status SET paper_status = %s, "
+            "checks = checks || jsonb_build_object('paper', %s::jsonb) "
+            "WHERE strategy_id = %s AND session_date = %s",
+            (paper_status, Jsonb(checks), sid, day),
+        )
+
+
 def recompute(conn: Conn, ref: RefData, strategy: Strategy, now: datetime) -> None:
     sid = strategy.strategy_id
     with conn.cursor() as cur:
+        drop_stale_paper_rows(cur, sid)
         cur.execute(
             "SELECT * FROM core.paper_trade WHERE strategy_id = %s AND is_closed ORDER BY entry_ts",
             (sid,),
         )
         paper_rows = cur.fetchall()
+        _recheck_paper_days(cur, sid, paper_rows)
         cur.execute(
             "SELECT * FROM core.backtest_trade WHERE strategy_id = %s ORDER BY entry_ts", (sid,)
         )

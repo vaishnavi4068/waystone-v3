@@ -250,21 +250,33 @@ class PaperDay:
     def checks(self) -> dict[str, object]:
         """Reconciles the parsed trades with the engine's own DAILY SUMMARY."""
         closed = [t for t in self.trades if t.closed]
-        parsed_net = sum((t.net_pnl or Decimal(0) for t in closed), Decimal(0))
+        net = sum((t.net_pnl or Decimal(0) for t in closed), Decimal(0))
+        grosses = [
+            t.gross_pnl
+            if t.gross_pnl is not None
+            else (
+                t.net_pnl + t.commission
+                if t.net_pnl is not None and t.commission is not None
+                else None
+            )
+            for t in closed
+        ]
+        gross = None if None in grosses else sum((g for g in grosses if g is not None), Decimal(0))
         out: dict[str, object] = {
             "trades_parsed": len(closed),
             "open_trades": len(self.trades) - len(closed),
-            "net_parsed": float(parsed_net),
             "unparsed_lines": len(self.unparsed),
             "summary_present": self.summary is not None,
         }
-        if self.summary is not None:
-            if self.summary.closed is not None:
-                out["closed_reported"] = self.summary.closed
-                out["closed_match"] = self.summary.closed == len(closed)
-            if self.summary.net_pnl is not None:
-                out["net_reported"] = float(self.summary.net_pnl)
-                out["net_match"] = abs(self.summary.net_pnl - parsed_net) <= Decimal("1")
+        out.update(
+            reconcile_summary(
+                len(closed),
+                net,
+                gross,
+                None if self.summary is None else self.summary.closed,
+                None if self.summary is None else self.summary.net_pnl,
+            )
+        )
         return out
 
     @property
@@ -274,6 +286,36 @@ class PaperDay:
             checks.get("closed_match", True) is not False
             and checks.get("net_match", True) is not False
         )
+
+
+def reconcile_summary(
+    closed: int,
+    net: Decimal,
+    gross: Decimal | None,
+    closed_reported: int | None,
+    pnl_reported: Decimal | None,
+) -> dict[str, object]:
+    """Compare stored trades with the DAILY SUMMARY line.
+
+    The V221 engine reports its day P&L before commission, so the reported figure matches
+    either the net or the gross sum; ``net_basis`` records which.
+    """
+    out: dict[str, object] = {"net_parsed": float(net)}
+    if gross is not None:
+        out["gross_parsed"] = float(gross)
+    if closed_reported is not None:
+        out["closed_reported"] = closed_reported
+        out["closed_match"] = closed_reported == closed
+    if pnl_reported is not None:
+        out["net_reported"] = float(pnl_reported)
+        tolerance = Decimal("1")
+        if abs(pnl_reported - net) <= tolerance:
+            out["net_match"], out["net_basis"] = True, "net"
+        elif gross is not None and abs(pnl_reported - gross) <= tolerance:
+            out["net_match"], out["net_basis"] = True, "gross"
+        else:
+            out["net_match"] = False
+    return out
 
 
 def _split_lines(text: str, file_date: date) -> list[LogLine]:
