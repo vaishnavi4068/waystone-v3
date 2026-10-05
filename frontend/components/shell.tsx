@@ -22,6 +22,7 @@ import { useEffect, useState } from "react";
 import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
 import { HQ_PAGES, onSelectionChange, savedSelection } from "@/lib/hq-selection";
 
+// Hidden pages stay routable (and their APIs wired); flip `hidden` to bring them back.
 const NAV = [
   { href: "/paper", label: "Paper trades", icon: ListOrdered },
   { href: "/daily", label: "Daily", icon: CalendarDays },
@@ -29,15 +30,15 @@ const NAV = [
   { href: "/strategies", label: "Strategies", icon: BookOpen },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/options-kpis", label: "Options KPIs", icon: Gauge },
-  { href: "/", label: "Account", icon: Wallet },
-  { href: "/positions", label: "Positions", icon: BarChart3 },
-  { href: "/orders", label: "Orders", icon: ListOrdered },
-  { href: "/activity", label: "Activity", icon: Activity },
+  { href: "/account", label: "Account", icon: Wallet, hidden: true },
+  { href: "/positions", label: "Positions", icon: BarChart3, hidden: true },
+  { href: "/orders", label: "Orders", icon: ListOrdered, hidden: true },
+  { href: "/activity", label: "Activity", icon: Activity, hidden: true },
   { href: "/ibkr", label: "IBKR report", icon: CalendarDays },
-  { href: "/signals", label: "Signals", icon: LineChart },
-  { href: "/charts", label: "Charts", icon: CandlestickChart },
-  { href: "/backtests", label: "Backtests", icon: BarChart3 },
-  { href: "/news", label: "News", icon: Newspaper },
+  { href: "/signals", label: "Signals", icon: LineChart, hidden: true },
+  { href: "/charts", label: "Charts", icon: CandlestickChart, hidden: true },
+  { href: "/backtests", label: "Backtests", icon: BarChart3, hidden: true },
+  { href: "/news", label: "News", icon: Newspaper, hidden: true },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -62,7 +63,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <div className="text-xs text-slate-500">IBKR live</div>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {NAV.filter((n) => !n.hidden).map(({ href, label, icon: Icon }) => {
             const active =
               href === "/strategies" ? pathname.startsWith(href) : pathname === href;
             return (
