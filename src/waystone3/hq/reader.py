@@ -179,6 +179,84 @@ class HqReader:
             (code, start, start, end, end),
         )
 
+    def paper_dates(self, code: str | None = None) -> list[str]:
+        rows = self._rows(
+            "SELECT DISTINCT session_date FROM api.v_day_status WHERE paper_status <> 'NONE' "
+            "AND (%s::text IS NULL OR strategy_code = %s) ORDER BY 1",
+            (code, code),
+        )
+        return [r["session_date"] for r in rows]
+
+    def paper_day(self, code: str | None, day: date) -> dict[str, Any]:
+        """Everything the paper engine did on one session: trades, fills, signals, events.
+
+        ``freshness`` says how current it is: when the VM last synced the log to GCS, the
+        last timestamped line the engine wrote, and when the loader read it.
+        """
+        scope = (code, code, day)
+        where = "(%s::text IS NULL OR s.strategy_code = %s) AND {alias}.session_date = %s"
+        trades = self._rows(
+            "SELECT * FROM api.v_paper_trades s WHERE "
+            + where.format(alias="s")
+            + " ORDER BY entry_ts, strategy_code",
+            scope,
+        )
+        fills = self._rows(
+            "SELECT s.strategy_code, f.fill_ts, i.symbol AS instrument, f.action, f.quantity, "
+            "f.price, f.commission, f.leg_role, f.exec_id, f.order_ref "
+            "FROM core.paper_fill f JOIN ref.strategy s USING (strategy_id) "
+            "LEFT JOIN ref.instrument i USING (instrument_id) WHERE "
+            + where.format(alias="f")
+            + " ORDER BY f.fill_ts, s.strategy_code",
+            scope,
+        )
+        signals = self._rows(
+            "SELECT s.strategy_code, e.signal_bar_ts, e.side, e.signal_px, e.outcome, "
+            "e.block_reason FROM core.signal_event e JOIN ref.strategy s USING (strategy_id) "
+            "WHERE " + where.format(alias="e") + " ORDER BY e.signal_bar_ts, s.strategy_code",
+            scope,
+        )
+        events = self._rows(
+            "SELECT s.strategy_code, o.event_ts, o.category, o.code, o.severity, o.message "
+            "FROM core.ops_event o JOIN ref.strategy s USING (strategy_id) "
+            "WHERE " + where.format(alias="o") + " ORDER BY o.event_ts, s.strategy_code",
+            scope,
+        )
+        freshness = self._rows(
+            "SELECT s.strategy_code, s.display_name, d.paper_status, d.paper_loaded_at, "
+            "d.finalized_at, d.checks->'paper' AS checks, f.gcs_uri, f.gcs_updated_at, "
+            "f.size_bytes, f.loaded_at AS file_loaded_at, f.parse_status, "
+            "(SELECT max(l.line_ts) FROM raw.source_line l WHERE l.file_id = f.file_id) "
+            "AS last_log_line_ts, "
+            "ss.daily_loss_cap, ss.starting_capital, ss.max_trades_per_day, ss.flatten_time "
+            "FROM ref.strategy s "
+            "LEFT JOIN ops.day_status d ON d.strategy_id = s.strategy_id "
+            "AND d.session_date = %s "
+            "LEFT JOIN LATERAL (SELECT * FROM raw.source_file rf "
+            "WHERE rf.strategy_id = s.strategy_id AND rf.session_date = %s "
+            "AND rf.source_kind = 'paper_log' AND rf.is_current "
+            "ORDER BY rf.loaded_at DESC LIMIT 1) f ON true "
+            "LEFT JOIN LATERAL (SELECT * FROM ref.strategy_settings x "
+            "WHERE x.strategy_id = s.strategy_id AND x.valid_from <= %s "
+            "ORDER BY x.valid_from DESC LIMIT 1) ss ON true "
+            "WHERE s.is_active AND s.asset_class = 'future' "
+            "AND (%s::text IS NULL OR s.strategy_code = %s) ORDER BY s.strategy_id",
+            (day, day, day, code, code),
+        )
+        return {
+            "session_date": day.isoformat(),
+            "strategy_code": code,
+            "freshness": freshness,
+            "last_paper_load": self._one(
+                "SELECT * FROM api.v_load_health WHERE job IN ('paper', 'backfill') "
+                "ORDER BY finished_at DESC NULLS LAST LIMIT 1"
+            ),
+            "trades": trades,
+            "fills": fills,
+            "signals": signals,
+            "events": events,
+        }
+
     def daily_sync(
         self, code: str | None = None, start: date | None = None, end: date | None = None
     ) -> list[dict[str, Any]]:
@@ -216,6 +294,53 @@ class HqReader:
             "matches": matches,
             "paper_trades": self.paper_trades(code, day, day),
             "backtest_trades": backtest,
+            "context": self.day_context(code, day),
+        }
+
+    def day_context(self, code: str, day: date) -> dict[str, Any]:
+        """Settings, backtest header, signal counts and log checks behind one session."""
+        settings = self._one(
+            "SELECT ss.point_value, ss.default_contracts, ss.commission_rt_per_contract, "
+            "ss.model_slip_rt_per_contract, ss.flatten_time, ss.daily_loss_cap "
+            "FROM ref.strategy_settings ss JOIN ref.strategy s USING (strategy_id) "
+            "WHERE s.strategy_code = %s AND ss.valid_from <= %s "
+            "ORDER BY ss.valid_from DESC LIMIT 1",
+            (code, day),
+        )
+        run = self._one(
+            "SELECT r.config_label, r.params_fp, r.point_value, r.flatten_time, r.daily_loss_cap, "
+            "r.trades_reported, r.total_net_reported, r.status, r.bar_count "
+            "FROM core.backtest_run r JOIN ref.strategy s USING (strategy_id) "
+            "WHERE s.strategy_code = %s AND r.session_date = %s",
+            (code, day),
+        )
+        live_params = self._one(
+            "SELECT c.params_fp, c.config_label, c.params "
+            "FROM core.paper_trade t JOIN ref.strategy s USING (strategy_id) "
+            "JOIN ref.strategy_config c "
+            "ON c.strategy_id = t.strategy_id AND c.params_fp = t.params_fp "
+            "WHERE s.strategy_code = %s AND t.session_date = %s LIMIT 1",
+            (code, day),
+        )
+        signals = self._rows(
+            "SELECT e.outcome, e.block_reason, count(*) AS n "
+            "FROM core.signal_event e JOIN ref.strategy s USING (strategy_id) "
+            "WHERE s.strategy_code = %s AND e.session_date = %s "
+            "GROUP BY 1, 2 ORDER BY 1, 2",
+            (code, day),
+        )
+        status = self._one(
+            "SELECT paper_status, backtest_status, sync_status, checks, paper_loaded_at, "
+            "backtest_loaded_at, finalized_at FROM api.v_day_status "
+            "WHERE strategy_code = %s AND session_date = %s",
+            (code, day),
+        )
+        return {
+            "settings": settings,
+            "backtest_run": run,
+            "live_params": live_params,
+            "signals": signals,
+            "day_status": status,
         }
 
     def returns(self, code: str) -> dict[str, Any]:

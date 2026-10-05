@@ -54,6 +54,19 @@ def register_hq_tools(mcp: FastMCP, reader: HqReader, authorize: Callable[[], No
         return {"session_date": day.isoformat() if day else None, "dates": dates, "rows": rows}
 
     @mcp.tool()
+    def hq_paper_day(strategy: str | None = None, date: str | None = None) -> dict[str, Any]:
+        """Paper engine activity for one session (default latest), one or all strategies:
+        trades (open and closed), IB fills, signals entered/blocked, engine events, and data
+        freshness (last VM sync, last log line, when the loader read it)."""
+        authorize()
+        code = known(strategy) if strategy else None
+        dates = reader.paper_dates(code)
+        day = _day(date, "date") or (_day(dates[-1], "date") if dates else None)
+        if day is None:
+            return {"strategy_code": code, "session_date": None, "dates": dates}
+        return {"dates": dates, **reader.paper_day(code, day)}
+
+    @mcp.tool()
     def hq_compare(strategy: str, date: str | None = None) -> dict[str, Any]:
         """One strategy's session in detail (default latest): daily sync row, paper trades
         with fills/slippage/MAE/MFE, backtest trades and the trade-by-trade matching."""

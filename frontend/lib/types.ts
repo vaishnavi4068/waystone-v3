@@ -508,7 +508,7 @@ export interface HqSyncRow {
   pnl_delta_pct: number | null;
   exit_reason_match: boolean | null;
   exit_time_gap_min: number | null;
-  loss_cap_hit: boolean | null;
+  loss_cap_hit: string | null;
   sync_status: string | null;
   notes_auto: string | null;
   notes_manual: string | null;
@@ -550,6 +550,69 @@ export interface HqPaperTrade {
   hold_min: number | null;
   mae_pts: number | null;
   mfe_pts: number | null;
+  strategy_code?: string;
+  signal_bar_ts?: string | null;
+  entry_signal_px?: number | null;
+  exit_signal_px?: number | null;
+  fill_latency_s?: number | null;
+  pnl_at_signal?: number | null;
+  is_closed?: boolean;
+}
+
+export interface HqFreshness {
+  strategy_code: string;
+  display_name: string;
+  paper_status: string | null;
+  paper_loaded_at: string | null;
+  finalized_at: string | null;
+  checks: HqPaperChecks | null;
+  gcs_uri: string | null;
+  gcs_updated_at: string | null;
+  size_bytes: number | null;
+  file_loaded_at: string | null;
+  parse_status: string | null;
+  last_log_line_ts: string | null;
+  daily_loss_cap: number | null;
+  starting_capital: number | null;
+  max_trades_per_day: number | null;
+  flatten_time: string | null;
+}
+
+export interface HqPaperDay {
+  dates: string[];
+  session_date: string | null;
+  strategy_code: string | null;
+  freshness?: HqFreshness[];
+  last_paper_load?: HqLoadRun | null;
+  trades?: (HqPaperTrade & { strategy_code: string })[];
+  fills?: {
+    strategy_code: string;
+    fill_ts: string;
+    instrument: string | null;
+    action: string;
+    quantity: number;
+    price: number;
+    commission: number | null;
+    leg_role: string | null;
+    exec_id: string | null;
+    order_ref: string | null;
+  }[];
+  signals?: {
+    strategy_code: string;
+    signal_bar_ts: string;
+    side: string;
+    signal_px: number | null;
+    outcome: string;
+    block_reason: string | null;
+  }[];
+  events?: {
+    strategy_code: string;
+    event_ts: string;
+    category: string;
+    code: string | null;
+    severity: string;
+    message: string;
+  }[];
 }
 
 export interface HqMatch {
@@ -570,12 +633,74 @@ export interface HqMatch {
   pnl_delta: number | null;
 }
 
+export interface HqBacktestTrade {
+  trade_seq: number;
+  direction: string;
+  entry_ts: string | null;
+  exit_ts: string | null;
+  entry_px: number | null;
+  exit_px: number | null;
+  points: number | null;
+  contracts: number | null;
+  contracts_inferred: boolean;
+  net_pnl: number | null;
+  net_pnl_derived: boolean;
+  exit_reason: string | null;
+  config_label: string | null;
+  params_fp: string | null;
+}
+
+export interface HqPaperChecks {
+  trades_parsed?: number;
+  closed_reported?: number;
+  closed_match?: boolean;
+  net_parsed?: number;
+  net_reported?: number;
+  net_match?: boolean;
+  summary_present?: boolean;
+  unparsed_lines?: number;
+}
+
+export interface HqDayContext {
+  settings: {
+    point_value: number;
+    default_contracts: number;
+    commission_rt_per_contract: number;
+    model_slip_rt_per_contract: number;
+    flatten_time: string | null;
+    daily_loss_cap: number | null;
+  } | null;
+  backtest_run: {
+    config_label: string | null;
+    params_fp: string | null;
+    point_value: number | null;
+    flatten_time: string | null;
+    daily_loss_cap: number | null;
+    trades_reported: number | null;
+    total_net_reported: number | null;
+    status: string;
+  } | null;
+  live_params: { params_fp: string; config_label: string | null } | null;
+  signals: { outcome: string; block_reason: string | null; n: number }[];
+  day_status: {
+    paper_status: string;
+    backtest_status: string;
+    sync_status: string;
+    checks: { paper?: HqPaperChecks; sync_notes?: string[] } | null;
+    paper_loaded_at: string | null;
+    backtest_loaded_at: string | null;
+    finalized_at: string | null;
+  } | null;
+}
+
 export interface HqCompare {
   strategy_code: string;
   session_date: string;
   sync: HqSyncRow | null;
   matches: HqMatch[];
   paper_trades: HqPaperTrade[];
+  backtest_trades: HqBacktestTrade[];
+  context: HqDayContext;
 }
 
 export interface HqWeek {

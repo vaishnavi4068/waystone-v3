@@ -17,20 +17,23 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { apiErrorMessage, clearToken, getAccount } from "@/lib/api";
+import { HQ_PAGES, onSelectionChange, savedSelection } from "@/lib/hq-selection";
 
 const NAV = [
-  { href: "/hq", label: "Futures HQ", icon: Gauge },
-  { href: "/ibkr", label: "Daily", icon: CalendarDays },
+  { href: "/paper", label: "Paper trades", icon: ListOrdered },
+  { href: "/daily", label: "Daily", icon: CalendarDays },
+  { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
   { href: "/strategies", label: "Strategies", icon: BookOpen },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/options-kpis", label: "Options KPIs", icon: Gauge },
-  { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
   { href: "/", label: "Account", icon: Wallet },
   { href: "/positions", label: "Positions", icon: BarChart3 },
   { href: "/orders", label: "Orders", icon: ListOrdered },
   { href: "/activity", label: "Activity", icon: Activity },
+  { href: "/ibkr", label: "IBKR report", icon: CalendarDays },
   { href: "/signals", label: "Signals", icon: LineChart },
   { href: "/charts", label: "Charts", icon: CandlestickChart },
   { href: "/backtests", label: "Backtests", icon: BarChart3 },
@@ -39,6 +42,11 @@ const NAV = [
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [selection, setSelection] = useState("");
+  useEffect(() => {
+    setSelection(savedSelection());
+    return onSelectionChange(() => setSelection(savedSelection()));
+  }, []);
   const acct = useQuery({ queryKey: ["account"], queryFn: getAccount });
 
   function logout() {
@@ -56,11 +64,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <nav className="flex flex-1 flex-col gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active =
-              href === "/strategies" || href === "/hq" ? pathname.startsWith(href) : pathname === href;
+              href === "/strategies" ? pathname.startsWith(href) : pathname === href;
             return (
               <Link
                 key={href}
-                href={href}
+                href={HQ_PAGES.includes(href) && selection ? `${href}?${selection}` : href}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
                   active
                     ? "bg-emerald-600/20 text-emerald-300"
