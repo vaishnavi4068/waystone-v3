@@ -17,7 +17,7 @@ VALUES
     ('r2_mnq', 'R2 MNQ (best risk-adj)', 'future', 'MNQ', 'r2_mnq',
      'raw/paper/r2_mnq/', 'raw/backtest/', 'R2_',
      'DUR842609', 88, DATE '2026-09-25',
-     'R2_best_risk_adj (DTV221 STAYINMARKET), 1 contract, flatten 15:55 ET. Shares IB account DUR842609 with es_v221. No backtest replay file yet (backtest days show MISSING until one exists).'),
+     'R2_best_risk_adj (DTV221 STAYINMARKET), 1 contract, flatten 15:55 ET. Shares IB account DUR842609 with es_v221. Replay files are R2_MNQ_<date>_back_daily.txt (matched as prefix R2_ + root MNQ_).'),
     ('s5_options', 'Strategy 5 options', 'option', 'TBD', 's5_options',
      'raw/paper/s5_options/', 'raw/backtest/', 'S5_',
      NULL, 42, NULL,
