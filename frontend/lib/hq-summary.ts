@@ -53,6 +53,12 @@ const LOSS_LIMIT = /daily loss limit \$(-?[\d,.]+)/i;
 
 export const capWasHit = (flag: string | boolean | null | undefined) => flag === true || flag === "Y";
 
+/** The time the replay's session-flatten exits happened, when the run doesn't state it. */
+function backtestFlattenTime(d: HqCompare): string | null {
+  const flat = d.backtest_trades.filter((t) => t.exit_reason === "SESSION_FLATTEN" && t.exit_ts);
+  return flat.length ? time(flat[flat.length - 1].exit_ts) : null;
+}
+
 export function buildPairs(d: HqCompare): TradePair[] {
   const byLive = new Map(d.paper_trades.map((t) => [t.entry_ts, t]));
   const byBt = new Map(d.backtest_trades.map((t) => [t.entry_ts, t]));
@@ -126,13 +132,16 @@ function dollarChecks(d: HqCompare, pairs: TradePair[]): DollarCheck[] {
   }
   const paper = d.context.day_status?.checks?.paper;
   if (paper?.net_reported != null && paper.net_parsed != null) {
+    // The engine's DAILY SUMMARY prints P&L before commission on most days.
+    const gross = paper.net_basis === "gross" && paper.gross_parsed != null;
+    const parsed = gross ? paper.gross_parsed! : paper.net_parsed;
     out.push({
       side: "Live",
-      label: "Day total vs log DAILY SUMMARY",
-      formula: `sum of ${plural(paper.trades_parsed ?? 0, "trade")} vs the engine's end-of-day line`,
+      label: `Day ${gross ? "gross" : "net"} vs log DAILY SUMMARY`,
+      formula: `sum of ${plural(paper.trades_parsed ?? 0, "trade")} (${gross ? "before" : "after"} commission) vs the engine's end-of-day line`,
       expected: paper.net_reported,
-      actual: paper.net_parsed,
-      ok: Math.abs(paper.net_reported - paper.net_parsed) <= TOLERANCE,
+      actual: parsed,
+      ok: paper.net_match ?? Math.abs(paper.net_reported - parsed) <= TOLERANCE,
     });
   }
   return out;
@@ -290,11 +299,11 @@ export function summarize(name: string, d: HqCompare): DaySummary {
   }
 
   const liveFlat = hhmm(ctx.settings?.flatten_time);
-  const btFlat = hhmm(ctx.backtest_run?.flatten_time);
+  const btFlat = hhmm(ctx.backtest_run?.flatten_time) ?? backtestFlattenTime(d);
   if (liveFlat && btFlat && liveFlat !== btFlat) {
     tone = "warn";
     warnings.push(
-      `Config mismatch: live flattens at ${liveFlat} ET but this backtest run used ${btFlat} ET. Any trade still open between ${[liveFlat, btFlat].sort()[0]} and ${[liveFlat, btFlat].sort()[1]} is not an apples-to-apples comparison.`,
+      `Config mismatch: live flattens at ${liveFlat} ET but this backtest run flattened at ${btFlat} ET. Any trade still open between ${[liveFlat, btFlat].sort()[0]} and ${[liveFlat, btFlat].sort()[1]} is not an apples-to-apples comparison.`,
     );
   }
   const liveCap = cap;

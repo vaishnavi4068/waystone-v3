@@ -657,6 +657,8 @@ export interface HqPaperChecks {
   net_parsed?: number;
   net_reported?: number;
   net_match?: boolean;
+  gross_parsed?: number | null;
+  net_basis?: "net" | "gross";
   summary_present?: boolean;
   unparsed_lines?: number;
 }
