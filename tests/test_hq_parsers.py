@@ -6,6 +6,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from waystone3.hq.backtest_daily import parse_backtest_daily
 from waystone3.hq.calendar import NY, session_date_for
 from waystone3.hq.loader import classify_paper
@@ -131,6 +133,48 @@ def test_nq_backtest_key_value_lines() -> None:
     assert trade.exit_ts == datetime(2026, 10, 2, 10, 5, tzinfo=NY)
     assert bt.trades_reported == 1
     assert bt.unparsed == []
+
+
+_NQ_1007_HEADER = "NQ same-day replay 2026-10-07\nparams fp: 7636aa0c66\n"
+_NQ_1007_TOTAL = "\ntotal trades: 1  total net: -6399.00\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "2026-10-07 09:31:00-04:00 SHORT -> 2026-10-07 15:55:00-04:00  pts -159.75  "
+        "net $-6,399.00  reason=yeah_its_failing",
+        "2026-10-07 09:31:00-04:00 -> 2026-10-07 15:55:00-04:00 SHORT -159.75 pts "
+        "-$6,399.00 reason=yeah_its_failing",
+        "entry=2026-10-07 09:31:00-04:00 exit=2026-10-07 15:55:00-04:00 dir=SHORT "
+        "pts: -159.75 pnl: -6399.00 reason=yeah_its_failing",
+        "#1 SHORT entry=2026-10-07T09:31:00-04:00 exit=2026-10-07T15:55:00-04:00 "
+        "pts=-159.75 net=-6399.00 reason=yeah_its_failing",
+    ],
+)
+def test_backtest_trade_with_offset_timestamps(line: str) -> None:
+    bt = parse_backtest_daily(_NQ_1007_HEADER + line + _NQ_1007_TOTAL, date(2026, 10, 7))
+    [trade] = bt.trades
+    assert trade.seq == 1
+    assert trade.direction == "SHORT"
+    assert trade.entry_ts == datetime(2026, 10, 7, 9, 31, tzinfo=NY)
+    assert trade.exit_ts == datetime(2026, 10, 7, 15, 55, tzinfo=NY)
+    assert (trade.entry_px, trade.exit_px) == (None, None)
+    assert trade.points == Decimal("-159.75")
+    assert trade.net_pnl == Decimal("-6399.00")
+    assert trade.exit_reason == "yeah_its_failing"
+    assert bt.total_net_reported == Decimal("-6399.00")
+
+
+def test_backtest_table_with_offset_timestamps_reads_no_price_from_the_clock() -> None:
+    text = (
+        "#  dir    entry_time                  exit_time                   pts      reason\n"
+        "1  SHORT  2026-10-07 09:31:00-04:00   2026-10-07 15:55:00-04:00   -159.75  "
+        "yeah_its_failing\n"
+    )
+    [trade] = parse_backtest_daily(text, date(2026, 10, 7)).trades
+    assert trade.exit_ts == datetime(2026, 10, 7, 15, 55, tzinfo=NY)
+    assert (trade.entry_px, trade.exit_px, trade.points) == (None, None, Decimal("-159.75"))
 
 
 def test_session_date_rolls_after_18_et_and_over_weekends() -> None:
