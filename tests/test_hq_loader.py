@@ -550,3 +550,35 @@ def test_replay_file_with_nothing_recognisable_is_not_reported_as_loaded(
         "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
     )
     assert status["backtest_status"] == "DATA_INCOMPLETE"
+
+
+def test_a_stub_copy_of_a_replay_in_a_subfolder_never_replaces_the_real_one(
+    db: str, tmp_path: Path
+) -> None:
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    stub = src / "raw" / "backtest" / "archive" / "NQ_2026-10-02_back_daily.txt"
+    stub.parent.mkdir()
+    stub.write_text("NQ same-day replay 2026-10-02\n")
+    later = (src / "raw" / "backtest" / "NQ_2026-10-02_back_daily.txt").stat().st_mtime + 60
+    os.utime(stub, (later, later))
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+        Loader(conn, LocalSource(src), now=NOW).run("backtest")
+    [status] = _rows(
+        db,
+        "SELECT backtest_status, checks->'backtest' AS bt FROM api.v_day_status "
+        "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
+    )
+    assert status["backtest_status"] == "LOADED"
+    assert status["bt"]["trades_parsed"] == 1 and status["bt"]["replay_candidates"] == 2
+    assert status["bt"]["replay_file"].endswith("raw/backtest/NQ_2026-10-02_back_daily.txt")
+    files = _rows(
+        db,
+        "SELECT gcs_uri, parse_status FROM raw.source_file "
+        "WHERE source_kind = 'backtest_daily' AND gcs_uri LIKE '%NQ_2026-10-02%'",
+    )
+    assert {
+        f["gcs_uri"].endswith("archive/NQ_2026-10-02_back_daily.txt"): f["parse_status"]
+        for f in files
+    } == {True: "SKIPPED", False: "PARSED"}

@@ -113,7 +113,7 @@ class Loader:
             for strategy_id in sorted(touched):
                 strategy = self.ref.strategies[strategy_id]
                 if strategy.asset_class == "future":
-                    if job in ("backtest", "recompute"):
+                    if job in ("backtest", "backfill", "recompute"):
                         self._reparse_backtests(strategy)
                     recompute(self.conn, self.ref, strategy, self.now)
                     self.conn.commit()
@@ -137,28 +137,61 @@ class Loader:
 
         Replay files are tiny, and the parser improves over time; unchanged files are
         never re-read from the bucket, so this is how a parser fix reaches old days.
+        The VM folder is synced recursively, so a session can have more than one replay
+        file (a rerun, an archive copy, an aborted stub). Exactly one is used per session:
+        the one with the most recognisable content, then the most recently updated.
         """
         with self.conn.cursor() as cur:
             cur.execute(
-                "SELECT file_id, session_date FROM raw.source_file "
+                "SELECT file_id, session_date, gcs_uri, gcs_updated_at FROM raw.source_file "
                 "WHERE strategy_id = %s AND source_kind = 'backtest_daily' AND is_current "
-                "AND session_date IS NOT NULL ORDER BY session_date",
+                "AND session_date IS NOT NULL ORDER BY session_date, file_id",
                 (strategy.strategy_id,),
             )
+            by_day: dict[date, list[tuple[Row, str]]] = {}
             for f in cur.fetchall():
                 cur.execute(
                     "SELECT content FROM raw.source_line WHERE file_id = %s ORDER BY line_no",
                     (f["file_id"],),
                 )
                 text = "\n".join(r["content"] for r in cur.fetchall())
+                by_day.setdefault(f["session_date"], []).append((f, text))
+            for day, candidates in by_day.items():
+                ranked = sorted(
+                    candidates,
+                    key=lambda c: (
+                        *_replay_quality(parse_backtest_daily(c[1], day)),
+                        c[0]["gcs_updated_at"] or datetime.min.replace(tzinfo=UTC),
+                        c[0]["file_id"],
+                    ),
+                    reverse=True,
+                )
+                (chosen, text), others = ranked[0], ranked[1:]
                 status, message = _write_backtest(
-                    cur, self.ref, strategy, f["file_id"], text, f["session_date"], reparse=True
+                    cur,
+                    self.ref,
+                    strategy,
+                    chosen["file_id"],
+                    text,
+                    day,
+                    reparse=True,
+                    replay_file=chosen["gcs_uri"],
+                    replay_candidates=len(candidates),
                 )
                 cur.execute(
                     "UPDATE raw.source_file SET parse_status = %s, parse_message = %s "
                     "WHERE file_id = %s",
-                    (status, message, f["file_id"]),
+                    (status, message, chosen["file_id"]),
                 )
+                for other, _ in others:
+                    cur.execute(
+                        "UPDATE raw.source_file SET parse_status = 'SKIPPED', parse_message = %s "
+                        "WHERE file_id = %s",
+                        (
+                            f"another replay is used for this session: {chosen['gcs_uri']}",
+                            other["file_id"],
+                        ),
+                    )
 
     def _finish(self, report: RunReport, error: str | None) -> None:
         with self.conn.cursor() as cur:
@@ -710,6 +743,11 @@ def _backtest_rows(parsed: BacktestDay, pv: Decimal, settings: Row) -> list[dict
     return rows
 
 
+def _replay_quality(parsed: BacktestDay) -> tuple[bool, bool, int]:
+    has_totals = parsed.trades_reported is not None or parsed.total_net_reported is not None
+    return has_totals, bool(parsed.trades), -len(parsed.unparsed)
+
+
 def _write_backtest(
     cur: Cursor,
     ref: RefData,
@@ -719,6 +757,8 @@ def _write_backtest(
     session_date: date,
     *,
     reparse: bool = False,
+    replay_file: str | None = None,
+    replay_candidates: int | None = None,
 ) -> tuple[str, str | None]:
     sid = strategy.strategy_id
     settings = ref.settings_for(sid, session_date)
@@ -783,6 +823,9 @@ def _write_backtest(
         "unparsed_lines": len(parsed.unparsed),
         "run_status": status,
     }
+    if replay_file is not None:
+        checks["replay_file"] = replay_file
+        checks["replay_candidates"] = replay_candidates
     cur.execute(
         """
         INSERT INTO ops.day_status (strategy_id, session_date, backtest_loaded_at, checks)
