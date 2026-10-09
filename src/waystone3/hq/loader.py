@@ -24,7 +24,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from waystone3.hq.backtest_daily import FILE_NAME as BACKTEST_NAME
-from waystone3.hq.backtest_daily import parse_backtest_daily
+from waystone3.hq.backtest_daily import BacktestDay, parse_backtest_daily
 from waystone3.hq.calendar import NY, session_date_for
 from waystone3.hq.db import Conn, Cursor, Row, copy_rows, upsert
 from waystone3.hq.db import connect as connect
@@ -113,6 +113,8 @@ class Loader:
             for strategy_id in sorted(touched):
                 strategy = self.ref.strategies[strategy_id]
                 if strategy.asset_class == "future":
+                    if job in ("backtest", "recompute"):
+                        self._reparse_backtests(strategy)
                     recompute(self.conn, self.ref, strategy, self.now)
                     self.conn.commit()
                     report.recomputed.append(strategy.code)
@@ -129,6 +131,34 @@ class Loader:
             report.status = "OK"
         self._finish(report, "; ".join(report.failures) or None)
         return report
+
+    def _reparse_backtests(self, strategy: Strategy) -> None:
+        """Re-parse every current replay file from its stored lines in ``raw.source_line``.
+
+        Replay files are tiny, and the parser improves over time; unchanged files are
+        never re-read from the bucket, so this is how a parser fix reaches old days.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT file_id, session_date FROM raw.source_file "
+                "WHERE strategy_id = %s AND source_kind = 'backtest_daily' AND is_current "
+                "AND session_date IS NOT NULL ORDER BY session_date",
+                (strategy.strategy_id,),
+            )
+            for f in cur.fetchall():
+                cur.execute(
+                    "SELECT content FROM raw.source_line WHERE file_id = %s ORDER BY line_no",
+                    (f["file_id"],),
+                )
+                text = "\n".join(r["content"] for r in cur.fetchall())
+                status, message = _write_backtest(
+                    cur, self.ref, strategy, f["file_id"], text, f["session_date"], reparse=True
+                )
+                cur.execute(
+                    "UPDATE raw.source_file SET parse_status = %s, parse_message = %s "
+                    "WHERE file_id = %s",
+                    (status, message, f["file_id"]),
+                )
 
     def _finish(self, report: RunReport, error: str | None) -> None:
         with self.conn.cursor() as cur:
@@ -632,51 +662,9 @@ class PaperWriter:
         return row
 
 
-def _write_backtest(
-    cur: Cursor, ref: RefData, strategy: Strategy, file_id: int, text: str, session_date: date
-) -> tuple[str, str | None]:
-    sid = strategy.strategy_id
-    settings = ref.settings_for(sid, session_date)
-    parsed = parse_backtest_daily(text, session_date)
-    pv = parsed.point_value or dec(settings["point_value"]) or Decimal(1)
-    expected = settings["expected_bar_count"]
-    if expected and parsed.bar_count is not None and parsed.bar_count < expected:
-        status = "DATA_INCOMPLETE"
-    elif (parsed.trades_reported not in (None, len(parsed.trades))) or (
-        not parsed.trades and parsed.unparsed
-    ):
-        status = "INCOMPLETE"
-    else:
-        status = "COMPLETE"
-    run = upsert(
-        cur,
-        "core.backtest_run",
-        {
-            "strategy_id": sid,
-            "session_date": session_date,
-            "file_id": file_id,
-            "config_label": parsed.config_label,
-            "params_fp": parsed.params_fp,
-            "bar_file": parsed.bar_file,
-            "bar_count": parsed.bar_count,
-            "vol_index": parsed.vol_index,
-            "sentiment_source": parsed.sentiment_source,
-            "point_value": pv,
-            "flatten_time": parsed.flatten_time,
-            "daily_loss_cap": parsed.daily_loss_cap,
-            "trades_reported": parsed.trades_reported,
-            "total_net_reported": parsed.total_net_reported,
-            "maxdd_reported": parsed.maxdd_reported,
-            "status": status,
-            "loaded_at": datetime.now(UTC),
-        },
-        ("strategy_id", "session_date"),
-        returning="run_id",
-    )
-    assert run is not None
-    run_id = run["run_id"]
-    cur.execute("DELETE FROM core.backtest_trade WHERE run_id = %s", (run_id,))
+def _backtest_rows(parsed: BacktestDay, pv: Decimal, settings: Row) -> list[dict[str, Any]]:
     comm_rt = dec(settings["commission_rt_per_contract"]) or Decimal(0)
+    rows: list[dict[str, Any]] = []
     for t in parsed.trades:
         inferred = t.contracts is None
         contracts = (
@@ -697,13 +685,8 @@ def _write_backtest(
         hold = t.hold_min
         if hold is None and t.exit_ts is not None:
             hold = Decimal(str((t.exit_ts - t.entry_ts).total_seconds() / 60))
-        upsert(
-            cur,
-            "core.backtest_trade",
+        rows.append(
             {
-                "run_id": run_id,
-                "strategy_id": sid,
-                "session_date": session_date,
                 "trade_seq": t.seq,
                 "direction": t.direction,
                 "entry_ts": t.entry_ts,
@@ -719,11 +702,78 @@ def _write_backtest(
                 "net_pnl_derived": derived,
                 "exit_reason": t.exit_reason,
                 "hold_min": hold,
-            },
+            }
+        )
+    return rows
+
+
+def _write_backtest(
+    cur: Cursor,
+    ref: RefData,
+    strategy: Strategy,
+    file_id: int,
+    text: str,
+    session_date: date,
+    *,
+    reparse: bool = False,
+) -> tuple[str, str | None]:
+    sid = strategy.strategy_id
+    settings = ref.settings_for(sid, session_date)
+    parsed = parse_backtest_daily(text, session_date)
+    pv = parsed.point_value or dec(settings["point_value"]) or Decimal(1)
+    rows = _backtest_rows(parsed, pv, settings)
+    net_parsed = sum((r["net_pnl"] or Decimal(0) for r in rows), Decimal(0))
+    reported = parsed.total_net_reported
+    net_match = None if reported is None or not rows else abs(net_parsed - reported) <= 1
+    expected = settings["expected_bar_count"]
+    if expected and parsed.bar_count is not None and parsed.bar_count < expected:
+        status = "DATA_INCOMPLETE"
+    elif (
+        (parsed.trades_reported not in (None, len(parsed.trades)))
+        or (not parsed.trades and parsed.unparsed)
+        or net_match is False
+    ):
+        status = "INCOMPLETE"
+    else:
+        status = "COMPLETE"
+    run_values: dict[str, Any] = {
+        "strategy_id": sid,
+        "session_date": session_date,
+        "file_id": file_id,
+        "config_label": parsed.config_label,
+        "params_fp": parsed.params_fp,
+        "bar_file": parsed.bar_file,
+        "bar_count": parsed.bar_count,
+        "vol_index": parsed.vol_index,
+        "sentiment_source": parsed.sentiment_source,
+        "point_value": pv,
+        "flatten_time": parsed.flatten_time,
+        "daily_loss_cap": parsed.daily_loss_cap,
+        "trades_reported": parsed.trades_reported,
+        "total_net_reported": parsed.total_net_reported,
+        "maxdd_reported": parsed.maxdd_reported,
+        "status": status,
+    }
+    if not reparse:
+        run_values["loaded_at"] = datetime.now(UTC)
+    run = upsert(
+        cur, "core.backtest_run", run_values, ("strategy_id", "session_date"), returning="run_id"
+    )
+    assert run is not None
+    run_id = run["run_id"]
+    cur.execute("DELETE FROM core.backtest_trade WHERE run_id = %s", (run_id,))
+    for row in rows:
+        upsert(
+            cur,
+            "core.backtest_trade",
+            {"run_id": run_id, "strategy_id": sid, "session_date": session_date, **row},
         )
     checks = {
         "trades_parsed": len(parsed.trades),
         "trades_reported": parsed.trades_reported,
+        "net_parsed": float(net_parsed) if rows else None,
+        "net_reported": None if reported is None else float(reported),
+        "net_match": net_match,
         "bar_count": parsed.bar_count,
         "expected_bar_count": expected,
         "unparsed_lines": len(parsed.unparsed),
@@ -734,10 +784,11 @@ def _write_backtest(
         INSERT INTO ops.day_status (strategy_id, session_date, backtest_loaded_at, checks)
         VALUES (%s, %s, now(), jsonb_build_object('backtest', %s::jsonb))
         ON CONFLICT (strategy_id, session_date) DO UPDATE SET
-            backtest_loaded_at = now(),
+            backtest_loaded_at = CASE WHEN %s THEN ops.day_status.backtest_loaded_at
+                                      ELSE now() END,
             checks = COALESCE(ops.day_status.checks, '{}'::jsonb) || EXCLUDED.checks
         """,
-        (sid, session_date, Jsonb(checks)),
+        (sid, session_date, Jsonb(checks), reparse),
     )
     parse_status = "PARSED" if status == "COMPLETE" and not parsed.unparsed else "PARTIAL"
     return parse_status, json.dumps(checks)
