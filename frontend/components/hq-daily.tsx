@@ -65,52 +65,118 @@ function Same({ ok }: { ok: boolean | null }) {
   return ok ? <Check size={14} className="text-emerald-400" /> : <X size={14} className="text-rose-400" />;
 }
 
-function SideBySide({ pair, d }: { pair: TradePair | undefined; d: HqCompare }) {
-  const l = pair?.live ?? null;
-  const b = pair?.bt ?? null;
-  const s = d.sync;
-  const gap = l?.points != null && b?.points != null ? l.points - b.points : null;
-  const both = Boolean(l && b);
-  const rows: [string, React.ReactNode, React.ReactNode, boolean | null][] = [
-    ["Direction", l?.direction ?? "—", b?.direction ?? "—", both ? l!.direction === b!.direction : null],
-    ["Contracts", l?.contracts ?? "—", b ? `${b.contracts ?? "—"}${b.contracts_inferred ? " (default)" : ""}` : "—", both ? l!.contracts === b!.contracts : null],
-    ["Entry (ET)", l ? `${time(l.entry_ts)} @ ${num(l.entry_px)}` : "—", b ? `${time(b.entry_ts)} @ ${num(b.entry_px)}` : "—", both ? time(l!.entry_ts) === time(b!.entry_ts) : null],
-    ["Exit (ET)", l ? `${time(l.exit_ts)} @ ${num(l.exit_px)}` : "—", b ? `${time(b.exit_ts)} @ ${num(b.exit_px)}` : "—", both ? time(l!.exit_ts) === time(b!.exit_ts) : null],
-    ["Exit reason", l?.exit_reason ?? "—", b?.exit_reason ?? "—", both ? l!.exit_reason === b!.exit_reason : null],
-    [
-      "Points",
-      <span key="l" className={signTone(l?.points)}>{num(l?.points)}</span>,
-      <span key="b" className={signTone(b?.points)}>{num(b?.points)}</span>,
-      null,
-    ],
-    ["Point gap (live − backtest)", gap == null ? "—" : <span className={signTone(gap)}>{num(gap)}</span>, "", null],
-    [
-      "Net P&L",
-      <span key="l" className={signTone(s?.live_net_pnl)}>{usd(s?.live_net_pnl)}</span>,
-      <span key="b" className={signTone(s?.bt_net_pnl)}>{usd(s?.bt_net_pnl)}</span>,
-      null,
-    ],
-    ["Daily loss cap", capWasHit(s?.loss_cap_hit) ? "Triggered" : "Not triggered", "", null],
+type Side = {
+  trades: number;
+  wins: number;
+  losses: number;
+  directions: string;
+  contracts: string;
+  firstEntry: string;
+  lastExit: string;
+  exitReasons: string;
+  points: number | null;
+  gross: number | null;
+  commission: number | null;
+  net: number | null;
+};
+
+const total = (xs: (number | null | undefined)[]) =>
+  xs.length && xs.every((x) => x != null) ? xs.reduce<number>((a, x) => a + (x as number), 0) : null;
+
+function tally(values: (string | null | undefined)[]): string {
+  const counts = new Map<string, number>();
+  for (const v of values) counts.set(v ?? "—", (counts.get(v ?? "—") ?? 0) + 1);
+  if (counts.size === 0) return "—";
+  return [...counts].map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join(", ");
+}
+
+const at = (ts: string | null | undefined, px: number | null | undefined) =>
+  ts ? `${time(ts)}${px != null ? ` @ ${num(px)}` : ""}` : "—";
+
+function liveSide(d: HqCompare): Side {
+  const t = d.paper_trades;
+  const nets = t.map((x) => x.net_pnl);
+  return {
+    trades: t.length,
+    wins: nets.filter((n) => n != null && n > 0).length,
+    losses: nets.filter((n) => n != null && n < 0).length,
+    directions: tally(t.map((x) => x.direction)),
+    contracts: tally(t.map((x) => String(x.contracts))),
+    firstEntry: t.length ? at(t[0].entry_ts, t[0].entry_px) : "—",
+    lastExit: t.length ? at(t[t.length - 1].exit_ts, t[t.length - 1].exit_px) : "—",
+    exitReasons: tally(t.map((x) => x.exit_reason)),
+    points: total(t.map((x) => x.points)),
+    gross: total(t.map((x) => x.gross_pnl)),
+    commission: total(t.map((x) => x.commission)),
+    net: d.sync?.live_net_pnl ?? total(nets),
+  };
+}
+
+function backtestSide(d: HqCompare): Side {
+  const t = d.backtest_trades;
+  const pv = d.context.backtest_run?.point_value ?? d.context.settings?.point_value ?? null;
+  const gross = t.map((x) => (x.points != null && x.contracts != null && pv != null ? x.points * pv * x.contracts : null));
+  const net = d.sync?.bt_net_pnl ?? total(t.map((x) => x.net_pnl));
+  const grossTotal = total(gross);
+  const nets = t.map((x) => x.net_pnl);
+  return {
+    trades: t.length,
+    wins: nets.filter((n) => n != null && n > 0).length,
+    losses: nets.filter((n) => n != null && n < 0).length,
+    directions: tally(t.map((x) => x.direction)),
+    contracts: tally(t.map((x) => `${x.contracts ?? "—"}${x.contracts_inferred ? " (default)" : ""}`)),
+    firstEntry: t.length ? at(t[0].entry_ts, t[0].entry_px) : "—",
+    lastExit: t.length ? at(t[t.length - 1].exit_ts, t[t.length - 1].exit_px) : "—",
+    exitReasons: tally(t.map((x) => x.exit_reason)),
+    points: total(t.map((x) => x.points)),
+    gross: grossTotal,
+    commission: grossTotal != null && net != null ? grossTotal - net : null,
+    net,
+  };
+}
+
+const money = (n: number | null) => <span className={signTone(n)}>{usd(n)}</span>;
+const diff = (a: number | null, b: number | null) => (a != null && b != null ? a - b : null);
+
+function DayAtAGlance({ d }: { d: HqCompare }) {
+  const l = liveSide(d);
+  const hasBt = d.context.backtest_run != null;
+  const b = hasBt ? backtestSide(d) : null;
+  const same = (x: string | number, y: string | number | undefined) => (b ? x === y : null);
+  const minute = (s: string) => s.slice(0, 5);
+  const capHit = capWasHit(d.sync?.loss_cap_hit);
+  type Row = [string, React.ReactNode, React.ReactNode, React.ReactNode];
+  const rows: Row[] = [
+    ["Trades", l.trades, b ? b.trades : "—", <Same key="t" ok={same(l.trades, b?.trades)} />],
+    ["Wins / losses", `${l.wins} / ${l.losses}`, b ? `${b.wins} / ${b.losses}` : "—", <Same key="w" ok={same(`${l.wins}/${l.losses}`, b ? `${b.wins}/${b.losses}` : undefined)} />],
+    ["Direction", l.directions, b?.directions ?? "—", <Same key="d" ok={same(l.directions, b?.directions)} />],
+    ["Contracts per trade", l.contracts, b?.contracts ?? "—", <Same key="c" ok={b ? l.contracts === b.contracts.replace(" (default)", "") : null} />],
+    ["First entry (ET)", l.firstEntry, b?.firstEntry ?? "—", <Same key="e" ok={b && l.trades && b.trades ? minute(l.firstEntry) === minute(b.firstEntry) : null} />],
+    ["Last exit (ET)", l.lastExit, b?.lastExit ?? "—", <Same key="x" ok={b && l.trades && b.trades ? minute(l.lastExit) === minute(b.lastExit) : null} />],
+    ["Exit reasons", l.exitReasons, b?.exitReasons ?? "—", <Same key="r" ok={same(l.exitReasons, b?.exitReasons)} />],
+    ["Points", <span key="lp" className={signTone(l.points)}>{num(l.points)}</span>, <span key="bp" className={signTone(b?.points)}>{num(b?.points)}</span>, <span key="gp" className={signTone(diff(l.points, b?.points ?? null))}>{num(diff(l.points, b?.points ?? null))}</span>],
+    ["Gross P&L", money(l.gross), money(b?.gross ?? null), money(diff(l.gross, b?.gross ?? null))],
+    ["Commission / costs", usd(l.commission), usd(b?.commission ?? null), usd(diff(l.commission, b?.commission ?? null))],
+    ["Net P&L", money(l.net), money(b?.net ?? null), money(diff(l.net, b?.net ?? null))],
+    ["Daily loss cap", capHit ? "Triggered" : "Not triggered", "—", ""],
   ];
   return (
     <table className="hq-table w-full text-sm">
       <thead className="text-left text-slate-500">
         <tr>
-          <th className="px-5 py-2">Metric</th>
+          <th className="px-5 py-2">Day at a glance</th>
           <th>Live paper (actual)</th>
           <th>Backtest replay</th>
-          <th className="pr-5">Same?</th>
+          <th className="pr-5">Same? / live − backtest</th>
         </tr>
       </thead>
       <tbody>
-        {rows.map(([label, live, bt, same]) => (
+        {rows.map(([label, live, bt, cmp]) => (
           <tr key={label} className="border-t border-slate-800">
             <td className="px-5 py-1.5 text-slate-400">{label}</td>
-            <td>{live}</td>
-            <td>{bt}</td>
-            <td className="pr-5">
-              <Same ok={same} />
-            </td>
+            <td className="wrap-cell">{live}</td>
+            <td className="wrap-cell">{bt}</td>
+            <td className="pr-5">{cmp}</td>
           </tr>
         ))}
       </tbody>
@@ -121,64 +187,80 @@ function SideBySide({ pair, d }: { pair: TradePair | undefined; d: HqCompare }) 
 function TradeByTrade({ pairs, d }: { pairs: TradePair[]; d: HqCompare }) {
   const s = d.sync;
   return (
-    <table className="hq-table w-full text-sm">
-      <thead className="text-left text-slate-500">
-        <tr>
-          <th className="px-5 py-2">#</th>
-          <th>Side</th>
-          <th>Live entry → exit</th>
-          <th>Backtest entry → exit</th>
-          <th>Exit reason (live / backtest)</th>
-          <th>Points (live / backtest)</th>
-          <th>Point gap</th>
-          <th>Net (live / backtest)</th>
-          <th className="pr-5">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {pairs.map((p) => {
-          const gap = p.live?.points != null && p.bt?.points != null ? p.live.points - p.bt.points : null;
-          return (
-            <tr key={p.n} className="border-t border-slate-800">
-              <td className="px-5 py-1.5">{p.n}</td>
-              <td>{p.live?.direction ?? p.bt?.direction}</td>
-              <td>{p.live ? `${time(p.live.entry_ts)} → ${time(p.live.exit_ts)}` : "—"}</td>
-              <td>{p.bt ? `${time(p.bt.entry_ts)} → ${time(p.bt.exit_ts)}` : "—"}</td>
-              <td>
-                {p.live?.exit_reason ?? "—"} / {p.bt?.exit_reason ?? "—"}
-              </td>
-              <td>
-                {num(p.live?.points)} / {num(p.bt?.points)}
-              </td>
-              <td className={signTone(gap)}>{num(gap)}</td>
-              <td>
-                <span className={signTone(p.live?.net_pnl)}>{usd(p.live?.net_pnl)}</span> /{" "}
-                <span className={signTone(p.bt?.net_pnl)}>{usd(p.bt?.net_pnl)}</span>
-              </td>
-              <td className="wrap-cell pr-5">
-                <Chip value={p.match?.unmatched_reason ?? p.match?.match_type ?? (p.live ? "LIVE" : "BACKTEST")} />
+    <div className="border-t border-slate-800">
+      <div className="px-5 pt-3 text-xs uppercase tracking-wide text-slate-500">Trade by trade</div>
+      <table className="hq-table w-full text-sm">
+        <thead className="text-left text-slate-500">
+          <tr>
+            <th className="px-5 py-2">#</th>
+            <th>Side</th>
+            <th>Live entry → exit (ET)</th>
+            <th>Backtest entry → exit (ET)</th>
+            <th>Exit reason (live / backtest)</th>
+            <th>Points (live / backtest)</th>
+            <th>Point gap</th>
+            <th>Net (live / backtest)</th>
+            <th className="pr-5">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pairs.length === 0 ? (
+            <tr className="border-t border-slate-800">
+              <td className="px-5 py-1.5 text-slate-500" colSpan={9}>
+                No trades on either side this session.
               </td>
             </tr>
-          );
-        })}
-        <tr className="border-t border-slate-700 font-medium">
-          <td className="px-5 py-1.5" colSpan={5}>
-            Day total
-          </td>
-          <td>
-            {num(s?.live_points)} / {num(s?.bt_points)}
-          </td>
-          <td />
-          <td>
-            <span className={signTone(s?.live_net_pnl)}>{usd(s?.live_net_pnl)}</span> /{" "}
-            <span className={signTone(s?.bt_net_pnl)}>{usd(s?.bt_net_pnl)}</span>
-          </td>
-          <td className="pr-5">
-            <Chip value={s?.sync_status} />
-          </td>
-        </tr>
-      </tbody>
-    </table>
+          ) : null}
+          {pairs.map((p) => {
+            const gap = p.live?.points != null && p.bt?.points != null ? p.live.points - p.bt.points : null;
+            return (
+              <tr key={p.n} className="border-t border-slate-800">
+                <td className="px-5 py-1.5">{p.n}</td>
+                <td>
+                  {p.live && p.bt && p.live.direction !== p.bt.direction
+                    ? `${p.live.direction} / ${p.bt.direction}`
+                    : (p.live?.direction ?? p.bt?.direction)}
+                </td>
+                <td>{p.live ? `${at(p.live.entry_ts, p.live.entry_px)} → ${at(p.live.exit_ts, p.live.exit_px)}` : "—"}</td>
+                <td>{p.bt ? `${at(p.bt.entry_ts, p.bt.entry_px)} → ${at(p.bt.exit_ts, p.bt.exit_px)}` : "—"}</td>
+                <td>
+                  {p.live?.exit_reason ?? "—"} / {p.bt?.exit_reason ?? "—"}
+                </td>
+                <td>
+                  {num(p.live?.points)} / {num(p.bt?.points)}
+                </td>
+                <td className={signTone(gap)}>{num(gap)}</td>
+                <td>
+                  <span className={signTone(p.live?.net_pnl)}>{usd(p.live?.net_pnl)}</span> /{" "}
+                  <span className={signTone(p.bt?.net_pnl)}>{usd(p.bt?.net_pnl)}</span>
+                </td>
+                <td className="wrap-cell pr-5">
+                  <Chip value={p.match?.unmatched_reason ?? p.match?.match_type ?? (p.live ? "LIVE" : "BACKTEST")} />
+                </td>
+              </tr>
+            );
+          })}
+          {pairs.length ? (
+            <tr className="border-t border-slate-700 font-medium">
+              <td className="px-5 py-1.5" colSpan={5}>
+                Day total
+              </td>
+              <td>
+                {num(s?.live_points)} / {num(s?.bt_points)}
+              </td>
+              <td />
+              <td>
+                <span className={signTone(s?.live_net_pnl)}>{usd(s?.live_net_pnl)}</span> /{" "}
+                <span className={signTone(s?.bt_net_pnl)}>{usd(s?.bt_net_pnl)}</span>
+              </td>
+              <td className="pr-5">
+                <Chip value={s?.sync_status} />
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -290,13 +372,8 @@ function StrategyReport({ strategy, d, details }: { strategy: HqStrategy; d: HqC
       >
         <SummaryBox summary={summary} />
         <LoadTimes d={d} />
-        {summary.pairs.length === 0 ? (
-          <div className="px-5 pb-4 text-sm text-slate-500">No trades on either side this session.</div>
-        ) : summary.pairs.length === 1 ? (
-          <SideBySide pair={summary.pairs[0]} d={d} />
-        ) : (
-          <TradeByTrade pairs={summary.pairs} d={d} />
-        )}
+        <DayAtAGlance d={d} />
+        <TradeByTrade pairs={summary.pairs} d={d} />
         <DollarMath summary={summary} />
       </Section>
       {details ? <ExecutionDetails d={d} /> : null}
