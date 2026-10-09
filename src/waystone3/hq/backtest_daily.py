@@ -23,7 +23,19 @@ FILE_NAME = re.compile(r"^(?P<prefix>[A-Za-z0-9]+_)(?P<d>\d{4}-\d{2}-\d{2})_back
 _KV_LINE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 /&()%._-]*?)\s*[:=]\s*(.+?)\s*$")
 _TRADE_KV = re.compile(r"\b([A-Za-z_]+)\s*=\s*(\S+)")
 _DIRECTION = re.compile(r"\b(LONG|SHORT|BUY|SELL)\b", re.I)
-_CLOCK = re.compile(r"\b(\d{1,2}:\d{2}(?::\d{2})?)\b")
+# The replay engine prints timestamps as str(datetime): "2026-10-07 09:31:00-04:00".
+# The UTC offset must not be read as a clock time, nor its digits as prices.
+_STAMP = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s?(?:[+-]\d{2}:?\d{2}|Z)\b)?"
+)
+_STAMP_TOKEN = re.compile(r"@TS(\d+)@")
+_CLOCK = re.compile(r"(?<![\d:+-])(\d{1,2}:\d{2}(?::\d{2})?)\b")
+_LABELLED_POINTS = re.compile(r"\b(?:pts|points|pnl_pts)\s*[:=]?\s*([+-]?[\d,]*\.?\d+)", re.I)
+_SUFFIXED_POINTS = re.compile(r"(?<![\w.])([+-]?[\d,]*\.?\d+)\s*(?:pts|points)\b", re.I)
+_LABELLED_NET = re.compile(
+    r"\b(?:net(?:_pnl|_usd)?|pnl(?:_usd)?|p&l)\s*[:=]?\s*([+-]?\$?\s?[+-]?[\d,]*\.?\d+)", re.I
+)
+_DOLLARS = re.compile(r"(?<![\w.])([+-]?\$\s?[+-]?[\d,]*\.?\d+)")
 _NUMBER = re.compile(r"-?\$?-?[\d,]*\.?\d+")
 _TOTAL_TRADES = re.compile(r"\btrades?\s*[:=]?\s*(\d+)\b", re.I)
 _TOTAL_NET = re.compile(r"\btotal(?:\s+net)?(?:\s+p&l)?\s*[:=]?\s*(-?\$?-?[\d,]*\.?\d+)", re.I)
@@ -99,14 +111,26 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower().replace("_", " "))
 
 
+def _stamp_ts(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(
+            re.sub(r"\s+(?=[+-]\d{2}:?\d{2}$)", "", value.strip()).replace(" ", "T")
+        )
+    except ValueError:
+        return None
+    return parsed.astimezone(NY) if parsed.tzinfo else parsed.replace(tzinfo=NY)
+
+
 def _ts(value: str, day: date) -> datetime | None:
     value = value.strip()
-    try:
-        if "T" in value or re.match(r"\d{4}-\d{2}-\d{2} ", value):
-            parsed = datetime.fromisoformat(value.replace(" ", "T"))
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=NY)
-    except ValueError:
-        pass
+    if stamp := _STAMP.search(value):
+        return _stamp_ts(stamp.group(0))
+    if "T" in value:
+        try:
+            parsed = datetime.fromisoformat(value)
+            return parsed.astimezone(NY) if parsed.tzinfo else parsed.replace(tzinfo=NY)
+        except ValueError:
+            pass
     clock = _CLOCK.search(value)
     if not clock:
         return None
@@ -116,6 +140,7 @@ def _ts(value: str, day: date) -> datetime | None:
 
 def _price_in(value: str) -> Decimal | None:
     after_at = value.split("@", 1)[1] if "@" in value else value
+    after_at = _CLOCK.sub(" ", _STAMP.sub(" ", after_at))
     for token in _NUMBER.findall(after_at):
         if ":" not in token and (num := to_decimal(token)) is not None and abs(num) >= 1:
             return num
@@ -206,23 +231,44 @@ def _trade_from_fields(fields: dict[str, str], seq: int, day: date) -> BacktestT
     return trade
 
 
-def _kv_trade(text: str, seq: int, day: date) -> BacktestTrade | None:
-    pairs = {_norm(k): v for k, v in _TRADE_KV.findall(text)}
-    if not pairs or not _DIRECTION.search(text):
+def _free_trade(text: str, seq: int, day: date) -> BacktestTrade | None:
+    """A trade written as ``key=value`` pairs and/or free text with full timestamps."""
+    stamps = [m.group(0) for m in _STAMP.finditer(text)]
+    rest = _STAMP.sub(lambda m: f"@TS{stamps.index(m.group(0))}@", text)
+    direction = _DIRECTION.search(rest)
+    pairs = {_norm(k): v for k, v in _TRADE_KV.findall(rest)}
+    if not direction or not (pairs or stamps):
         return None
-    fields: dict[str, str] = {"direction": _DIRECTION.search(text).group(1)}  # type: ignore[union-attr]
+    fields: dict[str, str] = {"direction": direction.group(1)}
     for key, value in pairs.items():
         for name, aliases in _COLUMN_ALIASES.items():
             if key in aliases:
                 fields[name] = value
-    if seq_match := re.match(r"^\s*#?(\d+)\b", text):
+    used = {int(t) for v in fields.values() for t in _STAMP_TOKEN.findall(v)}
+    free = iter([s for i, s in enumerate(stamps) if i not in used])
+    for name in ("entry_time", "exit_time"):
+        if name not in fields and (stamp := next(free, None)):
+            fields[name] = stamp
+    fields = {k: _STAMP_TOKEN.sub(lambda m: stamps[int(m.group(1))], v) for k, v in fields.items()}
+    plain = _STAMP_TOKEN.sub(" ", rest)
+    if seq_match := re.match(r"^\s*#?(\d+)\b(?!-)", plain):
         fields.setdefault("seq", seq_match.group(1))
     if "entry_time" not in fields:
-        clocks = _CLOCK.findall(text)
+        clocks = _CLOCK.findall(plain)
         if clocks:
             fields["entry_time"] = clocks[0]
             if len(clocks) > 1:
                 fields.setdefault("exit_time", clocks[1])
+    if "points" not in fields and (
+        found := _LABELLED_POINTS.search(plain) or _SUFFIXED_POINTS.search(plain)
+    ):
+        fields["points"] = found.group(1)
+    if "net_pnl" not in fields:
+        dollars = _DOLLARS.findall(plain)
+        if found := _LABELLED_NET.search(plain):
+            fields["net_pnl"] = found.group(1)
+        elif len(dollars) == 1:
+            fields["net_pnl"] = dollars[0]
     return _trade_from_fields(fields, seq, day)
 
 
@@ -250,7 +296,9 @@ def parse_backtest_daily(text: str, session_date: date) -> BacktestDay:
             if trade is not None:
                 day.trades.append(trade)
                 continue
-        if "=" in stripped and (trade := _kv_trade(stripped, len(day.trades) + 1, session_date)):
+        if ("=" in stripped or _STAMP.search(stripped)) and (
+            trade := _free_trade(stripped, len(day.trades) + 1, session_date)
+        ):
             day.trades.append(trade)
             continue
         if _totals(day, stripped):

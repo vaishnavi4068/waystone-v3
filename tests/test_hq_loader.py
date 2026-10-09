@@ -20,6 +20,7 @@ import psycopg
 import pytest
 from psycopg import conninfo
 
+from waystone3.hq.calendar import NY
 from waystone3.hq.loader import Loader, connect
 from waystone3.hq.sources import LocalSource
 
@@ -420,3 +421,72 @@ def test_recompute_drops_stale_duplicate_trades_and_accepts_gross_summary(
         )[0]
         assert status["paper_status"] == "FINAL"
         assert status["paper"]["net_match"] is True and status["paper"]["net_basis"] == "gross"
+
+
+def test_recompute_reparses_stored_replay_lines_with_offset_timestamps(
+    db: str, tmp_path: Path
+) -> None:
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT f.file_id FROM raw.source_file f JOIN ref.strategy s USING (strategy_id) "
+                "WHERE s.strategy_code = 'nq_v221' AND f.source_kind = 'backtest_daily' "
+                "AND f.session_date = '2026-10-02' AND f.is_current"
+            )
+            file_id = cur.fetchone()["file_id"]
+            cur.execute("DELETE FROM raw.source_line WHERE file_id = %s", (file_id,))
+            lines = [
+                "NQ same-day replay 2026-10-02",
+                "2026-10-02 09:31:00-04:00 SHORT -> 2026-10-02 10:05:00-04:00  pts -150.00  "
+                "net $-6,008.96  reason=yeah_its_failing",
+                "total trades: 1  total net: -6008.96",
+            ]
+            for no, content in enumerate(lines, start=1):
+                cur.execute(
+                    "INSERT INTO raw.source_line (file_id, line_no, content) VALUES (%s, %s, %s)",
+                    (file_id, no, content),
+                )
+            cur.execute(
+                "UPDATE core.backtest_trade SET trade_seq = 2026, entry_px = 9, exit_px = 4, "
+                "points = 5, net_pnl = 191.04 WHERE session_date = '2026-10-02' AND strategy_id = "
+                "(SELECT strategy_id FROM ref.strategy WHERE strategy_code = 'nq_v221')"
+            )
+        conn.commit()
+        Loader(conn, LocalSource(src), now=NOW).run("recompute", ["nq_v221"])
+    [bt] = _rows(
+        db,
+        "SELECT b.trade_seq, b.entry_px, b.exit_px, b.points, b.net_pnl, b.net_pnl_derived, "
+        "b.exit_ts FROM core.backtest_trade b JOIN ref.strategy s USING (strategy_id) "
+        "WHERE s.strategy_code = 'nq_v221' AND b.session_date = '2026-10-02'",
+    )
+    assert bt["trade_seq"] == 1 and bt["entry_px"] is None and bt["exit_px"] is None
+    assert float(bt["points"]) == -150.0 and float(bt["net_pnl"]) == -6008.96
+    assert bt["net_pnl_derived"] is False
+    assert bt["exit_ts"].astimezone(NY).strftime("%H:%M") == "10:05"
+    [status] = _rows(
+        db,
+        "SELECT backtest_status, checks->'backtest' AS bt FROM api.v_day_status "
+        "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
+    )
+    assert status["backtest_status"] == "LOADED" and status["bt"]["net_match"] is True
+
+
+def test_replay_trades_that_disagree_with_the_file_total_mark_the_day_incomplete(
+    db: str, tmp_path: Path
+) -> None:
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    bad = src / "raw" / "backtest" / "NQ_2026-10-02_back_daily.txt"
+    bad.write_text(bad.read_text().replace("total net: -6008.96", "total net: -9999.00"))
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+    [status] = _rows(
+        db,
+        "SELECT backtest_status, checks->'backtest' AS bt FROM api.v_day_status "
+        "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
+    )
+    assert status["backtest_status"] == "DATA_INCOMPLETE"
+    assert status["bt"]["net_match"] is False and status["bt"]["net_reported"] == -9999.0
