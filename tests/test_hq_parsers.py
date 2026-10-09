@@ -198,3 +198,14 @@ def test_classify_paper_objects() -> None:
     )
     assert classify_paper("raw/paper/es_v221/events_2026-10-02.jsonl")[0] == "paper_events"
     assert classify_paper("raw/paper/es_v221/cron.log") == ("other", None)
+
+
+def test_backtest_file_names_allow_multi_part_prefixes() -> None:
+    from waystone3.hq.backtest_daily import FILE_NAME
+
+    assert FILE_NAME.match("R2_MNQ_2026-10-05_back_daily.txt").group("prefix", "d") == (  # type: ignore[union-attr]
+        "R2_MNQ_",
+        "2026-10-05",
+    )
+    assert FILE_NAME.match("NQ_2026-10-07_back_daily.txt").group("prefix") == "NQ_"  # type: ignore[union-attr]
+    assert FILE_NAME.match("NQ_comparison_2026-10-07.txt") is None

@@ -179,11 +179,14 @@ class Loader:
         self.conn.commit()
 
     def _ingest_backtests(self, report: RunReport, selected: list[Strategy]) -> set[int]:
-        by_prefix = {
-            s.backtest_file_prefix: s
-            for s in selected
-            if s.backtest_file_prefix and s.backtest_prefix
-        }
+        by_prefix: dict[str, Strategy] = {}
+        for s in selected:
+            if s.backtest_file_prefix and s.backtest_prefix:
+                by_prefix[s.backtest_file_prefix] = s
+        # The R2 replay names its files R2_MNQ_<date>: prefix plus instrument root.
+        for s in selected:
+            if s.backtest_file_prefix and s.backtest_prefix and s.instrument_root:
+                by_prefix.setdefault(f"{s.backtest_file_prefix}{s.instrument_root}_", s)
         touched: set[int] = set()
         for prefix in sorted({s.backtest_prefix for s in by_prefix.values() if s.backtest_prefix}):
             for obj in self.source.list(prefix):

@@ -1,6 +1,7 @@
 """Parser for the after-hours same-day backtest replay.
 
-VM files: BACK_TEST_DAILY/<PREFIX>YYYY-MM-DD_back_daily.txt.
+VM files: BACK_TEST_DAILY/<PREFIX>YYYY-MM-DD_back_daily.txt, where the prefix may have
+several parts (``NQ_``, ``R2_MNQ_``).
 
 The replay output is not formally specified, so this parser accepts the shapes the
 replay scripts produce: ``key: value`` header lines, a trade table (whitespace, ``|``
@@ -18,7 +19,9 @@ from decimal import Decimal
 from waystone3.hq.calendar import NY
 from waystone3.hq.v221_log import to_decimal
 
-FILE_NAME = re.compile(r"^(?P<prefix>[A-Za-z0-9]+_)(?P<d>\d{4}-\d{2}-\d{2})_back_daily\.txt$")
+FILE_NAME = re.compile(
+    r"^(?P<prefix>[A-Za-z0-9]+_(?:[A-Za-z0-9]+_)*?)(?P<d>\d{4}-\d{2}-\d{2})_back_daily\.txt$"
+)
 
 _KV_LINE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 /&()%._-]*?)\s*[:=]\s*(.+?)\s*$")
 _TRADE_KV = re.compile(r"\b([A-Za-z_]+)\s*=\s*(\S+)")

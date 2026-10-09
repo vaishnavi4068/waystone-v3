@@ -490,3 +490,45 @@ def test_replay_trades_that_disagree_with_the_file_total_mark_the_day_incomplete
     )
     assert status["backtest_status"] == "DATA_INCOMPLETE"
     assert status["bt"]["net_match"] is False and status["bt"]["net_reported"] == -9999.0
+
+
+def test_r2_mnq_replay_files_load_as_r2_backtests(db: str, tmp_path: Path) -> None:
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    (src / "raw" / "backtest" / "R2_MNQ_2026-10-02_back_daily.txt").write_text(
+        "R2 MNQ same-day replay 2026-10-02\n"
+        "params fp: bb6649148c\n"
+        "2026-10-02 09:36:00-04:00 LONG -> 2026-10-02 10:05:00-04:00  pts -154.75  "
+        "net $-310.72  reason=yeah_its_failing\n"
+        "2026-10-02 11:21:00-04:00 SHORT -> 2026-10-02 12:02:00-04:00  pts -109.25  "
+        "net $-219.72  reason=yeah_its_failing\n"
+        "2026-10-02 14:10:00-04:00 SHORT -> 2026-10-02 15:55:00-04:00  pts -34.75  "
+        "net $-70.72  reason=SESSION_FLATTEN\n"
+        "total trades: 3  total net: -601.16\n"
+    )
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+    [sync] = _rows(
+        db,
+        "SELECT backtest_status, bt_trades, bt_net_pnl, live_trades FROM api.v_daily_sync "
+        "WHERE strategy_code = 'r2_mnq' AND session_date = '2026-10-02'",
+    )
+    assert sync["backtest_status"] == "LOADED"
+    assert sync["bt_trades"] == 3 and float(sync["bt_net_pnl"]) == -601.16
+    assert sync["live_trades"] == 3
+    [status] = _rows(
+        db,
+        "SELECT checks->'backtest' AS bt FROM api.v_day_status "
+        "WHERE strategy_code = 'r2_mnq' AND session_date = '2026-10-02'",
+    )
+    assert status["bt"]["net_match"] is True and status["bt"]["trades_parsed"] == 3
+    owners = _rows(
+        db,
+        "SELECT s.strategy_code, f.gcs_uri FROM raw.source_file f "
+        "JOIN ref.strategy s USING (strategy_id) WHERE f.source_kind = 'backtest_daily'",
+    )
+    assert {o["gcs_uri"].rsplit("/", 1)[-1]: o["strategy_code"] for o in owners} == {
+        "ES_2026-10-01_back_daily.txt": "es_v221",
+        "NQ_2026-10-02_back_daily.txt": "nq_v221",
+        "R2_MNQ_2026-10-02_back_daily.txt": "r2_mnq",
+    }

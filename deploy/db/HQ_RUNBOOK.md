@@ -184,5 +184,5 @@ The dashboard `/hq` pages and the MCP tools are then the source.
 | Field | Values |
 |---|---|
 | paper | `FINAL` (DAILY SUMMARY present and it matches the parsed trades), `PRELIMINARY` (past day, no summary), `INTRADAY` (today, no summary yet), `PARTIAL` (parsed trades disagree with the summary; see `checks`) |
-| backtest | `LOADED`, `DATA_INCOMPLETE`, `PENDING` (before 17:30 ET), `MISSING` (none by 17:30 ET; R2 has no replay yet), `NOT_APPLICABLE` |
+| backtest | `LOADED`, `DATA_INCOMPLETE`, `PENDING` (before 17:30 ET), `MISSING` (none by 17:30 ET), `NOT_APPLICABLE` |
 | sync | `OK`, `FLAG` (exit reason or trade count differs, or the delta is over threshold), `N/A` (no replay) |
