@@ -532,3 +532,21 @@ def test_r2_mnq_replay_files_load_as_r2_backtests(db: str, tmp_path: Path) -> No
         "NQ_2026-10-02_back_daily.txt": "nq_v221",
         "R2_MNQ_2026-10-02_back_daily.txt": "r2_mnq",
     }
+
+
+def test_replay_file_with_nothing_recognisable_is_not_reported_as_loaded(
+    db: str, tmp_path: Path
+) -> None:
+    src = tmp_path / "bucket"
+    shutil.copytree(FIXTURES, src)
+    (src / "raw" / "backtest" / "NQ_2026-10-02_back_daily.txt").write_text(
+        "NQ same-day replay 2026-10-02\nreplay finished\n"
+    )
+    with connect(db) as conn:
+        Loader(conn, LocalSource(src), now=NOW).run("backfill")
+    [status] = _rows(
+        db,
+        "SELECT backtest_status FROM api.v_day_status "
+        "WHERE strategy_code = 'nq_v221' AND session_date = '2026-10-02'",
+    )
+    assert status["backtest_status"] == "DATA_INCOMPLETE"

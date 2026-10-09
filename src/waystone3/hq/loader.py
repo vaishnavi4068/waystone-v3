@@ -734,6 +734,7 @@ def _write_backtest(
     elif (
         (parsed.trades_reported not in (None, len(parsed.trades)))
         or (not parsed.trades and parsed.unparsed)
+        or (not parsed.trades and parsed.trades_reported is None)
         or net_match is False
     ):
         status = "INCOMPLETE"
