@@ -31,6 +31,12 @@ import type {
   ResearchRun,
   ResearchScorecard,
   ResearchStrategy,
+  SentimentDay,
+  SentimentDaySummary,
+  SentimentGate,
+  SentimentNow,
+  SentimentPoint,
+  SentimentQuality,
   Signal,
 } from "./types";
 
@@ -219,3 +225,20 @@ export const getHqPaper = (strategy?: string, date?: string) =>
   get<HqPaperDay>(`/api/hq/paper${q({ strategy, date })}`);
 export const getHqStatus = () =>
   get<{ loads: HqLoadRun[]; days: unknown[] }>("/api/hq/status");
+export const getHqSentiment = (start?: string, end?: string) =>
+  get<{ dates: string[]; days: SentimentDaySummary[] }>(`/api/hq/sentiment${q({ start, end })}`);
+export const getHqSentimentNow = () => get<SentimentNow>("/api/hq/sentiment/now");
+export const getHqSentimentDay = (date?: string, strategy?: string) =>
+  get<SentimentDay>(`/api/hq/sentiment/day${q({ date, strategy })}`);
+export const getHqSentimentGates = (params: {
+  start?: string;
+  end?: string;
+  strategy?: string;
+  gate?: string;
+  state?: string;
+}) => get<{ gates: SentimentGate[] }>(`/api/hq/sentiment/gates${q(params)}`);
+export const getHqSentimentSeries = (layer: string, component: string, start?: string, end?: string) =>
+  get<{ layer: string; component: string; points: SentimentPoint[] }>(
+    `/api/hq/sentiment/series${q({ layer, component, start, end })}`,
+  );
+export const getHqSentimentQuality = () => get<SentimentQuality>("/api/hq/sentiment/quality");

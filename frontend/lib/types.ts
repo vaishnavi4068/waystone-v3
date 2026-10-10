@@ -750,3 +750,177 @@ export interface HqLoadRun {
   files_loaded: number;
   error: string | null;
 }
+
+export type GateState = "OPEN" | "CAUTION" | "HALT" | "BLOCKED" | "UNKNOWN";
+export type Verdict = "TRADE" | "REDUCE" | "STAND_DOWN";
+
+export interface SentimentEvent {
+  kind: string;
+  title: string;
+  ts?: string;
+  event_ts?: string;
+  session_date?: string;
+  source?: string;
+}
+
+export interface SentimentRegime {
+  key?: string;
+  vol?: string;
+  fng_source?: string;
+  chop?: Record<string, number | null>;
+  one_way_prior?: Record<string, { one_way: boolean; direction: string; body_ratio: number | null }>;
+}
+
+export interface SentimentSnapshot {
+  session_date: string;
+  slot_label: string;
+  slot_ts?: string;
+  is_final: boolean;
+  fng_cnn: number | null;
+  fng_replica: number | null;
+  fng_prior_day: number | null;
+  vix: number | null;
+  vix_term_ratio: number | null;
+  vol_spike: boolean | null;
+  narrative_score: number | null;
+  narrative_dispersion: number | null;
+  narrative_n: number | null;
+  kill_hits: number | null;
+  events: SentimentEvent[];
+  regime: SentimentRegime;
+  data_gaps: string[];
+  best_strategy: string | null;
+  headline: string | null;
+  summary: string | null;
+  policy_version: string;
+  inputs_hash?: string;
+  computed_at: string;
+}
+
+export interface SentimentVerdictLite {
+  strategy_code: string;
+  verdict: Verdict;
+  size_mult: number;
+  rank: number;
+}
+
+export interface SentimentDaySummary extends SentimentSnapshot {
+  intervals: number;
+  verdicts: SentimentVerdictLite[] | null;
+}
+
+export interface SentimentRecommendation {
+  session_date: string;
+  slot_label: string;
+  strategy_code: string;
+  display_name: string;
+  instrument_root: string;
+  verdict: Verdict;
+  size_mult: number;
+  rank: number;
+  fit_score: number | null;
+  fit_n: number;
+  fit_regime: string | null;
+  positioning: string | null;
+  reasons: string[];
+  policy_version: string;
+  inputs_hash: string;
+}
+
+export interface SentimentGate {
+  session_date: string;
+  slot_label: string;
+  strategy_code: string;
+  gate: string;
+  state: GateState;
+  reason: string;
+  size_mult: number;
+  confidence: number | null;
+  evidence: string[];
+  inputs_as_of: string | null;
+  expires_at: string | null;
+  override: string | null;
+  policy_version: string;
+  inputs_hash: string;
+}
+
+export interface SentimentScore {
+  session_date: string;
+  slot_label: string;
+  layer: string;
+  component: string;
+  value: number | null;
+  score: number | null;
+  state: string | null;
+  source: string | null;
+  detail: Record<string, unknown> | null;
+}
+
+export interface SentimentHeadline {
+  headline_id: number;
+  title: string;
+  url: string;
+  publisher: string | null;
+  feed: string;
+  tier: number;
+  published_at: string;
+  scorer: string;
+  score: number | null;
+  novelty: number | null;
+  kill_terms: string[];
+  macro_tags: string[];
+  is_speculative: boolean;
+  kill_eligible: boolean;
+}
+
+export interface SentimentDay {
+  dates: string[];
+  session_date: string | null;
+  slots?: SentimentSnapshot[];
+  recommendations?: SentimentRecommendation[];
+  gates?: SentimentGate[];
+  scores?: SentimentScore[];
+  headlines?: SentimentHeadline[];
+  events?: SentimentEvent[];
+  upcoming?: SentimentEvent[];
+}
+
+export interface SentimentNow {
+  snapshot: SentimentSnapshot | null;
+  recommendations: SentimentRecommendation[];
+  gates: SentimentGate[];
+}
+
+export interface SentimentSourceHealth {
+  source: string;
+  last_ok_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
+  last_rows: number | null;
+  last_run_at: string | null;
+}
+
+export interface SentimentOverride {
+  override_id?: number;
+  strategy_code: string | null;
+  gate: string;
+  action: string;
+  reason: string;
+  created_by: string;
+  valid_from: string;
+  valid_to: string | null;
+}
+
+export interface SentimentQuality {
+  efficacy: SentimentScore[];
+  sources: SentimentSourceHealth[];
+  overrides: SentimentOverride[];
+}
+
+export interface SentimentPoint {
+  session_date: string;
+  value: number | null;
+  score: number | null;
+  state: string | null;
+  source: string | null;
+}

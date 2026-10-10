@@ -31,7 +31,8 @@ def build_hq_mcp(reader: HqReader, authenticate: Authenticate) -> FastMCP:
         instructions=(
             "Read-only Waystone futures HQ: live paper trading vs backtest replay, daily P&L, "
             "trades, signals, fills, engine events and workbook KPIs for es_v221, nq_v221 and "
-            "r2_mnq. Dates are session dates (YYYY-MM-DD, US/Eastern). Start with "
+            "r2_mnq, plus the futures sentiment gate and strategy recommender (hq_sentiment*). "
+            "Dates are session dates (YYYY-MM-DD, US/Eastern). Start with "
             "hq_strategies or hq_sync; use hq_compare for one strategy's day and hq_paper_day "
             "for its trades and data freshness."
         ),

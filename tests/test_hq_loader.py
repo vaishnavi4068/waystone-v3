@@ -60,7 +60,7 @@ def db() -> Iterator[str]:
             SQL_DIR / "01_roles.sql",
             {"WAYSTONE_DB": name, "WAYSTONE_LOAD_PW": "test-load", "WAYSTONE_READ_PW": "test-read"},
         )
-        for path in sorted(SQL_DIR.glob("0[2-8]_*.sql")):
+        for path in sorted(SQL_DIR.glob("0[2-9]_*.sql")):
             _psql(load_db, path)
         yield load_db
     finally:

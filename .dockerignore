@@ -9,3 +9,4 @@ tests
 docs
 deploy
 *.db
+!deploy/sentiment/Dockerfile
