@@ -59,10 +59,11 @@ KILL_TERMS: dict[str, re.Pattern[str]] = {
     "circuit breaker": re.compile(r"\bcircuit[- ]breakers?\b|\blimit[- ]down\b"),
     "exchange halt": re.compile(
         r"\b(trading|exchange|market)[- ]wide halt\b|\b(trading|exchange|markets?) halt(ed|s)?\b"
+        r"|\bhalt(s|ed)? (all )?trading\b"
     ),
     "default": re.compile(r"\b(sovereign|debt|treasury) default\b|\bdebt ceiling breach\b"),
     "bank failure": re.compile(r"\bbank (run|failure|collapse)s?\b"),
-    "flash crash": re.compile(r"\bflash crash\b|\bmarket crash\b"),
+    "flash crash": re.compile(r"\bflash crash\b"),
 }
 
 MACRO_TAGS: dict[str, re.Pattern[str]] = {
@@ -113,9 +114,60 @@ def source_tier(publisher: str | None, feed: str) -> float:
     return 0.5
 
 
+# Idioms that contain a kill word but are not an exogenous shock.
+_KILL_IDIOMS = re.compile(
+    r"\b(price|bidding|talent|culture|streaming|console|star|cold|chip|ai|subsidy|fare) wars?\b"
+    r"|\bwar (crimes?|chest|room|games?|criminals?|of words)\b"
+    r"|\bwar on (drugs|cancer|talent|inflation)\b"
+    r"|\bpost-?war\b|\bwartime\b|\bworld war (i|ii|1|2)\b"
+)
+# Opinion, prediction and how-to framing (thesis §10 hygiene): never an event, never halts.
+_SPECULATIVE = re.compile(
+    r"^(if|why|how|what|should|could|can|will|is|are|do|does)\b|\?\s*$"
+    r"|\b(could|might|may|would) (be|come|hit|spark|trigger|cause|lead|happen)"
+    r"|\b(is|are) coming\b|\bpredict(s|ed|ions?)?\b|\bforecasts?\b|\baccording to some\b"
+    r"|\b(here'?s|this is) (how|what|why)\b|\bhow to\b|\byou should\b|\bshould you\b"
+    r"|\b(smartest|best|top) (move|stocks?|way|thing)s?\b|\bstocks? to (buy|own|watch)\b"
+    r"|\b\d+ (stocks?|things?|ways?|reasons?|signs?)\b|\bprotect your\b"
+    r"|\b(think|fear|worry) (a|that)\b"
+    r"|\bwhat (to|investors should) (do|know)\b|\bopinion\b|\bcommentary\b|\bexplainer\b"
+)
+
+
 def kill_terms(text: str) -> list[str]:
-    low = text.lower()
+    low = _KILL_IDIOMS.sub(" ", text.lower())
     return [name for name, rx in KILL_TERMS.items() if rx.search(low)]
+
+
+def is_speculative(text: str) -> bool:
+    return bool(_SPECULATIVE.search(text.lower().strip()))
+
+
+def kill_eligible(text: str) -> bool:
+    """A kill-switch candidate: a kill term, about markets or the macro, stated as fact."""
+    return bool(kill_terms(text)) and market_relevant(text) and not is_speculative(text)
+
+
+def independent_sources(
+    items: Sequence[tuple[str, str]], same_story: float = 0.35, reprint: float = 0.9
+) -> int:
+    """Most independent publishers behind one story among ``(title, publisher)`` pairs.
+
+    Titles at cosine ≥ ``same_story`` are one story; a near-verbatim title (≥ ``reprint``)
+    from another outlet is syndication and adds nothing.
+    """
+    vecs = [(_vec(t), p.strip().lower()) for t, p in items]
+    best = 0
+    for anchor, _ in vecs:
+        counted: list[tuple[Counter[str], str]] = []
+        for v, pub in vecs:
+            if cosine(anchor, v) < same_story:
+                continue
+            if any(pub == pc or cosine(v, vc) >= reprint for vc, pc in counted):
+                continue
+            counted.append((v, pub))
+        best = max(best, len(counted))
+    return best
 
 
 _MARKET = re.compile(

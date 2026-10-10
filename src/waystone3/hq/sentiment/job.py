@@ -402,6 +402,8 @@ class SentimentJob:
                         "score": s.score,
                         "novelty": index.novelty(h.title),
                         "kill_terms": nlp.kill_terms(h.title),
+                        "is_speculative": nlp.is_speculative(h.title),
+                        "kill_eligible": nlp.kill_eligible(h.title),
                         "macro_tags": nlp.macro_tags(h.title),
                     },
                     ("url_hash",),
@@ -548,7 +550,7 @@ class SentimentJob:
                 float(r["score"]),
                 float(r["tier"]),
                 float(r["novelty"]),
-                bool(r["kill_terms"]),
+                nlp.kill_eligible(r["title"]),
             )
             for r in rows
         ]
@@ -556,14 +558,14 @@ class SentimentJob:
         kills = [
             KillHeadline(
                 r["title"],
-                tuple(r["kill_terms"]),
+                tuple(nlp.kill_terms(r["title"])),
                 r["published_at"].astimezone(NY),
                 float(r["tier"]),
                 float(r["score"]),
                 r["publisher"] or r["feed"],
             )
             for r in rows
-            if r["kill_terms"] and nlp.market_relevant(r["title"])
+            if nlp.kill_eligible(r["title"])
         ]
         chop: dict[str, float | None] = {}
         chop_src: dict[str, str] = {}

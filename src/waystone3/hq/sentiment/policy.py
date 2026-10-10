@@ -6,9 +6,11 @@ with a state, confidence, evidence, the as-of time of its inputs and an expiry:
   data         HALT when a required input (macro calendar, VIX) is missing or older than its
                freshness limit. Fail closed, and no override can open it.
   event        E1: no new entries from 30 min before to 60 min after CPI / NFP / PCE / FOMC.
-  kill         E2: macro kill switch. Only market-relevant headlines count (kill term plus an
-               index / macro / market entity), tone must be negative. Asymmetric trust: one
-               wire-tier source halts; lower tiers need two distinct publishers. The halt holds
+  kill         E2: macro kill switch. Only factual, market-relevant headlines count (kill term
+               plus an index / macro / market entity; opinion, prediction and how-to framing and
+               idioms like "price war" are excluded), tone must be negative. Asymmetric trust:
+               one wire-tier source halts; lower tiers need two independent publishers on the
+               same story (syndicated reprints count once). The halt holds
                for ``KILL_COOLDOWN`` after the last hit (hysteresis). Feeds down intraday:
                CAUTION, because a halt could be missed.
   engine       V221's own entry gate, mirrored: blocked when prior-day F&G ≤ 30 AND
@@ -40,8 +42,9 @@ from waystone3.hq.sentiment.features import (
     Positioning,
     VolState,
 )
+from waystone3.hq.sentiment.nlp import independent_sources
 
-POLICY_VERSION = "sg-1.0"
+POLICY_VERSION = "sg-1.1"
 EVENT_BEFORE = timedelta(minutes=30)
 EVENT_AFTER = timedelta(minutes=60)
 KILL_LOOKBACK = timedelta(hours=3)
@@ -68,6 +71,7 @@ def policy_config() -> dict[str, Any]:
         "kill_cooldown_h": KILL_COOLDOWN.total_seconds() / 3600,
         "kill_min_negative": KILL_MIN_NEG,
         "kill_corroboration": KILL_CORROBORATION,
+        "kill_requires": "factual, market-relevant, same story",
         "fng_fear": FNG_FEAR,
         "chop_threshold": CHOP_THRESHOLD,
         "vol_spike_mult": 1.10,
@@ -315,16 +319,16 @@ def gate_kill(s: SlotInputs) -> Gate:
         key=lambda k: k.ts,
     )
     wire = [k for k in hits if k.tier >= KILL_WIRE_TIER]
-    publishers = {k.publisher.lower() for k in hits}
+    sources = independent_sources([(k.title, k.publisher) for k in hits])
     evidence = tuple(
         f"{k.ts:%H:%M} [{k.publisher}, tier {k.tier:g}, tone {k.score:+.2f}] "
         f"{k.title[:120]} ({', '.join(k.terms)})"
         for k in hits[-5:]
     )
-    if wire or len(publishers) >= KILL_CORROBORATION:
+    if wire or sources >= KILL_CORROBORATION:
         trigger = wire[-1] if wire else hits[-1]
-        basis = "wire-tier source" if wire else f"{len(publishers)} independent publishers"
-        conf = min(1.0, 0.6 + 0.2 * (len(wire) + len(publishers) - 1))
+        basis = "wire-tier source" if wire else f"{sources} independent publishers, same story"
+        conf = min(1.0, 0.6 + 0.2 * (len(wire) + sources - 1))
         return Gate(
             "kill",
             HALT,

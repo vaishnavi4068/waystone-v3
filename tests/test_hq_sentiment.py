@@ -65,6 +65,40 @@ def test_kill_terms_need_market_relevance() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("title", "eligible"),
+    [
+        ("If a Stock Market Crash Is Coming, Warren Buffett Says This Is the Smartest Move", False),
+        (
+            "3 in 4 Americans Think a Stock Market Crash Is Coming. Here's How to Protect Money",
+            False,
+        ),
+        ("Lawyer wins Nobel Peace Prize for efforts to prosecute war crimes", False),
+        ("Price war hits airline stocks", False),
+        ("Could a trade war sink stocks?", False),
+        ("Stocks tumble as Russia invades, oil spikes", True),
+        ("CME halts trading in equity futures after circuit breaker triggered", True),
+        ("Fed calls emergency meeting as markets slide", True),
+    ],
+)
+def test_kill_eligibility_rejects_opinion_and_idioms(title: str, eligible: bool) -> None:
+    assert nlp.kill_eligible(title) is eligible
+
+
+def test_independent_sources_counts_stories_not_reprints() -> None:
+    reprint = [
+        ("If a crash is coming Buffett says", "Yahoo Finance"),
+        ("If a crash is coming Buffett says", "The Motley Fool"),
+    ]
+    assert nlp.independent_sources(reprint) == 1
+    story = [
+        ("Missile strikes hit Taiwan, Asian markets slide", "Reuters"),
+        ("Asian stocks slide after missile strikes on Taiwan", "Bloomberg"),
+        ("Fed holds rates steady", "CNBC"),
+    ]
+    assert nlp.independent_sources(story) == 2
+
+
 def test_lexicon_sign_and_negation() -> None:
     assert nlp.lexicon_score("Stocks rally to record highs") > 0.3
     assert nlp.lexicon_score("Stocks plunge on recession fears") < -0.3
@@ -198,7 +232,17 @@ def _kill(publisher: str, tier: float, minutes: int = 20, score: float = -0.7) -
 
 def test_kill_switch_asymmetric_trust() -> None:
     assert gate_kill(_slot(kills=[_kill("Some Blog", 0.5)])).state == CAUTION
-    two = gate_kill(_slot(kills=[_kill("Blog A", 0.5), _kill("Blog B", 0.5, 30)]))
+    same = gate_kill(_slot(kills=[_kill("Blog A", 0.5), _kill("Blog B", 0.5, 30)]))
+    assert same.state == CAUTION, "a verbatim reprint is one source"
+    other = KillHeadline(
+        "War escalates, stocks slide worldwide",
+        ("war",),
+        AT - timedelta(minutes=25),
+        0.5,
+        -0.6,
+        "Blog B",
+    )
+    two = gate_kill(_slot(kills=[_kill("Blog A", 0.5), other]))
     assert two.state == HALT and "2 independent publishers" in two.reason
     wire = gate_kill(_slot(kills=[_kill("Reuters", 1.0)]))
     assert wire.state == HALT and wire.expires_at == AT - timedelta(minutes=20) + KILL_COOLDOWN
@@ -308,11 +352,11 @@ def test_parse_cnn_cboe_fred_rss() -> None:
     cnn = src.parse_cnn(
         {
             "fear_and_greed": {"score": 45, "timestamp": "2026-10-09T23:59:54+00:00"},
-            "fear_and_greed_historical": {"data": [{"x": 1791547200000.0, "y": 38.2}]},
+            "fear_and_greed_historical": {"data": [{"x": 1791417600000.0, "y": 39.8}]},
             "put_call_options": {"score": 30.5, "rating": "fear"},
         }
     )
-    assert cnn.history[date(2026, 10, 9)] == 45.0
+    assert cnn.history == {date(2026, 10, 8): 39.8, date(2026, 10, 9): 45.0}
     assert cnn.components == {"put_call_options": (30.5, "fear")}
     vix = src.parse_cboe_csv("DATE,OPEN,HIGH,LOW,CLOSE\n10/09/2026,15.3,15.3,14.7,14.84\n")
     assert vix == {date(2026, 10, 9): (15.3, 15.3, 14.7, 14.84)}

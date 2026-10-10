@@ -13,7 +13,7 @@ import io
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 from xml.etree import ElementTree
@@ -170,7 +170,8 @@ def parse_cnn(payload: dict[str, Any]) -> FngNow:
         ts, v = row.get("x"), _f(row.get("y"))
         if ts is None or v is None:
             continue
-        d = datetime.fromtimestamp(ts / 1000, tz=NY).date()
+        # Daily points are stamped 00:00 UTC on their own trading date.
+        d = datetime.fromtimestamp(ts / 1000, tz=UTC).date()
         hist[d] = round(v, 2)
     now = payload.get("fear_and_greed") or {}
     if _f(now.get("score")) is not None and now.get("timestamp"):
@@ -312,7 +313,9 @@ class Feeds:
         return parse_cnn(r.json())
 
     def fred(self, series_id: str, start: date) -> dict[date, float]:
-        return parse_fred_csv(self._get(FRED.format(sid=series_id, start=start.isoformat())).text)
+        # FRED stalls requests that present a browser user agent.
+        url = FRED.format(sid=series_id, start=start.isoformat())
+        return parse_fred_csv(self._get(url, headers={"User-Agent": CONTACT_UA}).text)
 
     def put_call(self, day: date) -> dict[str, float] | None:
         r = self.http.get(CBOE_PCR.format(day=day.isoformat()))

@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS sentiment.headline (
     novelty       numeric(6,4) NOT NULL,
     kill_terms    text[] NOT NULL DEFAULT '{}',
     macro_tags    text[] NOT NULL DEFAULT '{}',
+    is_speculative boolean NOT NULL DEFAULT false,
+    kill_eligible  boolean NOT NULL DEFAULT false,
     fetched_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS headline_day ON sentiment.headline (session_date, published_at);
@@ -187,7 +189,8 @@ SELECT * FROM sentiment.score;
 
 CREATE OR REPLACE VIEW api.v_sentiment_headline AS
 SELECT headline_id, title, url, publisher, feed, tier, published_at, session_date, scorer,
-       prob_pos, prob_neg, prob_neu, score, novelty, kill_terms, macro_tags
+       prob_pos, prob_neg, prob_neu, score, novelty, kill_terms, macro_tags, is_speculative,
+       kill_eligible
 FROM sentiment.headline;
 
 CREATE OR REPLACE VIEW api.v_sentiment_recommendation AS
