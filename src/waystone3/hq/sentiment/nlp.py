@@ -106,7 +106,9 @@ def normalize(text: str) -> str:
 def source_tier(publisher: str | None, feed: str) -> float:
     if publisher is None and feed in WIRE_FEEDS:
         return 1.0
-    name = f"{publisher or ''} {feed}".lower()
+    # Aggregator feeds are named after their query ("google:Federal Reserve"), so the tier
+    # comes from the publisher whenever one is known.
+    name = (publisher or feed).lower()
     if any(j in name for j in JUNK):
         return 0.0
     if any(w in name for w in WIRE):

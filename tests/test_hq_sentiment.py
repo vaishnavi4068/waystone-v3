@@ -52,6 +52,7 @@ def test_source_tiers() -> None:
     assert nlp.source_tier(None, "fed_press") == 1.0
     assert nlp.source_tier("Motley Fool", "google:x") == 0.0
     assert nlp.source_tier("Some Blog", "google:x") == 0.5
+    assert nlp.source_tier("Daily Kos", "google:Federal Reserve") == 0.5
 
 
 def test_kill_terms_need_market_relevance() -> None:
