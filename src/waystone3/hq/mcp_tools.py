@@ -105,6 +105,73 @@ def register_hq_tools(mcp: FastMCP, reader: HqReader, authorize: Callable[[], No
         return reader.returns(known(strategy))
 
     @mcp.tool()
+    def hq_sentiment(start: str | None = None, end: str | None = None) -> dict[str, Any]:
+        """Futures sentiment per session (YYYY-MM-DD range, newest first): Fear & Greed (CNN,
+        in-house replica, prior day), VIX and term structure, headline narrative score and
+        dispersion, kill-switch hits, scheduled CPI/NFP/PCE/FOMC, the regime, the strategy
+        verdicts (TRADE / REDUCE / STAND_DOWN with size) and a plain-language summary."""
+        authorize()
+        return {
+            "dates": reader.sentiment_dates(),
+            "days": reader.sentiment_range(_day(start, "start"), _day(end, "end")),
+        }
+
+    @mcp.tool()
+    def hq_sentiment_now() -> dict[str, Any]:
+        """The current sentiment gate: the newest interval's summary, which strategy to run
+        (rank, TRADE / REDUCE / STAND_DOWN, size multiplier, regime fit) and every gate's
+        state with its reason, confidence and expiry. Ask this first for 'what should we
+        trade right now'."""
+        authorize()
+        return reader.sentiment_latest()
+
+    @mcp.tool()
+    def hq_sentiment_gates(
+        start: str | None = None,
+        end: str | None = None,
+        strategy: str | None = None,
+        gate: str | None = None,
+        state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Gate audit trail (newest first, max 500): one row per gate per strategy per
+        interval with state, reason, confidence, evidence, input as-of time, expiry, operator
+        override, policy version and input hash. gate: data | event | kill | engine | vol |
+        positioning; state: OPEN | CAUTION | HALT | BLOCKED | UNKNOWN."""
+        authorize()
+        code = known(strategy) if strategy else None
+        return reader.sentiment_gates(_day(start, "start"), _day(end, "end"), code, gate, state)
+
+    @mcp.tool()
+    def hq_sentiment_day(date: str | None = None, strategy: str | None = None) -> dict[str, Any]:
+        """One session in full (default latest): every intraday interval summary, the
+        per-strategy recommendation and rank, each gate's audit row (state, confidence,
+        evidence, expiry, override), every stored score and the scored headlines."""
+        authorize()
+        code = known(strategy) if strategy else None
+        dates = reader.sentiment_dates()
+        day = _day(date, "date") or (_day(dates[-1], "date") if dates else None)
+        if day is None:
+            return {"session_date": None, "dates": dates}
+        return {"dates": dates, **reader.sentiment_day(day, code)}
+
+    @mcp.tool()
+    def hq_sentiment_series(
+        layer: str, component: str, start: str | None = None, end: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Daily history of one stored score, e.g. layer 'fng' component 'replica',
+        'flow'/'vix_term_ratio', 'narrative'/'all', 'positioning'/'cot_lev:NQ',
+        'regime'/'chop:NQ'."""
+        authorize()
+        return reader.sentiment_series(layer, component, _day(start, "start"), _day(end, "end"))
+
+    @mcp.tool()
+    def hq_sentiment_quality() -> dict[str, Any]:
+        """Sentiment gate quality: per-gate efficacy vs strategy P&L (fired vs open sessions),
+        PSI drift alarms, data source health and active operator overrides."""
+        authorize()
+        return {"efficacy": reader.sentiment_efficacy(), **reader.sentiment_health()}
+
+    @mcp.tool()
     def hq_load_status() -> dict[str, Any]:
         """Last log-loader run per job (paper/backtest/backfill) and recent day statuses
         (paper FINAL/PRELIMINARY/INTRADAY, backtest LOADED/MISSING/PENDING)."""

@@ -353,6 +353,97 @@ def load_logs(
         raise typer.Exit(1)
 
 
+@app.command("sentiment")
+def sentiment(
+    job: str = typer.Option(
+        "daily", "--job", help="intraday (every 30 min) | daily (pre-market + close) | backfill."
+    ),
+    days: int | None = typer.Option(
+        None, "--days", help="Sessions back to (re)compute. Default: daily 7, backfill 365."
+    ),
+    scorer: str = typer.Option(
+        "auto",
+        "--scorer",
+        envvar="WAYSTONE_SENTIMENT_SCORER",
+        help="auto (FinBERT when installed) | finbert | lexicon.",
+    ),
+    dsn: str = typer.Option(
+        "",
+        "--dsn",
+        envvar="WAYSTONE_DB_DSN",
+        help="Postgres DSN. Empty uses the libpq PGHOST/PGUSER/PGPASSWORD/PGDATABASE env vars.",
+    ),
+) -> None:
+    """Score futures sentiment from free feeds, run the gates and store every score."""
+    from waystone3.hq.db import connect
+    from waystone3.hq.sentiment.job import JOBS, SentimentJob
+    from waystone3.hq.sentiment.sources import Feeds
+
+    if job not in JOBS:
+        raise typer.BadParameter(f"--job must be one of {', '.join(JOBS)}")
+    with connect(dsn) as conn:
+        report = SentimentJob(conn, Feeds(), scorer=scorer).run(job, days)
+    console.print(
+        f"sentiment {job} run {report.run_id}: {report.status} — scorer {report.scorer}, "
+        f"{report.headlines_new} new headline(s), {len(report.slots)} slot(s) written."
+    )
+    for name, state in sorted(report.sources.items()):
+        console.print(f"  {name}: {state}")
+    if report.status == "FAILED":
+        raise typer.Exit(1)
+
+
+@app.command("sentiment-override")
+def sentiment_override(
+    gate: str = typer.Option(
+        ..., "--gate", help="data | event | kill | engine | vol | positioning"
+    ),
+    action: str = typer.Option(..., "--action", help="FORCE_HALT | FORCE_OPEN | REVOKE"),
+    reason: str = typer.Option("", "--reason", help="Why (required for FORCE_*)."),
+    by: str = typer.Option(..., "--by", help="Who is setting it."),
+    strategy: str | None = typer.Option(None, "--strategy", help="One strategy; default all."),
+    hours: float = typer.Option(8.0, "--hours", help="Expires after this many hours."),
+    dsn: str = typer.Option("", "--dsn", envvar="WAYSTONE_DB_DSN"),
+) -> None:
+    """Time-boxed, logged operator override of one sentiment gate (FORCE_OPEN never opens data)."""
+    from datetime import UTC, datetime, timedelta
+
+    from waystone3.hq.db import connect
+
+    if action == "FORCE_OPEN" and gate == "data":
+        raise typer.BadParameter("the data gate fails closed; it cannot be forced open")
+    with connect(dsn) as conn:
+        sid = None
+        if strategy:
+            row = conn.execute(
+                "SELECT strategy_id FROM ref.strategy WHERE strategy_code = %s", (strategy,)
+            ).fetchone()
+            if row is None:
+                raise typer.BadParameter(f"unknown strategy {strategy}")
+            sid = row["strategy_id"]
+        if action == "REVOKE":
+            n = conn.execute(
+                "UPDATE sentiment.gate_override SET revoked_at = now() WHERE revoked_at IS NULL "
+                "AND gate = %s AND strategy_id IS NOT DISTINCT FROM %s",
+                (gate, sid),
+            ).rowcount
+            conn.commit()
+            console.print(f"revoked {n} override(s) on {gate}")
+            return
+        if action not in ("FORCE_HALT", "FORCE_OPEN") or not reason:
+            raise typer.BadParameter(
+                "--action FORCE_HALT|FORCE_OPEN|REVOKE, and --reason is required"
+            )
+        conn.execute(
+            "INSERT INTO sentiment.gate_override "
+            "(strategy_id, gate, action, reason, created_by, valid_to) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (sid, gate, action, reason, by, datetime.now(UTC) + timedelta(hours=hours)),
+        )
+        conn.commit()
+    console.print(f"{action} on {gate} for {strategy or 'all strategies'} for {hours:g}h")
+
+
 @app.command("ibkr-seed-demo")
 def ibkr_seed_demo(
     out: str = typer.Option(

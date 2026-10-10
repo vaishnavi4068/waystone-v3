@@ -342,7 +342,7 @@ run_sql() {
     info "01_roles.sql (as postgres)"
     local f out
     out="$(mktemp)"
-    for f in 02_schemas.sql 03_ref.sql 04_raw_ops.sql 05_core.sql 06_kpi.sql 07_api_views.sql 08_seed.sql; do
+    for f in 02_schemas.sql 03_ref.sql 04_raw_ops.sql 05_core.sql 06_kpi.sql 07_api_views.sql 08_seed.sql 09_sentiment.sql; do
         if ! psql_as waystone_load "$LOAD_PW" -f "$SQL_DIR/$f" >"$out" 2>&1; then
             cat "$out" >&2
             die "$f failed"

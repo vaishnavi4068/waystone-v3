@@ -374,3 +374,144 @@ class HqReader:
 
     def load_health(self) -> list[dict[str, Any]]:
         return self._rows("SELECT * FROM api.v_load_health ORDER BY job")
+
+    # ------------------------------------------------------------ sentiment
+    def sentiment_dates(self) -> list[str]:
+        rows = self._rows("SELECT DISTINCT session_date FROM api.v_sentiment_snapshot ORDER BY 1")
+        return [r["session_date"] for r in rows]
+
+    def sentiment_range(
+        self, start: date | None = None, end: date | None = None
+    ) -> list[dict[str, Any]]:
+        """Whole-session rows (slot DAY) with each day's top recommendation, newest first."""
+        return self._rows(
+            "SELECT s.session_date, s.is_final, s.fng_cnn, s.fng_replica, s.fng_prior_day, s.vix, "
+            "s.vix_term_ratio, s.vol_spike, s.narrative_score, s.narrative_dispersion, "
+            "s.narrative_n, s.kill_hits, s.events, s.regime, s.data_gaps, s.best_strategy, "
+            "s.headline, s.summary, s.policy_version, s.computed_at, "
+            "(SELECT count(*) FROM api.v_sentiment_snapshot i "
+            " WHERE i.session_date = s.session_date"
+            " AND i.slot_label <> 'DAY') AS intervals, "
+            "(SELECT json_agg(json_build_object('strategy_code', r.strategy_code, "
+            " 'verdict', r.verdict, "
+            " 'size_mult', r.size_mult, 'rank', r.rank) ORDER BY r.rank) "
+            " FROM api.v_sentiment_recommendation r WHERE r.session_date = s.session_date "
+            " AND r.slot_label = 'DAY') AS verdicts "
+            "FROM api.v_sentiment_snapshot s WHERE s.slot_label = 'DAY' "
+            "AND (%s::date IS NULL OR s.session_date >= %s::date) "
+            "AND (%s::date IS NULL OR s.session_date <= %s::date) ORDER BY s.session_date DESC",
+            (start, start, end, end),
+        )
+
+    def sentiment_day(self, day: date, strategy: str | None = None) -> dict[str, Any]:
+        """One session: the DAY summary, every interval, every score, gate and headline."""
+        scope = (day, strategy, strategy)
+        return {
+            "session_date": day.isoformat(),
+            "slots": self._rows(
+                "SELECT * FROM api.v_sentiment_snapshot WHERE session_date = %s "
+                "ORDER BY slot_label = 'DAY', slot_label",
+                (day,),
+            ),
+            "recommendations": self._rows(
+                "SELECT * FROM api.v_sentiment_recommendation WHERE session_date = %s "
+                "AND (%s::text IS NULL OR strategy_code = %s) ORDER BY slot_label, rank",
+                scope,
+            ),
+            "gates": self._rows(
+                "SELECT * FROM api.v_sentiment_gate WHERE session_date = %s "
+                "AND (%s::text IS NULL OR strategy_code = %s) "
+                "ORDER BY slot_label, strategy_code, gate",
+                scope,
+            ),
+            "scores": self._rows(
+                "SELECT session_date, slot_label, layer, component, value, score, state, source, "
+                "detail FROM api.v_sentiment_score WHERE session_date = %s "
+                "ORDER BY slot_label, layer, component",
+                (day,),
+            ),
+            "headlines": self._rows(
+                "SELECT * FROM api.v_sentiment_headline WHERE session_date = %s "
+                "ORDER BY published_at DESC LIMIT 300",
+                (day,),
+            ),
+            "events": self._rows(
+                "SELECT * FROM api.v_macro_event WHERE session_date = %s ORDER BY event_ts", (day,)
+            ),
+        }
+
+    def sentiment_latest(self) -> dict[str, Any]:
+        """The newest interval written (intraday slot, or DAY when no interval yet)."""
+        snap = self._one(
+            "SELECT * FROM api.v_sentiment_snapshot ORDER BY session_date DESC, "
+            "slot_label = 'DAY', slot_ts DESC LIMIT 1"
+        )
+        if snap is None:
+            return {"snapshot": None, "recommendations": [], "gates": []}
+        key = (snap["session_date"], snap["slot_label"])
+        return {
+            "snapshot": snap,
+            "recommendations": self._rows(
+                "SELECT * FROM api.v_sentiment_recommendation WHERE session_date = %s "
+                "AND slot_label = %s ORDER BY rank",
+                key,
+            ),
+            "gates": self._rows(
+                "SELECT * FROM api.v_sentiment_gate WHERE session_date = %s AND slot_label = %s "
+                "ORDER BY strategy_code, gate",
+                key,
+            ),
+        }
+
+    def sentiment_gates(
+        self,
+        start: date | None = None,
+        end: date | None = None,
+        strategy: str | None = None,
+        gate: str | None = None,
+        state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._rows(
+            "SELECT * FROM api.v_sentiment_gate WHERE "
+            "(%s::date IS NULL OR session_date >= %s::date) "
+            "AND (%s::date IS NULL OR session_date <= %s::date) "
+            "AND (%s::text IS NULL OR strategy_code = %s) AND (%s::text IS NULL OR gate = %s) "
+            "AND (%s::text IS NULL OR state = %s) "
+            "ORDER BY session_date DESC, slot_label DESC, strategy_code, gate LIMIT 500",
+            (start, start, end, end, strategy, strategy, gate, gate, state, state),
+        )
+
+    def sentiment_upcoming_events(self, day: date, days: int = 14) -> list[dict[str, Any]]:
+        return self._rows(
+            "SELECT * FROM api.v_macro_event WHERE session_date BETWEEN %s AND %s::date + %s "
+            "ORDER BY event_ts",
+            (day, day, days),
+        )
+
+    def sentiment_series(
+        self, layer: str, component: str, start: date | None = None, end: date | None = None
+    ) -> list[dict[str, Any]]:
+        return self._rows(
+            "SELECT session_date, value, score, state, source FROM api.v_sentiment_score "
+            "WHERE slot_label = 'DAY' AND layer = %s AND component = %s "
+            "AND (%s::date IS NULL OR session_date >= %s::date) "
+            "AND (%s::date IS NULL OR session_date <= %s::date) ORDER BY session_date",
+            (layer, component, start, start, end, end),
+        )
+
+    def sentiment_efficacy(self) -> list[dict[str, Any]]:
+        return self._rows(
+            "SELECT * FROM api.v_sentiment_score WHERE slot_label = 'DAY' "
+            "AND layer IN ('efficacy', 'drift') AND session_date = "
+            "(SELECT max(session_date) FROM api.v_sentiment_score WHERE layer = 'efficacy') "
+            "ORDER BY layer, component"
+        )
+
+    def sentiment_health(self) -> dict[str, Any]:
+        return {
+            "sources": self._rows("SELECT * FROM api.v_sentiment_health ORDER BY source"),
+            "overrides": self._rows(
+                "SELECT * FROM api.v_sentiment_override WHERE revoked_at IS NULL "
+                "AND (valid_to IS NULL OR valid_to >= now()) ORDER BY valid_from DESC"
+            ),
+        }

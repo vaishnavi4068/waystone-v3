@@ -118,6 +118,66 @@ def build_hq_router(reader: HqReader | None, session: Callable[..., Any]) -> API
         picked = day
         return {"dates": dates, **_call(lambda: _reader().paper_day(strategy, picked))}
 
+    @router.get("/sentiment")
+    def hq_sentiment(start: str | None = None, end: str | None = None) -> dict[str, Any]:
+        """Per-session sentiment summaries and verdicts between two dates (newest first)."""
+        lo, hi = _day(start, "start"), _day(end, "end")
+        return {
+            "dates": _call(_reader().sentiment_dates),
+            "days": _call(lambda: _reader().sentiment_range(lo, hi)),
+        }
+
+    @router.get("/sentiment/now")
+    def hq_sentiment_now() -> dict[str, Any]:
+        """Newest interval: summary, ranked recommendations and gate states."""
+        return _call(_reader().sentiment_latest)  # type: ignore[no-any-return]
+
+    @router.get("/sentiment/gates")
+    def hq_sentiment_gates(
+        start: str | None = None,
+        end: str | None = None,
+        strategy: str | None = None,
+        gate: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        lo, hi = _day(start, "start"), _day(end, "end")
+        return {"gates": _call(lambda: _reader().sentiment_gates(lo, hi, strategy, gate, state))}
+
+    @router.get("/sentiment/day")
+    def hq_sentiment_day(date: str | None = None, strategy: str | None = None) -> dict[str, Any]:
+        """One session: intervals, recommendations, gate audit rows, every score, headlines."""
+        if strategy:
+            _strategy(strategy)
+        dates = _call(_reader().sentiment_dates)
+        day = _day(date, "date") or (_day(dates[-1], "date") if dates else None)
+        if day is None:
+            return {"dates": dates, "session_date": None}
+        picked = day
+        return {
+            "dates": dates,
+            **_call(lambda: _reader().sentiment_day(picked, strategy)),
+            "upcoming": _call(lambda: _reader().sentiment_upcoming_events(picked)),
+        }
+
+    @router.get("/sentiment/series")
+    def hq_sentiment_series(
+        layer: str, component: str, start: str | None = None, end: str | None = None
+    ) -> dict[str, Any]:
+        lo, hi = _day(start, "start"), _day(end, "end")
+        return {
+            "layer": layer,
+            "component": component,
+            "points": _call(lambda: _reader().sentiment_series(layer, component, lo, hi)),
+        }
+
+    @router.get("/sentiment/quality")
+    def hq_sentiment_quality() -> dict[str, Any]:
+        """Gate efficacy vs P&L, drift (PSI), source health and active overrides."""
+        return {
+            "efficacy": _call(_reader().sentiment_efficacy),
+            **_call(_reader().sentiment_health),
+        }
+
     @router.get("/status")
     def hq_status(start: str | None = None, end: str | None = None) -> dict[str, Any]:
         lo, hi = _day(start, "start"), _day(end, "end")
