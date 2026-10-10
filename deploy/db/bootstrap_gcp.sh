@@ -9,6 +9,8 @@
 #   deploy/db/bootstrap_gcp.sh vm         # install the hourly GCS sync on the trading VM
 #   deploy/db/bootstrap_gcp.sh loader     # build the image, deploy the load-logs Cloud Run jobs + schedules
 #   deploy/db/bootstrap_gcp.sh backfill   # one-off: load every file already in the bucket
+#   deploy/db/bootstrap_gcp.sh sentiment  # build the FinBERT image, deploy the sentiment Cloud Run jobs + schedules
+#   deploy/db/bootstrap_gcp.sh sentiment-backfill  # one-off: score the last 365 sessions
 #   deploy/db/bootstrap_gcp.sh dash       # point the GKE dashboard API at the database (read-only)
 #     (MCP server too: DASH_NAMESPACE=waystone-arena DASH_KSA=waystone-arena DASH_DEPLOYMENT=waystone-arena)
 #   deploy/db/bootstrap_gcp.sh summary    # print the connection details to hand over
@@ -48,6 +50,10 @@ AR_REPO="${AR_REPO:-waystone}"
 LOADER_IMAGE="${LOADER_IMAGE:-}"
 PAPER_LOAD_CRON="${PAPER_LOAD_CRON:-35 * * * *}"
 BACKTEST_LOAD_CRON="${BACKTEST_LOAD_CRON:-35 16,17 * * 1-5}"
+SENTIMENT_IMAGE="${SENTIMENT_IMAGE:-}"
+SENTIMENT_INTRADAY_CRON="${SENTIMENT_INTRADAY_CRON:-*/30 7-16 * * 1-5}"
+SENTIMENT_PREMARKET_CRON="${SENTIMENT_PREMARKET_CRON:-15 7 * * 1-5}"
+SENTIMENT_CLOSE_CRON="${SENTIMENT_CLOSE_CRON:-45 17 * * 1-5}"
 
 SECRET_PG="waystone-db-postgres-password"
 SECRET_LOAD="waystone-db-load-password"
@@ -353,7 +359,7 @@ run_sql() {
     rm -f "$out"
     log "Check"
     psql_as waystone_read "$READ_PW" -c "SELECT strategy_code, display_name, asset_class FROM api.v_strategy ORDER BY 1" \
-        -c "SELECT table_schema AS schema, count(*) AS tables_and_views FROM information_schema.tables WHERE table_schema IN ('ref','raw','ops','core','kpi','api') GROUP BY 1 ORDER BY 1"
+        -c "SELECT table_schema AS schema, count(*) AS tables_and_views FROM information_schema.tables WHERE table_schema IN ('ref','raw','ops','core','kpi','api','sentiment') GROUP BY 1 ORDER BY 1"
     kill "$PROXY_PID" 2>/dev/null || true
     PROXY_PID=""
     if [ "$KEEP_PUBLIC_IP" != "true" ]; then
@@ -401,9 +407,10 @@ deploy_load_job() {
     info "Cloud Run job $name: load-logs --job $job"
 }
 
+# schedule_load_job <scheduler-name> <cron> [cloud-run-job, default: same name]
 schedule_load_job() {
-    local name="$1" cron="$2"
-    local uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$name:run"
+    local name="$1" cron="$2" target="${3:-$1}"
+    local uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$target:run"
     local verb=create
     if g scheduler jobs describe "$name" --location="$REGION" >/dev/null 2>&1; then verb=update; fi
     g scheduler jobs "$verb" http "$name" --location="$REGION" \
@@ -411,7 +418,7 @@ schedule_load_job() {
         --uri="$uri" --http-method=POST \
         --oauth-service-account-email="$LOADER_SA" \
         --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" >/dev/null
-    info "schedule $name: '$cron' America/New_York"
+    info "schedule $name -> $target: '$cron' America/New_York"
 }
 
 deploy_loader() {
@@ -433,6 +440,69 @@ deploy_loader() {
     schedule_load_job waystone-load-paper "$PAPER_LOAD_CRON"
     schedule_load_job waystone-load-backtest "$BACKTEST_LOAD_CRON"
     info "backfill job is manual: $0 backfill"
+}
+
+sentiment_image() {
+    if [ -n "$SENTIMENT_IMAGE" ]; then
+        info "using image $SENTIMENT_IMAGE"
+        return
+    fi
+    local root tag
+    root="$(cd "$HERE/../.." && pwd)"
+    tag="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || date +%Y%m%d-%H%M)"
+    SENTIMENT_IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/waystone-sentiment:$tag"
+    g services enable artifactregistry.googleapis.com cloudbuild.googleapis.com
+    g artifacts repositories describe "$AR_REPO" --location="$REGION" >/dev/null 2>&1 \
+        || g artifacts repositories create "$AR_REPO" --repository-format=docker --location="$REGION"
+    info "building $SENTIMENT_IMAGE with Cloud Build (deploy/sentiment/Dockerfile, FinBERT baked in)"
+    g builds submit --config "$HERE/../sentiment/cloudbuild.yaml" \
+        --substitutions="_IMAGE=$SENTIMENT_IMAGE" "$root"
+}
+
+# Same network, account and load password as the log loader. private-ranges-only egress
+# keeps Cloud SQL on the VPC while CBOE, CNN, FRED, CFTC, BLS, BEA, the Fed, RSS and
+# Yahoo are reached directly over the internet.
+deploy_sentiment_job() {
+    local name="$1" job="$2" timeout="$3" host="$4" subnet="$5"
+    g run jobs deploy "$name" --region="$REGION" --image="$SENTIMENT_IMAGE" \
+        --command=/app/.venv/bin/waystone3 --args="sentiment,--job,$job" \
+        --service-account="$LOADER_SA" \
+        --network="$NETWORK" --subnet="$subnet" --vpc-egress=private-ranges-only \
+        --set-env-vars="PGHOST=$host,PGPORT=5432,PGDATABASE=$DB_NAME,PGUSER=waystone_load,PGSSLMODE=require,WAYSTONE_SENTIMENT_SCORER=finbert" \
+        --set-secrets="PGPASSWORD=$SECRET_LOAD:latest" \
+        --tasks=1 --max-retries=1 --task-timeout="$timeout" --cpu=2 --memory=2Gi >/dev/null
+    g run jobs add-iam-policy-binding "$name" --region="$REGION" \
+        --member="serviceAccount:$LOADER_SA" --role=roles/run.invoker >/dev/null
+    info "Cloud Run job $name: sentiment --job $job"
+}
+
+deploy_sentiment() {
+    log "Sentiment gate: Cloud Run jobs + Cloud Scheduler (runs as $LOADER_SA, writes schema sentiment)"
+    resolve_service_accounts
+    detect_network
+    local host subnet
+    host="$(sql_private_ip)"
+    [ -n "$host" ] || die "instance $INSTANCE has no private IP; run: $0 infra"
+    subnet="${SUBNET:-$(g container clusters describe "$GKE_CLUSTER" --location "$GKE_LOCATION" \
+        --format='value(subnetwork)' 2>/dev/null || true)}"
+    [ -n "$subnet" ] || die "could not read the subnet of GKE cluster $GKE_CLUSTER; set SUBNET=<subnet in $REGION>"
+    sentiment_image
+    deploy_sentiment_job waystone-sentiment-intraday intraday 15m "$host" "$subnet"
+    deploy_sentiment_job waystone-sentiment-daily daily 30m "$host" "$subnet"
+    deploy_sentiment_job waystone-sentiment-backfill backfill 60m "$host" "$subnet"
+    # Intraday writes one 30-minute interval per run (07:00-16:30 ET); daily runs before the
+    # open (gates for today) and after the close (final scores, efficacy, drift).
+    schedule_load_job waystone-sentiment-intraday "$SENTIMENT_INTRADAY_CRON"
+    schedule_load_job waystone-sentiment-premarket "$SENTIMENT_PREMARKET_CRON" waystone-sentiment-daily
+    schedule_load_job waystone-sentiment-close "$SENTIMENT_CLOSE_CRON" waystone-sentiment-daily
+    info "backfill job is manual: $0 sentiment-backfill"
+}
+
+run_sentiment_backfill() {
+    log "One-off sentiment backfill: last 365 sessions of F&G, VIX, COT, chop and gates (waits)"
+    g run jobs execute waystone-sentiment-backfill --region="$REGION" --wait
+    g run jobs execute waystone-sentiment-daily --region="$REGION" --wait
+    info "logs: gcloud logging read 'resource.type=cloud_run_job AND resource.labels.job_name=waystone-sentiment-backfill' --project $PROJECT_ID --limit 50 --format='value(textPayload)'"
 }
 
 run_backfill() {
@@ -520,9 +590,11 @@ main() {
         vm) install_vm_sync ;;
         loader) deploy_loader ;;
         backfill) run_backfill ;;
+        sentiment) deploy_sentiment ;;
+        sentiment-backfill) run_sentiment_backfill ;;
         dash) wire_dashboard ;;
         summary) summary ;;
-        *) die "unknown step '$step' (use: all | infra | sql | vm | loader | backfill | dash | summary)" ;;
+        *) die "unknown step '$step' (use: all | infra | sql | vm | loader | backfill | sentiment | sentiment-backfill | dash | summary)" ;;
     esac
     log "Done: $step"
 }

@@ -104,7 +104,9 @@ DASH_NAMESPACE=waystone-arena DASH_KSA=waystone-arena DASH_DEPLOYMENT=waystone-a
 ```
 
 Claude then sees the read-only tools `hq_strategies`, `hq_sync`, `hq_compare`, `hq_paper_day`, `hq_kpis`,
-`hq_daily_pnl`, `hq_trades`, `hq_returns` and `hq_load_status`.
+`hq_daily_pnl`, `hq_trades`, `hq_returns` and `hq_load_status`. Once section 6 is deployed, it also sees
+`hq_sentiment`, `hq_sentiment_now`, `hq_sentiment_day`, `hq_sentiment_gates`, `hq_sentiment_series` and
+`hq_sentiment_quality`.
 
 ## 5. Backfill and check against the workbook
 
@@ -178,6 +180,64 @@ ORDER BY l.line_no;
 
 Once a week of sessions matches, stop updating the Excel workbook and the comparison files.
 The dashboard `/hq` pages and the MCP tools are then the source.
+
+## 6. Sentiment gate and strategy selector
+
+```text
+CBOE VIX/VIX3M/VXN/VIX9D + put/call · CNN Fear & Greed · FRED (SPX, NDX, HY OAS, 10y) · CFTC TFF COT
+BLS / BEA / Fed calendars · Fed, MarketWatch, CNBC, Google News RSS · Yahoo ES/NQ/RTY 5m bars
+   ──Cloud Run job waystone-sentiment-* (FinBERT, CPU)──▶ schema sentiment (one row per score,
+     gate decision and recommendation) ──api.v_sentiment_*──▶ /sentiment page + hq_sentiment_* tools
+```
+
+Every source is free and needs no key. The jobs follow the thesis: text only permits, shrinks
+or halts a strategy and never picks direction. The layers (narrative, positioning, flow and
+regime) are stored separately and never blended. Size never goes above 1.0×.
+
+| Gate | Fires when | Effect |
+|---|---|---|
+| data | macro calendar or VIX missing | HALT (fail closed; cannot be force-opened) |
+| event | intraday: 30 min before to 60 min after CPI, NFP, PCE or FOMC | HALT until the window ends; session row is CAUTION at 0.75× |
+| kill | a wire-tier headline, or ≥ 2 independent publishers on the same story, carries a kill term with FinBERT ≤ −0.30 in the last 3 h. Opinion, prediction and idioms ("price war") are excluded | HALT for 3 h after the last hit; a single non-wire hit is CAUTION |
+| engine | prior-day F&G ≤ 30 and 20-day chop ≤ 0.03 (same rule as the V221 engine) | BLOCKED |
+| vol | VIX ≥ 1.10 × its 5-day mean, or VIX > VIX3M | CAUTION at 0.5× |
+| positioning | COT leveraged-fund or asset-manager net z-score of 2 or more | context only, no size change |
+
+Each gate row stores state, reason, confidence, evidence, the time of its inputs, expiry,
+policy version and an inputs hash. Strategies are ranked by regime fit: the shrunk mean net
+P&L in the current F&G bucket and vol state, taken from `core.daily_pnl`.
+
+**Deploy (once, after `sql` has created schema `sentiment`):**
+
+```sh
+deploy/db/bootstrap_gcp.sh sql
+deploy/db/bootstrap_gcp.sh sentiment
+deploy/db/bootstrap_gcp.sh sentiment-backfill
+```
+
+| Job | What it runs | Schedule (America/New_York) |
+|---|---|---|
+| `waystone-sentiment-intraday` | `sentiment --job intraday` (one 30-minute interval) | `*/30 7-16 * * 1-5` |
+| `waystone-sentiment-daily` | `sentiment --job daily` (last 7 sessions, efficacy, drift) | `15 7 * * 1-5` and `45 17 * * 1-5` |
+| `waystone-sentiment-backfill` | `sentiment --job backfill` (365 sessions, no headlines) | manual |
+
+Free RSS has no archive, so narrative scores start on the day the jobs are deployed. The
+F&G, VIX, COT, chop, event and engine gates are backfilled for the full year.
+
+**Manual override.** Every override is audited and expires. Run it from the Mac through the
+proxy as `waystone_load`:
+
+```sh
+waystone3 sentiment-override --gate kill --action FORCE_HALT --reason "exchange outage" --by manoj --hours 4
+```
+
+**Check:**
+
+```sql
+SELECT session_date, slot_label, headline FROM api.v_sentiment_snapshot ORDER BY session_date DESC, slot_label LIMIT 10;
+SELECT source, last_ok_at, last_error FROM api.v_sentiment_health ORDER BY source;
+SELECT gate, state, count(*) FROM api.v_sentiment_gate WHERE slot_label = 'DAY' GROUP BY 1, 2 ORDER BY 1, 2;
+```
 
 ## Day-status meanings
 
