@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   BarChart3,
+  Brain,
   BookOpen,
   CalendarDays,
   CandlestickChart,
@@ -26,6 +27,7 @@ import { HQ_PAGES, onSelectionChange, savedSelection } from "@/lib/hq-selection"
 const NAV = [
   { href: "/paper", label: "Paper trades", icon: ListOrdered },
   { href: "/daily", label: "Daily", icon: CalendarDays },
+  { href: "/sentiment", label: "Sentiment", icon: Brain },
   { href: "/futures-kpis", label: "Futures KPIs", icon: Gauge },
   { href: "/strategies", label: "Strategies", icon: BookOpen },
   { href: "/compare", label: "Compare", icon: GitCompare },
