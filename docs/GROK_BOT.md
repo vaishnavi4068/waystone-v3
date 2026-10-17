@@ -70,4 +70,12 @@ uv run waystone3 research-inbox-ack <id>
 HQCapital **Strategies** has the same approve-fetch / approve-run / approve-publish
 buttons (logged-in user bearer). They write the same GCS inbox.
 
-Actions the agent understands: `approve-fetch`, `approve-run`, `approve-publish`.
+Actions the agent understands:
+- Research backtests: `approve-fetch`, `approve-run`, `approve-publish`
+- HQ Futures Strategies (IBKR Paper Accounts, thresholds locked):
+  - `strategy-configure`: bind `nq_v221`, `es_v221`, or `r2_mnq` to an IBKR paper account (`D...`), client ID, and contract count
+  - `strategy-start`: clear `KILL_SWITCH` and start the strategy daemon
+  - `strategy-halt`: engage `KILL_SWITCH` (flattens open position on next cycle)
+  - `strategy-resume`: remove `KILL_SWITCH`
+  - `strategy-execute`: submit a `BUY`, `SELL` (with locked server-side GTC stop), or `FLATTEN` on the bound IBKR paper account
+

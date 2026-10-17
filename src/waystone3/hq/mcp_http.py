@@ -15,8 +15,9 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from waystone3.hq.mcp_tools import register_hq_tools
+from waystone3.hq.mcp_tools import register_hq_strategy_exec_tools, register_hq_tools
 from waystone3.hq.reader import HqReader
+from waystone3.hq.strategy_runner import HqStrategyRunner
 
 MCP_PATH = "/api/mcp"
 
@@ -25,16 +26,19 @@ _token: contextvars.ContextVar[str | None] = contextvars.ContextVar("hq_mcp_toke
 Authenticate = Callable[[str], str | None]
 
 
-def build_hq_mcp(reader: HqReader, authenticate: Authenticate) -> FastMCP:
+def build_hq_mcp(
+    reader: HqReader | None,
+    authenticate: Authenticate,
+    runner: HqStrategyRunner | None = None,
+) -> FastMCP:
     mcp = FastMCP(
         "waystone-hq",
         instructions=(
-            "Read-only Waystone futures HQ: live paper trading vs backtest replay, daily P&L, "
-            "trades, signals, fills, engine events and workbook KPIs for es_v221, nq_v221 and "
-            "r2_mnq, plus the futures sentiment gate and strategy recommender (hq_sentiment*). "
-            "Dates are session dates (YYYY-MM-DD, US/Eastern). Start with "
-            "hq_strategies or hq_sync; use hq_compare for one strategy's day and hq_paper_day "
-            "for its trades and data freshness."
+            "Waystone futures HQ & IBKR Agentic Strategy MCP: live paper trading vs backtest "
+            "replay, daily P&L, trades, signals, fills, engine events and workbook KPIs for "
+            "es_v221, nq_v221 and r2_mnq, plus the futures sentiment gate (hq_sentiment*) and "
+            "agentic IBKR execution tools (hq_strategy_*, ibkr_futures_*). Strategy signal and "
+            "stop thresholds are immutable. Dates are session dates (YYYY-MM-DD, US/Eastern)."
         ),
         stateless_http=True,
         json_response=True,
@@ -46,7 +50,10 @@ def build_hq_mcp(reader: HqReader, authenticate: Authenticate) -> FastMCP:
         if authenticate(_token.get() or "") is None:
             raise PermissionError("invalid or missing dashboard token")
 
-    register_hq_tools(mcp, reader, authorize)
+    if reader is not None:
+        register_hq_tools(mcp, reader, authorize, runner=runner)
+    elif runner is not None:
+        register_hq_strategy_exec_tools(mcp, runner, authorize)
     return mcp
 
 

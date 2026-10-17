@@ -9,6 +9,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from waystone3.hq.reader import HqReader
+from waystone3.hq.strategy_runner import HqStrategyRunner
 
 
 def _day(value: str | None, name: str) -> date | None:
@@ -20,7 +21,169 @@ def _day(value: str | None, name: str) -> date | None:
         raise ValueError(f"{name} must be YYYY-MM-DD") from exc
 
 
-def register_hq_tools(mcp: FastMCP, reader: HqReader, authorize: Callable[[], None]) -> None:
+def register_hq_strategy_exec_tools(
+    mcp: FastMCP,
+    runner: HqStrategyRunner,
+    authorize: Callable[[], None],
+) -> None:
+    """Add ``hq_strategy_*`` and ``ibkr_futures_*`` tools for running ``hq-strategy``
+    algorithms on IBKR agentic paper accounts with immutable thresholds."""
+
+    @mcp.tool()
+    def hq_strategy_runtime(strategy: str | None = None) -> dict[str, Any]:
+        """Live runtime state of HQ futures strategies (nq_v221, es_v221, r2_mnq):
+        bound IBKR paper account, client_id, contracts, process status, KILL_SWITCH state,
+        locked engine thresholds, latest Renko/MCO engine state, and open SQLite trades."""
+        authorize()
+        return runner.status(strategy)
+
+    @mcp.tool()
+    def hq_strategy_thresholds(strategy: str | None = None) -> dict[str, Any]:
+        """Return the immutable, validated signal and risk thresholds for HQ strategies
+        (EMA periods, brick bounds, volume spike, FnG/chop gate, profit-take levels,
+        hard stop %, and IBKR protective stop %). These thresholds are locked."""
+        authorize()
+        if strategy:
+            spec = runner.spec(strategy)
+            return {
+                "strategy_code": spec.code,
+                "thresholds_locked": True,
+                "thresholds": spec.thresholds.to_dict(),
+            }
+        return {
+            "thresholds_locked": True,
+            "strategies": {
+                code: runner.spec(code).thresholds.to_dict()
+                for code in ("nq_v221", "es_v221", "r2_mnq")
+            },
+        }
+
+    @mcp.tool()
+    def hq_strategy_configure_account(
+        strategy: str,
+        account_id: str | None = None,
+        client_id: int | None = None,
+        ibkr_host: str | None = None,
+        ibkr_port: int | None = None,
+        contracts: int | None = None,
+        dry_run: bool | None = None,
+        hold_overnight: bool | None = None,
+    ) -> dict[str, Any]:
+        """Bind an HQ strategy (nq_v221, es_v221, r2_mnq) to an Agentic IBKR paper trading
+        account (must start with 'D', e.g. DUR842608 or DUR842609) and configure contract
+        count or dry_run mode. Strategy signal/stop thresholds cannot be changed."""
+        authorize()
+        return runner.configure_account(
+            strategy,
+            account_id=account_id,
+            client_id=client_id,
+            ibkr_host=ibkr_host,
+            ibkr_port=ibkr_port,
+            contracts=contracts,
+            dry_run=dry_run,
+            hold_overnight=hold_overnight,
+            actor="mcp",
+        )
+
+    @mcp.tool()
+    def hq_strategy_start(
+        strategy: str,
+        account_id: str | None = None,
+        contracts: int | None = None,
+        dry_run: bool | None = None,
+        hold_overnight: bool | None = None,
+        spawn: bool = True,
+    ) -> dict[str, Any]:
+        """Start an HQ futures strategy daemon (nq_v221, es_v221, r2_mnq) connected to
+        the bound IBKR paper account with locked thresholds. Clears KILL_SWITCH before starting."""
+        authorize()
+        return runner.start_strategy(
+            strategy,
+            account_id=account_id,
+            contracts=contracts,
+            dry_run=dry_run,
+            hold_overnight=hold_overnight,
+            spawn=spawn,
+            actor="mcp",
+        )
+
+    @mcp.tool()
+    def hq_strategy_halt(
+        strategy: str,
+        reason: str = "halted via MCP",
+        stop_process: bool = False,
+    ) -> dict[str, Any]:
+        """Engage the strategy's KILL_SWITCH file. On the next cycle, the live daemon
+        flattens any open futures position on IBKR, cancels resting stops, and blocks entries."""
+        authorize()
+        return runner.halt_strategy(strategy, reason=reason, stop_process=stop_process)
+
+    @mcp.tool()
+    def hq_strategy_resume(strategy: str) -> dict[str, Any]:
+        """Remove the strategy's KILL_SWITCH file so it can resume taking entries."""
+        authorize()
+        return runner.resume_strategy(strategy)
+
+    @mcp.tool()
+    def hq_strategy_evaluate_bars(
+        strategy: str,
+        bars: list[dict[str, Any]],
+        fng_prior_day: float | None = None,
+        use_saved_state: bool = False,
+    ) -> dict[str, Any]:
+        """Evaluate closed 1-min bars through the exact validated V221Engine or R2Engine
+        from hq-strategy with locked thresholds. Each bar dict requires open, high, low, close,
+        optional volume, vol_price (VXN), and datetime_et."""
+        authorize()
+        return runner.evaluate_bars(
+            strategy,
+            bars,
+            fng_prior_day=fng_prior_day,
+            use_saved_state=use_saved_state,
+        )
+
+    @mcp.tool()
+    def hq_strategy_selftest(strategy: str) -> dict[str, Any]:
+        """Run the strategy's offline --selftest in hq-strategy and verify locked thresholds."""
+        authorize()
+        return runner.run_selftest(strategy)
+
+    @mcp.tool()
+    def ibkr_futures_account(strategy: str = "nq_v221") -> dict[str, Any]:
+        """Connect to IBKR Gateway for the strategy's bound paper account and return live
+        account summary (NLV, excess liquidity, buying power), front futures contract,
+        open positions, and resting V221 GTC stop orders."""
+        authorize()
+        return runner.ibkr_account_state(strategy)
+
+    @mcp.tool()
+    def ibkr_futures_execute(
+        strategy: str,
+        action: str,
+        qty: int | None = None,
+        dry_run: bool | None = None,
+        reason: str = "grok_bot_mcp",
+    ) -> dict[str, Any]:
+        """Execute a futures bracket order (BUY or SELL) or FLATTEN on the strategy's bound
+        IBKR paper account. Every BUY/SELL automatically attaches a server-side GTC stop at
+        the strategy's locked broker_stop_pct (1.0% NQ, 0.7% ES, 0.8% R2 MNQ) and flattens
+        immediately if IBKR does not confirm the stop."""
+        authorize()
+        return runner.ibkr_execute_signal(
+            strategy,
+            action,
+            qty=qty,
+            dry_run=dry_run,
+            reason=reason,
+        )
+
+
+def register_hq_tools(
+    mcp: FastMCP,
+    reader: HqReader,
+    authorize: Callable[[], None],
+    runner: HqStrategyRunner | None = None,
+) -> None:
     """Add ``hq_*`` tools. ``authorize`` raises when the caller's token is not valid."""
 
     def known(strategy: str) -> str:
@@ -177,3 +340,7 @@ def register_hq_tools(mcp: FastMCP, reader: HqReader, authorize: Callable[[], No
         (paper FINAL/PRELIMINARY/INTRADAY, backtest LOADED/MISSING/PENDING)."""
         authorize()
         return {"loads": reader.load_health(), "days": reader.day_status()[:30]}
+
+    if runner is not None:
+        register_hq_strategy_exec_tools(mcp, runner, authorize)
+

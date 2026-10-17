@@ -17,22 +17,28 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from waystone3.hq.reader import HqReader, hq_dsn_from_env
+from waystone3.hq.strategy_runner import HqStrategyRunner, assert_no_threshold_changes
 from waystone3.workspace.service import AuthError, WorkspaceService
 
 _token: contextvars.ContextVar[str | None] = contextvars.ContextVar("token", default=None)
 
 
-def build_mcp(service: WorkspaceService, hq: HqReader | None = None) -> FastMCP:
+def build_mcp(
+    service: WorkspaceService,
+    hq: HqReader | None = None,
+    strategy_runner: HqStrategyRunner | None = None,
+) -> FastMCP:
+    runner = strategy_runner if strategy_runner is not None else HqStrategyRunner()
     mcp = FastMCP(
         "waystone-arena",
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         instructions=(
-            "Waystone is a shared team trading workspace: one Alpaca paper account the team "
-            "operates together. Set the shared strategy, run cycles (which submit real orders "
-            "to the shared account on live Polygon data), and inspect account/positions/orders. "
-            "Tools act on the ONE shared account and are attributed to the calling member."
+            "Waystone is a shared team trading workspace and IBKR futures strategy platform. "
+            "Tools act on the shared workspace or bound IBKR paper accounts (nq_v221, es_v221, "
+            "r2_mnq) and are attributed to the calling member. Strategy signal and stop "
+            "thresholds are locked and cannot be modified."
             + (
-                " The hq_* tools are read-only: futures paper trading vs backtest replay, "
+                " The hq_* tools provide futures paper trading vs backtest replay, "
                 "daily P&L and workbook KPIs for es_v221, nq_v221 and r2_mnq."
                 if hq is not None
                 else ""
@@ -44,13 +50,14 @@ def build_mcp(service: WorkspaceService, hq: HqReader | None = None) -> FastMCP:
     def set_strategy(
         weights: dict[str, float],
         watchlist: list[str],
-        bullish_threshold: float = 3.0,
-        bearish_threshold: float = -3.0,
         notional_per_trade: float = 2000.0,
         lookback: int = 80,
     ) -> dict[str, Any]:
-        """Set the team's shared strategy. weights keys: ma_crossover, price_action, volume,
-        sentiment. Example: {"ma_crossover": 0.6, "price_action": 0.4}."""
+        """Set the team's shared strategy weights and watchlist. Signal thresholds are locked
+        at their validated defaults (+3.0 / -3.0) and cannot be changed."""
+        current = service.get_strategy(_token.get())
+        bullish_threshold = float(current["bullish_threshold"]) if current else 3.0
+        bearish_threshold = float(current["bearish_threshold"]) if current else -3.0
         return service.set_strategy(
             _token.get(),
             weights=weights,
@@ -112,22 +119,28 @@ def build_mcp(service: WorkspaceService, hq: HqReader | None = None) -> FastMCP:
         """Organizer-only: add a team member and return their access token."""
         return service.register(admin_token, name)
 
+    from waystone3.hq.mcp_tools import register_hq_strategy_exec_tools, register_hq_tools
+
+    def authorize() -> None:
+        service.member(_token.get())
+
     if hq is not None:
-        from waystone3.hq.mcp_tools import register_hq_tools
-
-        def authorize() -> None:
-            service.member(_token.get())
-
-        register_hq_tools(mcp, hq, authorize)
+        register_hq_tools(mcp, hq, authorize, runner=runner)
+    else:
+        register_hq_strategy_exec_tools(mcp, runner, authorize)
 
     return mcp
 
 
-def build_app(service: WorkspaceService, hq: HqReader | None = None) -> Any:
+def build_app(
+    service: WorkspaceService,
+    hq: HqReader | None = None,
+    strategy_runner: HqStrategyRunner | None = None,
+) -> Any:
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse, PlainTextResponse
 
-    mcp = build_mcp(service, hq)
+    mcp = build_mcp(service, hq, strategy_runner=strategy_runner)
     app = mcp.streamable_http_app()
 
     class _Auth(BaseHTTPMiddleware):

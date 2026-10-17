@@ -72,12 +72,17 @@ def add_instruction(
     *,
     action: str = "",
     source: str = "grok_bot",
+    params: dict[str, Any] | None = None,
     store: ReportStore | None = None,
 ) -> dict[str, Any]:
     reports = store if store is not None else _store()
     if reports is None:
         raise ValueError("set IBKR_REPORTS_BUCKET or IBKR_REPORTS_LOCAL_DIR")
-    row = {
+    if params:
+        from waystone3.hq.strategy_runner import assert_no_threshold_changes
+
+        assert_no_threshold_changes(params)
+    row: dict[str, Any] = {
         "id": uuid.uuid4().hex[:12],
         "at": _now(),
         "text": text.strip(),
@@ -85,6 +90,8 @@ def add_instruction(
         "acked": False,
         "source": source.strip() or "grok_bot",
     }
+    if params:
+        row["params"] = params
     _append_jsonl(reports, OPS_INBOX_KEY, row)
     return row
 
@@ -142,3 +149,112 @@ def inbox_token() -> str:
         or os.getenv("GROK_BOT_SENDER_KEY")
         or ""
     ).strip()
+
+
+STRATEGY_INBOX_ACTIONS: frozenset[str] = frozenset(
+    {
+        "strategy-start",
+        "strategy-halt",
+        "strategy-resume",
+        "strategy-configure",
+        "strategy-execute",
+    }
+)
+
+
+def execute_strategy_instruction(
+    item: dict[str, Any],
+    *,
+    runner: Any | None = None,
+    spawn: bool = False,
+) -> dict[str, Any]:
+    """Execute a GrokBot inbox instruction targeting an HQ futures strategy.
+
+    Thresholds are strictly immutable; any attempt to pass threshold keys in
+    ``params`` raises ``ValueError``.
+    """
+    from waystone3.hq.strategy_runner import HqStrategyRunner, assert_no_threshold_changes
+
+    rt = runner if runner is not None else HqStrategyRunner()
+    action = str(item.get("action") or "").strip().lower()
+    params = dict(item.get("params") or {})
+    assert_no_threshold_changes(params)
+
+    strategy = str(params.get("strategy") or item.get("strategy") or "").strip()
+    if not strategy:
+        raise ValueError("strategy parameter is required for strategy-* inbox actions")
+
+    if action == "strategy-configure":
+        return rt.configure_account(
+            strategy,
+            account_id=params.get("account_id"),
+            client_id=params.get("client_id"),
+            ibkr_host=params.get("ibkr_host"),
+            ibkr_port=params.get("ibkr_port"),
+            contracts=params.get("contracts"),
+            dry_run=params.get("dry_run"),
+            hold_overnight=params.get("hold_overnight"),
+            actor=str(item.get("source") or "grok_bot"),
+        )
+    if action == "strategy-start":
+        return rt.start_strategy(
+            strategy,
+            account_id=params.get("account_id"),
+            contracts=params.get("contracts"),
+            dry_run=params.get("dry_run"),
+            hold_overnight=params.get("hold_overnight"),
+            spawn=bool(params.get("spawn", spawn)),
+            actor=str(item.get("source") or "grok_bot"),
+        )
+    if action == "strategy-halt":
+        return rt.halt_strategy(
+            strategy,
+            reason=str(params.get("reason") or item.get("text") or "halted by GrokBot"),
+            stop_process=bool(params.get("stop_process", False)),
+        )
+    if action == "strategy-resume":
+        return rt.resume_strategy(strategy)
+    if action == "strategy-execute":
+        trade_action = str(params.get("trade_action") or params.get("side") or "").strip()
+        return rt.ibkr_execute_signal(
+            strategy,
+            trade_action,
+            qty=params.get("qty") or params.get("contracts"),
+            dry_run=params.get("dry_run"),
+            reason=str(item.get("text") or "grok_bot_inbox"),
+        )
+    raise ValueError(f"unsupported strategy inbox action {action!r}")
+
+
+def process_strategy_inbox(
+    *,
+    store: ReportStore | None = None,
+    runner: Any | None = None,
+    spawn: bool = False,
+) -> list[dict[str, Any]]:
+    """Process all pending ``strategy-*`` instructions in the GCS/local inbox,
+    ack each handled item, and post status updates back to GrokBot."""
+    reports = store if store is not None else _store()
+    if reports is None:
+        return []
+    pending = list_inbox(pending_only=True, store=reports)
+    results: list[dict[str, Any]] = []
+    for row in pending:
+        action = str(row.get("action") or "").strip().lower()
+        if action not in STRATEGY_INBOX_ACTIONS:
+            continue
+        item_id = str(row.get("id") or "")
+        try:
+            out = execute_strategy_instruction(row, runner=runner, spawn=spawn)
+            ack_instruction(item_id, store=reports)
+            post_status(
+                "strategy_op",
+                f"Executed {action} on {out.get('strategy_code', '')}",
+                json.dumps(out, default=str)[:400],
+                store=reports,
+            )
+            results.append({"id": item_id, "action": action, "ok": True, "result": out})
+        except Exception as exc:
+            results.append({"id": item_id, "action": action, "ok": False, "error": str(exc)})
+    return results
+

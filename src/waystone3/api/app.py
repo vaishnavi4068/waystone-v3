@@ -103,6 +103,8 @@ class LoginBody(BaseModel):
 class ResearchInboxBody(BaseModel):
     text: str = Field(min_length=1)
     action: str = ""
+    params: dict[str, Any] | None = None
+    execute_now: bool = False
 
 
 class AlgoBody(BaseModel):
@@ -122,6 +124,7 @@ def build_app(
     *,
     ibkr_paper: bool | None = None,
     hq_reader: HqReader | None = None,
+    strategy_runner: Any | None = None,
 ) -> FastAPI:
     # Default: one workspace for the process. Building Alpaca/Polygon clients on every
     # request (the old per-call factory) made the dashboard feel hung under 15s polling.
@@ -148,26 +151,20 @@ def build_app(
     def _authenticate(token: str) -> str | None:
         return factory().authenticate(token) if token else None
 
-    hq_mcp = None
-    if hq is not None:
-        from waystone3.hq.mcp_http import build_hq_mcp
+    from waystone3.hq.mcp_http import HqMcpMount, build_hq_mcp
+    from waystone3.hq.strategy_runner import HqStrategyRunner
 
-        hq_mcp = build_hq_mcp(hq, _authenticate)
-        hq_mcp_app = hq_mcp.streamable_http_app()
+    runner = strategy_runner if strategy_runner is not None else HqStrategyRunner()
+    hq_mcp = build_hq_mcp(hq, _authenticate, runner=runner)
+    hq_mcp_app = hq_mcp.streamable_http_app()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        if hq_mcp is None:
-            yield
-            return
         async with hq_mcp.session_manager.run():
             yield
 
     app = FastAPI(title="Waystone v3 — read-only dashboard API", lifespan=lifespan)
-    if hq_mcp is not None:
-        from waystone3.hq.mcp_http import HqMcpMount
-
-        app.add_middleware(HqMcpMount, mcp_app=hq_mcp_app, authenticate=_authenticate)
+    app.add_middleware(HqMcpMount, mcp_app=hq_mcp_app, authenticate=_authenticate)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -186,7 +183,7 @@ def build_app(
             raise HTTPException(status_code=401, detail="invalid token")
         return ws, name
 
-    app.include_router(build_hq_router(hq, _session))
+    app.include_router(build_hq_router(hq, _session, runner=runner))
 
     @app.get("/api/health")
     async def health() -> dict[str, bool]:
@@ -527,7 +524,19 @@ def build_app(
                 raise HTTPException(status_code=401, detail="missing grok bot or user token")
             source = "hq"
         try:
-            row = add_instruction(body.text, action=body.action, source=source, store=store)
+            row = add_instruction(
+                body.text,
+                action=body.action,
+                source=source,
+                params=body.params,
+                store=store,
+            )
+            if body.execute_now and body.action.strip().lower().startswith("strategy-"):
+                from waystone3.research.ops import execute_strategy_instruction
+
+                exec_out = execute_strategy_instruction(row, runner=runner, spawn=False)
+                ack_instruction(str(row["id"]), store=store)
+                row = {**row, "acked": True, "execution": exec_out}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return row

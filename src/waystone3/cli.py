@@ -860,5 +860,122 @@ def research_inbox_ack(
     console.print(f"acked {item_id}")
 
 
+@app.command("hq-strategy-status")
+def hq_strategy_status_cmd(
+    strategy: str | None = typer.Option(None, "--strategy", help="nq_v221, es_v221, or r2_mnq"),
+) -> None:
+    """Show HQ strategy runtime state, bound IBKR paper account, and locked thresholds."""
+    import json as _json
+
+    from waystone3.hq.strategy_runner import HqStrategyRunner
+
+    runner = HqStrategyRunner()
+    console.print_json(_json.dumps(runner.status(strategy), default=str))
+
+
+@app.command("hq-strategy-configure")
+def hq_strategy_configure_cmd(
+    strategy: str = typer.Argument(..., help="nq_v221, es_v221, or r2_mnq"),
+    account_id: str | None = typer.Option(None, "--account-id", help="IBKR paper account (D...)"),
+    client_id: int | None = typer.Option(None, "--client-id", help="IBKR client ID"),
+    contracts: int | None = typer.Option(None, "--contracts", help="Contract count (1-10)"),
+    dry_run: bool | None = typer.Option(None, "--dry-run/--live-paper"),
+    hold_overnight: bool | None = typer.Option(None, "--hold-overnight/--intraday"),
+) -> None:
+    """Bind an HQ strategy to an Agentic IBKR paper trading account (thresholds remain locked)."""
+    import json as _json
+
+    from waystone3.hq.strategy_runner import HqStrategyRunner
+
+    runner = HqStrategyRunner()
+    try:
+        out = runner.configure_account(
+            strategy,
+            account_id=account_id,
+            client_id=client_id,
+            contracts=contracts,
+            dry_run=dry_run,
+            hold_overnight=hold_overnight,
+            actor="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-strategy-start")
+def hq_strategy_start_cmd(
+    strategy: str = typer.Argument(..., help="nq_v221, es_v221, or r2_mnq"),
+    account_id: str | None = typer.Option(None, "--account-id", help="IBKR paper account (D...)"),
+    contracts: int | None = typer.Option(None, "--contracts"),
+    dry_run: bool | None = typer.Option(None, "--dry-run/--live-paper"),
+    spawn: bool = typer.Option(True, "--spawn/--stage-only"),
+) -> None:
+    """Start an HQ futures strategy daemon connected to its bound IBKR paper account."""
+    import json as _json
+
+    from waystone3.hq.strategy_runner import HqStrategyRunner
+
+    runner = HqStrategyRunner()
+    try:
+        out = runner.start_strategy(
+            strategy,
+            account_id=account_id,
+            contracts=contracts,
+            dry_run=dry_run,
+            spawn=spawn,
+            actor="cli",
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-strategy-halt")
+def hq_strategy_halt_cmd(
+    strategy: str = typer.Argument(..., help="nq_v221, es_v221, or r2_mnq"),
+    reason: str = typer.Option("halted via CLI", "--reason"),
+    stop_process: bool = typer.Option(False, "--stop-process"),
+) -> None:
+    """Engage KILL_SWITCH for an HQ strategy (flattens open position on next cycle)."""
+    import json as _json
+
+    from waystone3.hq.strategy_runner import HqStrategyRunner
+
+    runner = HqStrategyRunner()
+    console.print_json(
+        _json.dumps(
+            runner.halt_strategy(strategy, reason=reason, stop_process=stop_process),
+            default=str,
+        )
+    )
+
+
+@app.command("hq-strategy-resume")
+def hq_strategy_resume_cmd(
+    strategy: str = typer.Argument(..., help="nq_v221, es_v221, or r2_mnq"),
+) -> None:
+    """Clear KILL_SWITCH for an HQ strategy."""
+    import json as _json
+
+    from waystone3.hq.strategy_runner import HqStrategyRunner
+
+    runner = HqStrategyRunner()
+    console.print_json(_json.dumps(runner.resume_strategy(strategy), default=str))
+
+
+@app.command("hq-strategy-inbox-run")
+def hq_strategy_inbox_run_cmd(
+    spawn: bool = typer.Option(False, "--spawn/--stage-only"),
+) -> None:
+    """Process pending GrokBot strategy-* commands from the GCS/local inbox."""
+    import json as _json
+
+    from waystone3.research.ops import process_strategy_inbox
+
+    results = process_strategy_inbox(spawn=spawn)
+    console.print_json(_json.dumps(results, default=str))
+
+
 if __name__ == "__main__":
     app()
