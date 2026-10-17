@@ -17,7 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from waystone3.hq.reader import HqReader, hq_dsn_from_env
-from waystone3.hq.strategy_runner import HqStrategyRunner, assert_no_threshold_changes
+from waystone3.hq.strategy_runner import HqStrategyRunner
 from waystone3.workspace.service import AuthError, WorkspaceService
 
 _token: contextvars.ContextVar[str | None] = contextvars.ContextVar("token", default=None)
@@ -56,8 +56,8 @@ def build_mcp(
         """Set the team's shared strategy weights and watchlist. Signal thresholds are locked
         at their validated defaults (+3.0 / -3.0) and cannot be changed."""
         current = service.get_strategy(_token.get())
-        bullish_threshold = float(current["bullish_threshold"]) if current else 3.0
-        bearish_threshold = float(current["bearish_threshold"]) if current else -3.0
+        bullish_threshold = float(current.get("bullish_threshold", 3.0))
+        bearish_threshold = float(current.get("bearish_threshold", -3.0))
         return service.set_strategy(
             _token.get(),
             weights=weights,

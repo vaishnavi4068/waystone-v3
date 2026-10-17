@@ -200,8 +200,10 @@ def test_mcp_server_exposes_hq_strategy_and_ibkr_tools(tmp_path: Path) -> None:
             weights={"ma_crossover": 0.7, "price_action": 0.3},
             watchlist=["SPY"],
         )
-        assert strat["bullish_threshold"] == 3.0
-        assert strat["bearish_threshold"] == -3.0
+        assert strat["ok"] is True
+        saved = mcp._tool_manager.get_tool("get_strategy").fn()
+        assert saved["bullish_threshold"] == 3.0
+        assert saved["bearish_threshold"] == -3.0
 
         cfg = mcp._tool_manager.get_tool("hq_strategy_configure_account").fn(
             strategy="nq_v221",

@@ -15,6 +15,7 @@ Invariant:
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -342,9 +343,10 @@ class HqStrategyRunner:
         state_file: Path | None = None,
     ) -> None:
         self.repo_root = (repo_root or default_hq_strategy_root()).resolve()
+        parent_dir = self.repo_root.parent if self.repo_root.exists() else Path("/tmp")
         self.state_file = state_file or (
             self.repo_root / ".waystone_agentic_accounts.json"
-            if os.access(self.repo_root.parent if self.repo_root.exists() else Path("/tmp"), os.W_OK)
+            if os.access(parent_dir, os.W_OK)
             else Path("/tmp/waystone_agentic_accounts.json")
         )
         self._bindings: dict[str, AccountBinding] = self._load_bindings()
@@ -379,12 +381,16 @@ class HqStrategyRunner:
                                 client_id=int(item.get("client_id") or spec.default_client_id),
                                 ibkr_host=str(item.get("ibkr_host") or "127.0.0.1"),
                                 ibkr_port=int(item.get("ibkr_port") or 4002),
-                                contracts=max(1, int(item.get("contracts") or spec.default_contracts)),
+                                contracts=max(
+                                    1, int(item.get("contracts") or spec.default_contracts)
+                                ),
                                 dry_run=bool(item.get("dry_run", False)),
                                 hold_overnight=bool(
                                     item.get("hold_overnight", spec.default_hold_overnight)
                                 ),
-                                updated_at=str(item.get("updated_at") or datetime.now(NY).isoformat()),
+                                updated_at=str(
+                                    item.get("updated_at") or datetime.now(NY).isoformat()
+                                ),
                                 updated_by=str(item.get("updated_by") or "system"),
                             )
             except Exception:
@@ -431,7 +437,9 @@ class HqStrategyRunner:
         assert_no_threshold_changes(extra_overrides)
         spec = self.spec(strategy)
         cur = self._bindings[spec.code]
-        new_account = validate_paper_account(account_id) if account_id is not None else cur.account_id
+        new_account = (
+            validate_paper_account(account_id) if account_id is not None else cur.account_id
+        )
         new_client_id = int(client_id) if client_id is not None else cur.client_id
         if new_client_id == 42:
             raise ValueError("client_id 42 is reserved for the options algo; use 77, 53, 88, etc.")
@@ -532,7 +540,12 @@ class HqStrategyRunner:
     def _db_summary(self, sdir: Path) -> dict[str, Any]:
         db_path = sdir / "v221_logs" / "v221_futures.db"
         if not db_path.is_file():
-            return {"db_exists": False, "open_trade": None, "recent_trades": [], "today_realized_pnl": 0.0}
+            return {
+                "db_exists": False,
+                "open_trade": None,
+                "recent_trades": [],
+                "today_realized_pnl": 0.0,
+            }
         try:
             con = sqlite3.connect(str(db_path), timeout=5)
             con.row_factory = sqlite3.Row
@@ -583,7 +596,7 @@ class HqStrategyRunner:
         return out
 
     def status(self, strategy: str | None = None) -> dict[str, Any]:
-        """Return runtime status, locked thresholds, account binding, DB trades, and kill-switch state."""
+        """Return runtime status, locked thresholds, account binding, DB trades, and kill-switch."""
         codes = [resolve_strategy_code(strategy)] if strategy else list(STRATEGY_SPECS)
         items: list[dict[str, Any]] = []
         for code in codes:
@@ -650,9 +663,13 @@ class HqStrategyRunner:
         return env
 
     def halt_strategy(
-        self, strategy: str, *, reason: str = "halted via agentic control", stop_process: bool = False
+        self,
+        strategy: str,
+        *,
+        reason: str = "halted via agentic control",
+        stop_process: bool = False,
     ) -> dict[str, Any]:
-        """Engage the strategy's ``KILL_SWITCH`` so the next cycle flattens open positions and halts."""
+        """Engage the strategy's ``KILL_SWITCH`` so the next cycle flattens and halts."""
         spec = self.spec(strategy)
         sdir = self.strategy_dir(spec.code)
         sdir.mkdir(parents=True, exist_ok=True)
@@ -790,7 +807,7 @@ class HqStrategyRunner:
 
     # ── Pure In-Memory Engine Loader & Bar Evaluator (Zero Threshold Drift) ──
     def load_engine_instance(self, strategy: str, *, use_saved_state: bool = True) -> Any:
-        """Load the exact ``V221Engine`` or ``R2Engine`` from ``hq-strategy`` with locked thresholds."""
+        """Load the exact ``V221Engine`` or ``R2Engine`` from ``hq-strategy``."""
         spec = self.spec(strategy)
         sdir = self.strategy_dir(spec.code)
         engine_py = sdir / "v221_engine.py"
@@ -847,10 +864,7 @@ class HqStrategyRunner:
                 dt = raw_dt
             else:
                 dt = datetime.now(NY)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=NY)
-            else:
-                dt = dt.astimezone(NY)
+            dt = dt.replace(tzinfo=NY) if dt.tzinfo is None else dt.astimezone(NY)
 
             fng_lookup = None
             all_dates = None
@@ -915,7 +929,7 @@ class HqStrategyRunner:
 
         mod_spec = importlib.util.spec_from_file_location(f"ibkr_fut_{spec.code}", ib_py)
         assert mod_spec and mod_spec.loader
-        bk = importlib.util.module_from_spec(mod_spec)
+        bk: Any = importlib.util.module_from_spec(mod_spec)
         sys.modules[mod_spec.name] = bk
         mod_spec.loader.exec_module(bk)
         bk.IBKR_HOST = bind.ibkr_host
@@ -962,10 +976,8 @@ class HqStrategyRunner:
                 "db": self._db_summary(self.strategy_dir(spec.code)),
             }
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 bk.disconnect()
-            except Exception:
-                pass
 
     def ibkr_execute_signal(
         self,
@@ -1061,7 +1073,9 @@ class HqStrategyRunner:
                     "strategy_code": spec.code,
                     "account_id": bind.account_id,
                     "contract": contract.localSymbol,
-                    "error": "protective stop was not confirmed by IBKR; position flattened immediately",
+                    "error": (
+                        "protective stop was not confirmed by IBKR; position flattened immediately"
+                    ),
                     "order": order_res,
                     "flatten": flatten_res,
                 }
@@ -1079,7 +1093,5 @@ class HqStrategyRunner:
                 "order": order_res,
             }
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 bk.disconnect()
-            except Exception:
-                pass
