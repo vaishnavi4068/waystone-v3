@@ -31,7 +31,11 @@ def register_hq_strategy_exec_tools(
 ) -> None:
     """Add ``hq_strategy_*``, ``hq_context_*``, and ``ibkr_futures_*`` tools for running
     ``hq-strategy`` algorithms on IBKR agentic paper accounts with immutable thresholds."""
-    clm = context_lm if context_lm is not None else HqContextLanguageModel(runner=runner, reader=reader)
+    clm = (
+        context_lm
+        if context_lm is not None
+        else HqContextLanguageModel(runner=runner, reader=reader)
+    )
 
     @mcp.tool()
     def hq_strategy_runtime(strategy: str | None = None) -> dict[str, Any]:

@@ -270,7 +270,8 @@ def diagnose_execution_drift(
     elif loss_used_pct >= 70.0:
         severity = "CAUTION"
         flags.append(
-            f"Daily realized loss ${realized:,.2f} is at {loss_used_pct:.0f}% of -${loss_limit:,.0f} cap"
+            f"Daily realized loss ${realized:,.2f} is at {loss_used_pct:.0f}% "
+            f"of -${loss_limit:,.0f} cap"
         )
 
     if closed_today >= thr.max_trades_per_day:
@@ -369,7 +370,8 @@ def _compute_sleeve_verdict(
         verdict = "STAND_DOWN"
         rec_contracts = 0
         reasons.append(
-            f"Engine FnG/chop gate blocked (FnG={last_gate.get('fng')}, chop={last_gate.get('chop')})"
+            f"Engine FnG/chop gate blocked "
+            f"(FnG={last_gate.get('fng')}, chop={last_gate.get('chop')})"
         )
 
     if sentiment_rec:
@@ -378,12 +380,11 @@ def _compute_sleeve_verdict(
         if s_verdict == "STAND_DOWN":
             verdict = "STAND_DOWN"
             rec_contracts = 0
-            reasons.append(
-                f"HQ sentiment gate verdict is STAND_DOWN ({sentiment_rec.get('reason') or 'macro/kill gate'})"
-            )
+            reason_txt = sentiment_rec.get("reason") or "macro/kill gate"
+            reasons.append(f"HQ sentiment gate verdict is STAND_DOWN ({reason_txt})")
         elif (s_verdict == "REDUCE" or s_mult < 1.0) and verdict != "STAND_DOWN":
             verdict = "REDUCE"
-            scaled = max(1, int(round(max_contracts * min(1.0, s_mult))))
+            scaled = max(1, round(max_contracts * min(1.0, s_mult)))
             rec_contracts = min(rec_contracts, scaled)
             reasons.append(
                 f"HQ sentiment gate recommends REDUCE ({s_mult:g}x size)"
@@ -391,7 +392,8 @@ def _compute_sleeve_verdict(
 
     if not reasons:
         reasons.append(
-            f"All gates open; locked thresholds verified ({spec.instrument_root} ${spec.point_multiplier:g}/pt)"
+            f"All gates open; locked thresholds verified "
+            f"({spec.instrument_root} ${spec.point_multiplier:g}/pt)"
         )
 
     return {
@@ -505,7 +507,7 @@ class HqContextLanguageModel:
                 }
             )
 
-        # Cross-sleeve Nasdaq beta check: if NQ is CAUTION/STAND_DOWN, route Nasdaq exposure to R2 MNQ ($2/pt)
+        # Cross-sleeve Nasdaq beta check: route Nasdaq to R2 MNQ ($2/pt) when NQ is defensive
         by_code = {s["strategy_code"]: s for s in sleeves}
         if "nq_v221" in by_code and "r2_mnq" in by_code:
             nq_v = by_code["nq_v221"]["contextual_verdict"]
@@ -515,7 +517,8 @@ class HqContextLanguageModel:
                 and r2_v["verdict"] == "TRADE"
             ):
                 r2_v["rationale"] += (
-                    " | Preferred Nasdaq-100 sleeve ($2/pt MNQ) while full-size NQ ($20/pt) is defensive"
+                    " | Preferred Nasdaq-100 sleeve ($2/pt MNQ) while "
+                    "full-size NQ ($20/pt) is defensive"
                 )
 
         return {
@@ -529,7 +532,7 @@ class HqContextLanguageModel:
     def position_xray(self, strategy: str | None = None) -> dict[str, Any]:
         """Return position distance-to-stop X-ray for one or all strategies."""
         ctx = self.assemble_context(strategy)
-        xrays = [s["position_xray"] for s in ctx["sleeves"]]
+        xrays: list[dict[str, Any]] = [dict(s["position_xray"]) for s in ctx["sleeves"]]
         if strategy:
             return xrays[0]
         return {
@@ -572,7 +575,10 @@ class HqContextLanguageModel:
         sent_summary = (
             str(sent.get("summary") or sent.get("headline") or "Sentiment gate loaded.")
             if isinstance(sent, dict)
-            else "HQ sentiment DB not connected; relying on engine FnG/chop gate and execution telemetry."
+            else (
+                "HQ sentiment DB not connected; relying on engine FnG/chop gate "
+                "and execution telemetry."
+            )
         )
 
         actions: list[str] = []
