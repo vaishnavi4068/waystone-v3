@@ -12,8 +12,59 @@ from typing import Any
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
+from waystone3.hq.context_lm import HqContextLanguageModel
 from waystone3.hq.reader import HqReader
+from waystone3.hq.strategy_runner import HqStrategyRunner
+
+
+class ContextBriefBody(BaseModel):
+    strategy: str | None = None
+    question: str = ""
+    use_llm: bool = True
+
+
+class ContextApplyBody(BaseModel):
+    strategy: str | None = None
+    overrides: dict[str, Any] | None = None
+
+
+class StrategyConfigureBody(BaseModel):
+    account_id: str | None = None
+    client_id: int | None = None
+    ibkr_host: str | None = None
+    ibkr_port: int | None = None
+    contracts: int | None = None
+    dry_run: bool | None = None
+    hold_overnight: bool | None = None
+    overrides: dict[str, Any] | None = None
+
+
+class StrategyStartBody(BaseModel):
+    account_id: str | None = None
+    contracts: int | None = None
+    dry_run: bool | None = None
+    hold_overnight: bool | None = None
+    spawn: bool = True
+
+
+class StrategyHaltBody(BaseModel):
+    reason: str = "halted via API"
+    stop_process: bool = False
+
+
+class StrategyEvaluateBody(BaseModel):
+    bars: list[dict[str, Any]] = Field(default_factory=list)
+    fng_prior_day: float | None = None
+    use_saved_state: bool = False
+
+
+class IbkrExecuteBody(BaseModel):
+    action: str = Field(min_length=1)
+    qty: int | None = None
+    dry_run: bool | None = None
+    reason: str = "grok_bot"
 
 
 def _day(value: str | None, name: str) -> date | None:
@@ -25,8 +76,19 @@ def _day(value: str | None, name: str) -> date | None:
         raise HTTPException(status_code=400, detail=f"{name} must be YYYY-MM-DD") from exc
 
 
-def build_hq_router(reader: HqReader | None, session: Callable[..., Any]) -> APIRouter:
+def build_hq_router(
+    reader: HqReader | None,
+    session: Callable[..., Any],
+    runner: HqStrategyRunner | None = None,
+    context_lm: HqContextLanguageModel | None = None,
+) -> APIRouter:
     router = APIRouter(prefix="/api/hq", dependencies=[Depends(session)])
+    strategy_runner = runner if runner is not None else HqStrategyRunner()
+    clm = (
+        context_lm
+        if context_lm is not None
+        else HqContextLanguageModel(runner=strategy_runner, reader=reader)
+    )
 
     def _reader() -> HqReader:
         if reader is None:
@@ -185,5 +247,162 @@ def build_hq_router(reader: HqReader | None, session: Callable[..., Any]) -> API
             "loads": _call(_reader().load_health),
             "days": _call(lambda: _reader().day_status(None, lo, hi)),
         }
+
+    # ── HQ Strategy Runtime & Agentic IBKR Execution (immutable thresholds) ──
+    @router.get("/runtime")
+    def hq_runtime_all() -> dict[str, Any]:
+        return strategy_runner.status()
+
+    @router.get("/runtime/thresholds")
+    def hq_runtime_thresholds(strategy: str | None = None) -> dict[str, Any]:
+        try:
+            if strategy:
+                spec = strategy_runner.spec(strategy)
+                return {
+                    "strategy_code": spec.code,
+                    "thresholds_locked": True,
+                    "thresholds": spec.thresholds.to_dict(),
+                }
+            return {
+                "thresholds_locked": True,
+                "strategies": {
+                    code: strategy_runner.spec(code).thresholds.to_dict()
+                    for code in ("nq_v221", "es_v221", "r2_mnq")
+                },
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/runtime/{code}")
+    def hq_runtime_one(code: str) -> dict[str, Any]:
+        try:
+            return strategy_runner.status(code)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/runtime/{code}/configure")
+    def hq_runtime_configure(code: str, body: StrategyConfigureBody) -> dict[str, Any]:
+        try:
+            return strategy_runner.configure_account(
+                code,
+                account_id=body.account_id,
+                client_id=body.client_id,
+                ibkr_host=body.ibkr_host,
+                ibkr_port=body.ibkr_port,
+                contracts=body.contracts,
+                dry_run=body.dry_run,
+                hold_overnight=body.hold_overnight,
+                actor="api",
+                extra_overrides=body.overrides,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/runtime/{code}/start")
+    def hq_runtime_start(code: str, body: StrategyStartBody) -> dict[str, Any]:
+        try:
+            return strategy_runner.start_strategy(
+                code,
+                account_id=body.account_id,
+                contracts=body.contracts,
+                dry_run=body.dry_run,
+                hold_overnight=body.hold_overnight,
+                spawn=body.spawn,
+                actor="api",
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/runtime/{code}/halt")
+    def hq_runtime_halt(code: str, body: StrategyHaltBody) -> dict[str, Any]:
+        try:
+            return strategy_runner.halt_strategy(
+                code, reason=body.reason, stop_process=body.stop_process
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/runtime/{code}/resume")
+    def hq_runtime_resume(code: str) -> dict[str, Any]:
+        try:
+            return strategy_runner.resume_strategy(code)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/runtime/{code}/evaluate")
+    def hq_runtime_evaluate(code: str, body: StrategyEvaluateBody) -> dict[str, Any]:
+        try:
+            return strategy_runner.evaluate_bars(
+                code,
+                body.bars,
+                fng_prior_day=body.fng_prior_day,
+                use_saved_state=body.use_saved_state,
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/runtime/{code}/ibkr-account")
+    def hq_runtime_ibkr_account(code: str) -> dict[str, Any]:
+        try:
+            return strategy_runner.ibkr_account_state(code)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/runtime/{code}/ibkr-execute")
+    def hq_runtime_ibkr_execute(code: str, body: IbkrExecuteBody) -> dict[str, Any]:
+        try:
+            return strategy_runner.ibkr_execute_signal(
+                code,
+                body.action,
+                qty=body.qty,
+                dry_run=body.dry_run,
+                reason=body.reason,
+            )
+        except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # ── Context Language Model (CLM) routes for Claude Cowork & GrokBot ──────
+    @router.get("/context/brief")
+    def hq_context_brief_get(
+        strategy: str | None = None,
+        question: str = "",
+        use_llm: bool = True,
+    ) -> dict[str, Any]:
+        try:
+            return clm.generate_brief(strategy, question=question, use_llm=use_llm)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/context/brief")
+    def hq_context_brief_post(body: ContextBriefBody) -> dict[str, Any]:
+        try:
+            return clm.generate_brief(
+                body.strategy, question=body.question, use_llm=body.use_llm
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/context/position-xray")
+    def hq_context_position_xray(strategy: str | None = None) -> dict[str, Any]:
+        try:
+            return clm.position_xray(strategy)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/context/apply")
+    def hq_context_apply(body: ContextApplyBody) -> dict[str, Any]:
+        try:
+            return clm.apply_recommendation(
+                body.strategy, actor="api", overrides=body.overrides
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/context/notify-grokbot")
+    def hq_context_notify_grokbot(body: ContextBriefBody) -> dict[str, Any]:
+        try:
+            return clm.notify_grokbot(body.strategy, question=body.question)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return router
