@@ -14,8 +14,20 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from waystone3.hq.context_lm import HqContextLanguageModel
 from waystone3.hq.reader import HqReader
 from waystone3.hq.strategy_runner import HqStrategyRunner
+
+
+class ContextBriefBody(BaseModel):
+    strategy: str | None = None
+    question: str = ""
+    use_llm: bool = True
+
+
+class ContextApplyBody(BaseModel):
+    strategy: str | None = None
+    overrides: dict[str, Any] | None = None
 
 
 class StrategyConfigureBody(BaseModel):
@@ -68,9 +80,15 @@ def build_hq_router(
     reader: HqReader | None,
     session: Callable[..., Any],
     runner: HqStrategyRunner | None = None,
+    context_lm: HqContextLanguageModel | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/hq", dependencies=[Depends(session)])
     strategy_runner = runner if runner is not None else HqStrategyRunner()
+    clm = (
+        context_lm
+        if context_lm is not None
+        else HqContextLanguageModel(runner=strategy_runner, reader=reader)
+    )
 
     def _reader() -> HqReader:
         if reader is None:
@@ -341,6 +359,50 @@ def build_hq_router(
                 reason=body.reason,
             )
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # ── Context Language Model (CLM) routes for Claude Cowork & GrokBot ──────
+    @router.get("/context/brief")
+    def hq_context_brief_get(
+        strategy: str | None = None,
+        question: str = "",
+        use_llm: bool = True,
+    ) -> dict[str, Any]:
+        try:
+            return clm.generate_brief(strategy, question=question, use_llm=use_llm)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/context/brief")
+    def hq_context_brief_post(body: ContextBriefBody) -> dict[str, Any]:
+        try:
+            return clm.generate_brief(
+                body.strategy, question=body.question, use_llm=body.use_llm
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/context/position-xray")
+    def hq_context_position_xray(strategy: str | None = None) -> dict[str, Any]:
+        try:
+            return clm.position_xray(strategy)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/context/apply")
+    def hq_context_apply(body: ContextApplyBody) -> dict[str, Any]:
+        try:
+            return clm.apply_recommendation(
+                body.strategy, actor="api", overrides=body.overrides
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/context/notify-grokbot")
+    def hq_context_notify_grokbot(body: ContextBriefBody) -> dict[str, Any]:
+        try:
+            return clm.notify_grokbot(body.strategy, question=body.question)
+        except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return router

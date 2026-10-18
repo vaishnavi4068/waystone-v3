@@ -977,5 +977,51 @@ def hq_strategy_inbox_run_cmd(
     console.print_json(_json.dumps(results, default=str))
 
 
+@app.command("hq-context-brief")
+def hq_context_brief_cmd(
+    strategy: str | None = typer.Option(None, "--strategy", help="nq_v221, es_v221, or r2_mnq"),
+    question: str = typer.Option("", "--question", help="Operator focus / query"),
+    use_llm: bool = typer.Option(True, "--llm/--deterministic"),
+    notify_grokbot: bool = typer.Option(False, "--notify-grokbot"),
+) -> None:
+    """Run the Context Language Model (CLM) desk briefing for Claude Cowork / GrokBot."""
+    import json as _json
+
+    from waystone3.hq.context_lm import HqContextLanguageModel
+
+    clm = HqContextLanguageModel()
+    if notify_grokbot:
+        out = clm.notify_grokbot(strategy, question=question)
+    else:
+        out = clm.generate_brief(strategy, question=question, use_llm=use_llm)
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-context-xray")
+def hq_context_xray_cmd(
+    strategy: str | None = typer.Option(None, "--strategy", help="nq_v221, es_v221, or r2_mnq"),
+) -> None:
+    """Show exact price & dollar distance to every locked engine and IBKR GTC stop."""
+    import json as _json
+
+    from waystone3.hq.context_lm import HqContextLanguageModel
+
+    clm = HqContextLanguageModel()
+    console.print_json(_json.dumps(clm.position_xray(strategy), default=str))
+
+
+@app.command("hq-context-apply")
+def hq_context_apply_cmd(
+    strategy: str | None = typer.Option(None, "--strategy", help="nq_v221, es_v221, or r2_mnq"),
+) -> None:
+    """Apply the Context Language Model's downward-only protective verdict (halt or reduce size)."""
+    import json as _json
+
+    from waystone3.hq.context_lm import HqContextLanguageModel
+
+    clm = HqContextLanguageModel()
+    console.print_json(_json.dumps(clm.apply_recommendation(strategy, actor="cli"), default=str))
+
+
 if __name__ == "__main__":
     app()

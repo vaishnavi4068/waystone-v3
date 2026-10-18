@@ -158,6 +158,8 @@ STRATEGY_INBOX_ACTIONS: frozenset[str] = frozenset(
         "strategy-resume",
         "strategy-configure",
         "strategy-execute",
+        "strategy-context-brief",
+        "strategy-context-apply",
     }
 )
 
@@ -173,6 +175,7 @@ def execute_strategy_instruction(
     Thresholds are strictly immutable; any attempt to pass threshold keys in
     ``params`` raises ``ValueError``.
     """
+    from waystone3.hq.context_lm import HqContextLanguageModel
     from waystone3.hq.strategy_runner import HqStrategyRunner, assert_no_threshold_changes
 
     rt = runner if runner is not None else HqStrategyRunner()
@@ -180,7 +183,20 @@ def execute_strategy_instruction(
     params = dict(item.get("params") or {})
     assert_no_threshold_changes(params)
 
-    strategy = str(params.get("strategy") or item.get("strategy") or "").strip()
+    strategy = str(params.get("strategy") or item.get("strategy") or "").strip() or None
+    if action == "strategy-context-brief":
+        clm = HqContextLanguageModel(runner=rt)
+        return clm.generate_brief(
+            strategy,
+            question=str(params.get("question") or item.get("text") or ""),
+            use_llm=bool(params.get("use_llm", True)),
+        )
+    if action == "strategy-context-apply":
+        clm = HqContextLanguageModel(runner=rt)
+        return clm.apply_recommendation(
+            strategy,
+            actor=str(item.get("source") or "grok_bot"),
+        )
     if not strategy:
         raise ValueError("strategy parameter is required for strategy-* inbox actions")
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from waystone3.hq.context_lm import HqContextLanguageModel
 from waystone3.hq.reader import HqReader
 from waystone3.hq.strategy_runner import HqStrategyRunner
 
@@ -25,9 +26,12 @@ def register_hq_strategy_exec_tools(
     mcp: FastMCP,
     runner: HqStrategyRunner,
     authorize: Callable[[], None],
+    reader: HqReader | None = None,
+    context_lm: HqContextLanguageModel | None = None,
 ) -> None:
-    """Add ``hq_strategy_*`` and ``ibkr_futures_*`` tools for running ``hq-strategy``
-    algorithms on IBKR agentic paper accounts with immutable thresholds."""
+    """Add ``hq_strategy_*``, ``hq_context_*``, and ``ibkr_futures_*`` tools for running
+    ``hq-strategy`` algorithms on IBKR agentic paper accounts with immutable thresholds."""
+    clm = context_lm if context_lm is not None else HqContextLanguageModel(runner=runner, reader=reader)
 
     @mcp.tool()
     def hq_strategy_runtime(strategy: str | None = None) -> dict[str, Any]:
@@ -177,12 +181,51 @@ def register_hq_strategy_exec_tools(
             reason=reason,
         )
 
+    @mcp.tool()
+    def hq_context_brief(
+        strategy: str | None = None,
+        question: str = "",
+        use_llm: bool = True,
+    ) -> dict[str, Any]:
+        """Context Language Model (CLM) desk briefing for Claude Cowork and GrokBot:
+        fuses live Renko/MCO engine state, sentiment gates, position distance-to-stop X-ray,
+        execution slippage/loss-cap drift, and downward-only sleeve allocation (nq_v221,
+        es_v221, r2_mnq) with locked thresholds."""
+        authorize()
+        return clm.generate_brief(strategy, question=question, use_llm=use_llm)
+
+    @mcp.tool()
+    def hq_context_position_xray(strategy: str | None = None) -> dict[str, Any]:
+        """Real-time Position Risk X-Ray for one or all HQ strategies: exact index price and
+        dollar P&L distance to every locked exit level (2/3/4% profit-take, going-nowhere stop,
+        after-hours stop, engine hard stop 'fts', and IBKR server-side GTC disaster stop)."""
+        authorize()
+        return clm.position_xray(strategy)
+
+    @mcp.tool()
+    def hq_context_apply_guard(strategy: str | None = None) -> dict[str, Any]:
+        """Apply the Context Language Model's downward-only protective verdict on bound IBKR
+        paper accounts (STAND_DOWN -> engages KILL_SWITCH; REDUCE -> shrinks contract count).
+        Never increases size above validated defaults and never alters thresholds."""
+        authorize()
+        return clm.apply_recommendation(strategy, actor="claude_cowork_mcp")
+
+    @mcp.tool()
+    def hq_context_notify_grokbot(
+        strategy: str | None = None,
+        question: str = "",
+    ) -> dict[str, Any]:
+        """Generate a Context Language Model brief and push it to the GrokBot webhook routine."""
+        authorize()
+        return clm.notify_grokbot(strategy, question=question)
+
 
 def register_hq_tools(
     mcp: FastMCP,
     reader: HqReader,
     authorize: Callable[[], None],
     runner: HqStrategyRunner | None = None,
+    context_lm: HqContextLanguageModel | None = None,
 ) -> None:
     """Add ``hq_*`` tools. ``authorize`` raises when the caller's token is not valid."""
 
@@ -342,5 +385,7 @@ def register_hq_tools(
         return {"loads": reader.load_health(), "days": reader.day_status()[:30]}
 
     if runner is not None:
-        register_hq_strategy_exec_tools(mcp, runner, authorize)
+        register_hq_strategy_exec_tools(
+            mcp, runner, authorize, reader=reader, context_lm=context_lm
+        )
 

@@ -78,4 +78,7 @@ Actions the agent understands:
   - `strategy-halt`: engage `KILL_SWITCH` (flattens open position on next cycle)
   - `strategy-resume`: remove `KILL_SWITCH`
   - `strategy-execute`: submit a `BUY`, `SELL` (with locked server-side GTC stop), or `FLATTEN` on the bound IBKR paper account
+  - `strategy-context-brief`: run the Context Language Model (CLM) briefing across engine state, sentiment gates, position distance-to-stop X-ray, and execution drift
+  - `strategy-context-apply`: apply the Context Language Model's downward-only protective verdict (`STAND_DOWN` $\rightarrow$ `KILL_SWITCH`; `REDUCE` $\rightarrow$ shrink contracts)
+
 
