@@ -160,6 +160,10 @@ STRATEGY_INBOX_ACTIONS: frozenset[str] = frozenset(
         "strategy-execute",
         "strategy-context-brief",
         "strategy-context-apply",
+        "sandbox-backtest-gcs",
+        "sandbox-backtest-ibkr",
+        "sandbox-datasets",
+        "sandbox-runs",
     }
 )
 
@@ -168,13 +172,15 @@ def execute_strategy_instruction(
     item: dict[str, Any],
     *,
     runner: Any | None = None,
+    store: ReportStore | None = None,
     spawn: bool = False,
 ) -> dict[str, Any]:
-    """Execute a GrokBot inbox instruction targeting an HQ futures strategy.
+    """Execute a GrokBot inbox instruction targeting an HQ futures strategy or sandbox backtest.
 
     Thresholds are strictly immutable; any attempt to pass threshold keys in
     ``params`` raises ``ValueError``.
     """
+    from waystone3.hq.backtest_sandbox import HqBacktestSandbox
     from waystone3.hq.context_lm import HqContextLanguageModel
     from waystone3.hq.strategy_runner import HqStrategyRunner, assert_no_threshold_changes
 
@@ -184,6 +190,43 @@ def execute_strategy_instruction(
     assert_no_threshold_changes(params)
 
     strategy = str(params.get("strategy") or item.get("strategy") or "").strip() or None
+    if action == "sandbox-datasets":
+        sbx = HqBacktestSandbox(runner=rt, store=store)
+        return sbx.list_datasets()
+    if action == "sandbox-runs":
+        sbx = HqBacktestSandbox(runner=rt, store=store)
+        run_id = params.get("run_id")
+        if run_id:
+            found = sbx.get_run(str(run_id))
+            if found is None:
+                raise ValueError(f"sandbox run {run_id!r} not found")
+            return found
+        return {"runs": sbx.list_runs(int(params.get("limit", 20)))}
+    if action == "sandbox-backtest-gcs":
+        if not strategy:
+            raise ValueError("strategy parameter is required for sandbox-backtest-gcs")
+        sbx = HqBacktestSandbox(runner=rt, store=store)
+        return sbx.run_gcs_backtest(
+            strategy,
+            start=params.get("start"),
+            end=params.get("end"),
+            gcs_key=params.get("gcs_key"),
+            contracts=params.get("contracts"),
+            fng_prior_day=params.get("fng_prior_day"),
+        )
+    if action == "sandbox-backtest-ibkr":
+        if not strategy:
+            raise ValueError("strategy parameter is required for sandbox-backtest-ibkr")
+        sbx = HqBacktestSandbox(runner=rt, store=store)
+        return sbx.run_ibkr_backtest(
+            strategy,
+            days=int(params.get("days", 30)),
+            bar_size=str(params.get("bar_size", "1 min")),
+            use_rth=bool(params.get("use_rth", False)),
+            account_id=params.get("account_id"),
+            contracts=params.get("contracts"),
+            fng_prior_day=params.get("fng_prior_day"),
+        )
     if action == "strategy-context-brief":
         clm = HqContextLanguageModel(runner=rt)
         return clm.generate_brief(
@@ -261,7 +304,7 @@ def process_strategy_inbox(
             continue
         item_id = str(row.get("id") or "")
         try:
-            out = execute_strategy_instruction(row, runner=runner, spawn=spawn)
+            out = execute_strategy_instruction(row, runner=runner, store=reports, spawn=spawn)
             ack_instruction(item_id, store=reports)
             post_status(
                 "strategy_op",

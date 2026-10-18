@@ -14,9 +14,31 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from waystone3.hq.backtest_sandbox import HqBacktestSandbox
 from waystone3.hq.context_lm import HqContextLanguageModel
 from waystone3.hq.reader import HqReader
 from waystone3.hq.strategy_runner import HqStrategyRunner
+
+
+class SandboxGcsBacktestBody(BaseModel):
+    strategy: str = Field(min_length=1)
+    start: str | None = None
+    end: str | None = None
+    gcs_key: str | None = None
+    contracts: int | None = None
+    fng_prior_day: float | None = None
+    overrides: dict[str, Any] | None = None
+
+
+class SandboxIbkrBacktestBody(BaseModel):
+    strategy: str = Field(min_length=1)
+    days: int = 30
+    bar_size: str = "1 min"
+    use_rth: bool = False
+    account_id: str | None = None
+    contracts: int | None = None
+    fng_prior_day: float | None = None
+    overrides: dict[str, Any] | None = None
 
 
 class ContextBriefBody(BaseModel):
@@ -81,6 +103,7 @@ def build_hq_router(
     session: Callable[..., Any],
     runner: HqStrategyRunner | None = None,
     context_lm: HqContextLanguageModel | None = None,
+    sandbox: HqBacktestSandbox | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/hq", dependencies=[Depends(session)])
     strategy_runner = runner if runner is not None else HqStrategyRunner()
@@ -89,6 +112,7 @@ def build_hq_router(
         if context_lm is not None
         else HqContextLanguageModel(runner=strategy_runner, reader=reader)
     )
+    sbx = sandbox if sandbox is not None else HqBacktestSandbox(runner=strategy_runner)
 
     def _reader() -> HqReader:
         if reader is None:
@@ -404,5 +428,52 @@ def build_hq_router(
             return clm.notify_grokbot(body.strategy, question=body.question)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # ── Backtest Sandbox (1: GCS Historical Bucket, 2: IBKR Same Account) ───
+    @router.get("/sandbox/datasets")
+    def hq_sandbox_datasets() -> dict[str, Any]:
+        return sbx.list_datasets()
+
+    @router.post("/sandbox/backtest/gcs")
+    def hq_sandbox_backtest_gcs(body: SandboxGcsBacktestBody) -> dict[str, Any]:
+        try:
+            return sbx.run_gcs_backtest(
+                body.strategy,
+                start=body.start,
+                end=body.end,
+                gcs_key=body.gcs_key,
+                contracts=body.contracts,
+                fng_prior_day=body.fng_prior_day,
+                overrides=body.overrides,
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/sandbox/backtest/ibkr")
+    def hq_sandbox_backtest_ibkr(body: SandboxIbkrBacktestBody) -> dict[str, Any]:
+        try:
+            return sbx.run_ibkr_backtest(
+                body.strategy,
+                days=body.days,
+                bar_size=body.bar_size,
+                use_rth=body.use_rth,
+                account_id=body.account_id,
+                contracts=body.contracts,
+                fng_prior_day=body.fng_prior_day,
+                overrides=body.overrides,
+            )
+        except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/sandbox/runs")
+    def hq_sandbox_runs(limit: int = 25) -> dict[str, Any]:
+        return {"runs": sbx.list_runs(limit)}
+
+    @router.get("/sandbox/runs/{run_id}")
+    def hq_sandbox_run_detail(run_id: str) -> dict[str, Any]:
+        found = sbx.get_run(run_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"sandbox run {run_id} not found")
+        return found
 
     return router
