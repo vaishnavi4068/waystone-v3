@@ -80,5 +80,10 @@ Actions the agent understands:
   - `strategy-execute`: submit a `BUY`, `SELL` (with locked server-side GTC stop), or `FLATTEN` on the bound IBKR paper account
   - `strategy-context-brief`: run the Context Language Model (CLM) briefing across engine state, sentiment gates, position distance-to-stop X-ray, and execution drift
   - `strategy-context-apply`: apply the Context Language Model's downward-only protective verdict (`STAND_DOWN` $\rightarrow$ `KILL_SWITCH`; `REDUCE` $\rightarrow$ shrink contracts)
+  - `sandbox-datasets`: list historical CSV datasets in GCS (`gs://$IBKR_REPORTS_BUCKET/NSDQ250/...`) and bound IBKR paper accounts
+  - `sandbox-backtest-gcs`: run an isolated Sandbox Backtest against historical data in the GCS bucket
+  - `sandbox-backtest-ibkr`: run an isolated Sandbox Backtest against IBKR daily/historical data fetched through the strategy's same bound IBKR paper account (`D...`)
+  - `sandbox-runs`: list or fetch stored Sandbox Backtest runs (`sandbox/v1/runs/<run_id>.json`)
+
 
 
