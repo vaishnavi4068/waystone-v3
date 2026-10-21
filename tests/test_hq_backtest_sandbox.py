@@ -213,4 +213,114 @@ def test_mcp_and_api_and_grokbot_sandbox_backtest_tools(tmp_path: Path, monkeypa
     assert grok_bt.json()["acked"] is True
     assert grok_bt.json()["execution"]["data_source"] == "gcs"
     assert grok_bt.json()["execution"]["account_id"] == "DUR842608"
+
+    # Diagnose discrepancy between reference backtest and live-parity replay
+    diag = client.post(
+        "/api/hq/sandbox/diagnose-discrepancy",
+        headers=headers,
+        json={"strategy": "nq_v221", "start": "2026-10-01", "end": "2026-10-02"},
+    )
+    assert diag.status_code == 200
+    assert diag.json()["thresholds_locked"] is True
+    assert "reference_backtest" in diag.json()
+    assert "live_parity_backtest" in diag.json()
+    assert diag.json()["root_causes"]
     del sbx
+
+
+def test_exit_reason_match_and_inferred_backtest_commission() -> None:
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    from waystone3.hq.backtest_daily import parse_backtest_daily
+    from waystone3.hq.calendar import NY
+    from waystone3.hq.compare import TradeRef, daily_sync, match_trades
+    from waystone3.hq.loader import _backtest_rows
+
+    # 1. When trade counts differ (1 live vs 2 backtest where 2nd was NOT_TAKEN_LIVE),
+    # exit_reason_match is determined by the MATCHED pair ("Y"), not paper[-1] vs bt[-1]
+    day = date(2026, 10, 1)
+    paper = [
+        TradeRef(
+            1,
+            "SHORT",
+            datetime(2026, 10, 1, 9, 31, tzinfo=NY),
+            datetime(2026, 10, 1, 12, 18, tzinfo=NY),
+            Decimal("-43.5"),
+            Decimal("-4358.96"),
+            "yeah_its_failing",
+        )
+    ]
+    bt = [
+        TradeRef(
+            10,
+            "SHORT",
+            datetime(2026, 10, 1, 9, 31, tzinfo=NY),
+            datetime(2026, 10, 1, 12, 40, tzinfo=NY),
+            Decimal("-44.25"),
+            Decimal("-4434.00"),
+            "yeah_its_failing",
+        ),
+        TradeRef(
+            11,
+            "LONG",
+            datetime(2026, 10, 1, 12, 42, tzinfo=NY),
+            datetime(2026, 10, 1, 15, 55, tzinfo=NY),
+            Decimal("-10.25"),
+            Decimal("-1034.00"),
+            "SESSION_FLATTEN",
+        ),
+    ]
+    matches = match_trades(paper, bt, loss_cap_at=None)
+    sync_row = daily_sync(
+        paper, matches, loss_cap_hit=False, pct_threshold=Decimal("0.15"), usd_floor=Decimal(0)
+    )
+    assert sync_row.exit_reason_match == "Y"
+
+    # 2. Same signal + same exit reason with % exit bar timing drift is annotated clearly
+    nq_paper = [
+        TradeRef(
+            9,
+            "SHORT",
+            datetime(2026, 10, 2, 9, 31, tzinfo=NY),
+            datetime(2026, 10, 2, 10, 20, tzinfo=NY),
+            Decimal("-199.375"),
+            Decimal("-7983.96"),
+            "yeah_its_failing",
+        )
+    ]
+    nq_bt = [
+        TradeRef(
+            1,
+            "SHORT",
+            datetime(2026, 10, 2, 9, 31, tzinfo=NY),
+            datetime(2026, 10, 2, 10, 5, tzinfo=NY),
+            Decimal("-150.00"),
+            Decimal("-6008.96"),
+            "yeah_its_failing",
+        )
+    ]
+    nq_sync = daily_sync(
+        nq_paper,
+        match_trades(nq_paper, nq_bt, loss_cap_at=None),
+        loss_cap_hit=True,
+        pct_threshold=Decimal("0.15"),
+        usd_floor=Decimal(0),
+    )
+    assert any("entry fill price shifted % exit bar" in n for n in nq_sync.notes)
+
+    # 3. _backtest_rows infers commission from gross - net when commission is not explicitly printed
+    parsed = parse_backtest_daily(
+        "ES replay 2026-10-01\n"
+        "#1 SHORT entry=09:31 exit=12:40 pts=-44.25 contracts=2 "
+        "net=-4434.00 reason=yeah_its_failing\n",
+        day,
+    )
+    rows = _backtest_rows(
+        parsed,
+        Decimal(50),
+        {"default_contracts": 2, "commission_rt_per_contract": Decimal("4.50")},
+    )
+    assert rows[0]["gross_pnl"] == Decimal("-4425.00")
+    assert rows[0]["commission"] == Decimal("9.00")
+

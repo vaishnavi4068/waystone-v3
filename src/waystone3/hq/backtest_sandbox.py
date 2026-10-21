@@ -461,6 +461,175 @@ class HqBacktestSandbox:
                 return r
         return None
 
+    # ── Live-Parity Bar Loop Helper (Enforces Live Loss Cap, Flatten & Entry Anchor) ──
+    def _replay_bars_on_engine(
+        self,
+        spec: StrategySpec,
+        bars: list[dict[str, Any]],
+        *,
+        contracts: int,
+        fng_prior_day: float | None = None,
+        live_parity: bool = False,
+        use_saved_state: bool = False,
+    ) -> tuple[Any, list[dict[str, Any]]]:
+        """Run bars through the locked strategy engine.
+
+        When ``live_parity=False`` (default reference backtest mode):
+          - Starts from a fresh engine (unless ``use_saved_state=True``),
+          - Uses ``backtest_fill=True`` (entry_price = bar open, no daily loss cap,
+            no 15:55 flatten).
+        When ``live_parity=True`` (matches ``v221_futures_live.py`` rules):
+          - Enforces ``V221_DAILY_LOSS`` (-$2,500) per session date,
+          - Enforces ``V221_NO_NEW_ENTRIES_AFTER`` (15:55 ET) and ``V221_FLATTEN_AT``
+            (15:55 ET when ``hold_overnight=False``),
+          - Anchors ``entry_price = fill_price`` (matching live paper's ``enter(action, fill)``),
+          - Checks intrabar broker disaster stop (`broker_stop_pct`).
+        """
+        from datetime import time as dtime
+        from datetime import timedelta
+
+        engine = self.runner.load_engine_instance(
+            spec.code, use_saved_state=use_saved_state
+        )
+        if not live_parity:
+            for b in bars:
+                dt = b["datetime_et"]
+                if isinstance(dt, str):
+                    dt = _parse_bar_timestamp(dt)
+                fng_lookup = None
+                all_dates = None
+                if fng_prior_day is not None:
+                    pd_date = dt.date() - timedelta(days=1)
+                    fng_lookup = {pd_date: float(fng_prior_day)}
+                    all_dates = [pd_date]
+                engine.on_bar(
+                    dt=dt,
+                    open_=float(b["open"]),
+                    high=float(b["high"]),
+                    low=float(b["low"]),
+                    close=float(b["close"]),
+                    volume=float(b.get("volume", 1000.0)),
+                    vol_price=float(b.get("vol_price", 20.0)),
+                    fng_lookup=fng_lookup,
+                    all_fng_dates=all_dates,
+                    backtest_fill=True,
+                )
+            return engine, list(getattr(engine, "trades", []))
+
+        # Live-parity replay mode
+        slip_pts = 0.125
+        mult = spec.point_multiplier
+        comm_rt = (
+            spec.commission_per_side * 2.0
+            if spec.engine_kind == "r2_mnq"
+            else spec.commission_per_side
+        )
+        loss_limit = -abs(spec.thresholds.daily_loss_limit_usd)
+        max_trades = spec.thresholds.max_trades_per_day
+        stop_pct = spec.thresholds.broker_stop_pct
+        bind = self.runner.binding(spec.code)
+        hold_overnight = bind.hold_overnight
+        fh, fm = (int(x) for x in spec.default_flatten_at.split(":"))
+        eh, em = (int(x) for x in spec.default_no_new_entries_after.split(":"))
+        flatten_time = dtime(fh, fm)
+        entry_cutoff = dtime(eh, em)
+
+        realized_by_day: dict[str, float] = {}
+        trades_by_day: dict[str, int] = {}
+        active_stop_px: float | None = None
+
+        for b in bars:
+            dt = b["datetime_et"]
+            if isinstance(dt, str):
+                dt = _parse_bar_timestamp(dt)
+            day_key = dt.date().isoformat()
+            open_px = float(b["open"])
+            high_px = float(b["high"])
+            low_px = float(b["low"])
+            close_px = float(b["close"])
+
+            # 1. Fill pending signal at top of bar if live risk & cutoff gates allow
+            if engine.pending_signal is not None and engine.position is None:
+                day_pnl = realized_by_day.get(day_key, 0.0)
+                day_cnt = trades_by_day.get(day_key, 0)
+                if (
+                    dt.time() < entry_cutoff
+                    and day_pnl > loss_limit
+                    and day_cnt < max_trades
+                ):
+                    sig_dir = engine.pending_signal
+                    fill_px = open_px + slip_pts if sig_dir == "BUY" else open_px - slip_pts
+                    # Anchor entry_price to fill_px just like v221_futures_live.py::do_entry
+                    engine.enter(sig_dir, fill_px, dt, entry_price=fill_px)
+                    active_stop_px = (
+                        fill_px * (1.0 - stop_pct / 100.0)
+                        if sig_dir == "BUY"
+                        else fill_px * (1.0 + stop_pct / 100.0)
+                    )
+                    trades_by_day[day_key] = day_cnt + 1
+                else:
+                    engine.cancel_pending()
+
+            # 2. Intrabar broker GTC stop check (if position open)
+            if engine.position is not None and active_stop_px is not None:
+                hit_broker_stop = (
+                    engine.position == "LONG" and low_px <= active_stop_px
+                ) or (engine.position == "SHORT" and high_px >= active_stop_px)
+                if hit_broker_stop:
+                    t_rec = engine.exit_filled(active_stop_px, dt, "STOP_FILLED_BROKER")
+                    net_pnl = (float(t_rec["pts"]) * mult - comm_rt) * contracts
+                    realized_by_day[day_key] = realized_by_day.get(day_key, 0.0) + net_pnl
+                    active_stop_px = None
+                    continue
+
+            # 3. Session flatten at 15:55 ET when hold_overnight is False
+            if (
+                not hold_overnight
+                and engine.position is not None
+                and dt.time() >= flatten_time
+            ):
+                exit_fill = (
+                    close_px - slip_pts
+                    if engine.position == "LONG"
+                    else close_px + slip_pts
+                )
+                t_rec = engine.exit_filled(exit_fill, dt, "SESSION_FLATTEN")
+                net_pnl = (float(t_rec["pts"]) * mult - comm_rt) * contracts
+                realized_by_day[day_key] = realized_by_day.get(day_key, 0.0) + net_pnl
+                active_stop_px = None
+                engine.cancel_pending()
+                continue
+
+            # 4. Run engine.on_bar with backtest_fill=False and manage exit
+            fng_lookup = None
+            all_dates = None
+            if fng_prior_day is not None:
+                pd_date = dt.date() - timedelta(days=1)
+                fng_lookup = {pd_date: float(fng_prior_day)}
+                all_dates = [pd_date]
+            out = engine.on_bar(
+                dt=dt,
+                open_=open_px,
+                high=high_px,
+                low=low_px,
+                close=close_px,
+                volume=float(b.get("volume", 1000.0)),
+                vol_price=float(b.get("vol_price", 20.0)),
+                fng_lookup=fng_lookup,
+                all_fng_dates=all_dates,
+                backtest_fill=False,
+            )
+            if out.get("exit") and engine.position is not None:
+                was_long = engine.position == "LONG"
+                exit_fill = close_px - slip_pts if was_long else close_px + slip_pts
+                reason = str(out["exit"])
+                t_rec = engine.exit_filled(exit_fill, dt, reason)
+                net_pnl = (float(t_rec["pts"]) * mult - comm_rt) * contracts
+                realized_by_day[day_key] = realized_by_day.get(day_key, 0.0) + net_pnl
+                active_stop_px = None
+
+        return engine, list(getattr(engine, "trades", []))
+
     # ── 1. Sandbox Backtest on GCS Historical Data ───────────────────────────
     def run_gcs_backtest(
         self,
@@ -471,12 +640,15 @@ class HqBacktestSandbox:
         gcs_key: str | None = None,
         contracts: int | None = None,
         fng_prior_day: float | None = None,
+        live_parity: bool = False,
+        use_saved_state: bool = False,
         overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run a sandbox backtest of an HQ strategy against historical data in GCS.
 
         Uses the strategy's bound paper account metadata (`account_id`, `client_id`) and
-        strictly enforces locked strategy thresholds.
+        strictly enforces locked strategy thresholds. Set ``live_parity=True`` to enforce
+        live paper session rules (-$2,500 daily loss cap, 15:55 flatten, fill-anchored exits).
         """
         assert_no_threshold_changes(overrides)
         code = resolve_strategy_code(strategy)
@@ -494,31 +666,14 @@ class HqBacktestSandbox:
                 f"No bars matched window start={start!r} end={end!r} in {dataset_uri}"
             )
 
-        engine = self.runner.load_engine_instance(code, use_saved_state=False)
-        for b in bars:
-            dt = b["datetime_et"]
-            fng_lookup = None
-            all_dates = None
-            if fng_prior_day is not None:
-                from datetime import timedelta
-
-                pd_date = dt.date() - timedelta(days=1)
-                fng_lookup = {pd_date: float(fng_prior_day)}
-                all_dates = [pd_date]
-            engine.on_bar(
-                dt=dt,
-                open_=b["open"],
-                high=b["high"],
-                low=b["low"],
-                close=b["close"],
-                volume=b["volume"],
-                vol_price=b["vol_price"],
-                fng_lookup=fng_lookup,
-                all_fng_dates=all_dates,
-                backtest_fill=True,
-            )
-
-        raw_trades = list(getattr(engine, "trades", []))
+        engine, raw_trades = self._replay_bars_on_engine(
+            spec,
+            bars,
+            contracts=qty,
+            fng_prior_day=fng_prior_day,
+            live_parity=live_parity,
+            use_saved_state=use_saved_state,
+        )
         metrics, enriched_trades = compute_sandbox_metrics(
             spec,
             data_source="gcs",
@@ -534,6 +689,7 @@ class HqBacktestSandbox:
             "run_id": run_id,
             "created_at": datetime.now(NY).isoformat(),
             "sandbox": True,
+            "live_parity": live_parity,
             "strategy_code": code,
             "instrument_root": spec.instrument_root,
             "data_source": "gcs",
@@ -559,6 +715,8 @@ class HqBacktestSandbox:
         account_id: str | None = None,
         contracts: int | None = None,
         fng_prior_day: float | None = None,
+        live_parity: bool = False,
+        use_saved_state: bool = False,
         bars_override: list[dict[str, Any]] | None = None,
         overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -640,33 +798,14 @@ class HqBacktestSandbox:
         if not bars:
             raise ValueError(f"No IBKR bars available to replay for {code}")
 
-        engine = self.runner.load_engine_instance(code, use_saved_state=False)
-        for b in bars:
-            dt = b["datetime_et"]
-            if isinstance(dt, str):
-                dt = _parse_bar_timestamp(dt)
-            fng_lookup = None
-            all_dates = None
-            if fng_prior_day is not None:
-                from datetime import timedelta
-
-                pd_date = dt.date() - timedelta(days=1)
-                fng_lookup = {pd_date: float(fng_prior_day)}
-                all_dates = [pd_date]
-            engine.on_bar(
-                dt=dt,
-                open_=float(b["open"]),
-                high=float(b["high"]),
-                low=float(b["low"]),
-                close=float(b["close"]),
-                volume=float(b.get("volume", 1000.0)),
-                vol_price=float(b.get("vol_price", 20.0)),
-                fng_lookup=fng_lookup,
-                all_fng_dates=all_dates,
-                backtest_fill=True,
-            )
-
-        raw_trades = list(getattr(engine, "trades", []))
+        engine, raw_trades = self._replay_bars_on_engine(
+            spec,
+            bars,
+            contracts=qty,
+            fng_prior_day=fng_prior_day,
+            live_parity=live_parity,
+            use_saved_state=use_saved_state,
+        )
         metrics, enriched_trades = compute_sandbox_metrics(
             spec,
             data_source="ibkr",
@@ -682,6 +821,7 @@ class HqBacktestSandbox:
             "run_id": run_id,
             "created_at": datetime.now(NY).isoformat(),
             "sandbox": True,
+            "live_parity": live_parity,
             "strategy_code": code,
             "instrument_root": spec.instrument_root,
             "contract": contract_symbol,
@@ -699,3 +839,91 @@ class HqBacktestSandbox:
             "trades": enriched_trades[-200:],
         }
         return self._record_run(record)
+
+    # ── 3. Discrepancy Attribution: Reference Replay vs. Live-Parity Replay ─
+    def diagnose_replay_discrepancy(
+        self,
+        strategy: str,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+        gcs_key: str | None = None,
+        bars_override: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Run both Reference Backtest (`live_parity=False`) and Live-Parity Backtest
+        (`live_parity=True`) on the exact same bars and decompose why P&L / trade counts
+        differ (daily loss cap blocks, 15:55 flatten, or entry-fill % exit bar shift)."""
+        code = resolve_strategy_code(strategy)
+        spec = STRATEGY_SPECS[code]
+        bind = self.runner.binding(code)
+        if bars_override is not None:
+            bars = list(bars_override)
+            dataset_uri = "memory://bars_override"
+        else:
+            bars, dataset_uri = self._load_gcs_bars(
+                spec, gcs_key=gcs_key, start=start, end=end
+            )
+
+        _, ref_raw = self._replay_bars_on_engine(
+            spec, bars, contracts=bind.contracts, live_parity=False
+        )
+        ref_metrics, ref_trades = compute_sandbox_metrics(
+            spec,
+            data_source="reference_backtest",
+            account_id=bind.account_id,
+            client_id=bind.client_id,
+            contracts=bind.contracts,
+            bars=bars,
+            trades=ref_raw,
+        )
+
+        _, live_raw = self._replay_bars_on_engine(
+            spec, bars, contracts=bind.contracts, live_parity=True
+        )
+        live_metrics, live_trades = compute_sandbox_metrics(
+            spec,
+            data_source="live_parity_backtest",
+            account_id=bind.account_id,
+            client_id=bind.client_id,
+            contracts=bind.contracts,
+            bars=bars,
+            trades=live_raw,
+        )
+
+        causes: list[str] = []
+        if ref_metrics.trades_count != live_metrics.trades_count:
+            causes.append(
+                f"Trade count delta ({live_metrics.trades_count} live-parity vs "
+                f"{ref_metrics.trades_count} reference): caused by live -$2,500 daily loss "
+                "cap or 15:55 ET entry cutoff / flatten."
+            )
+        if (
+            ref_metrics.exit_reasons.get("SESSION_FLATTEN", 0)
+            != live_metrics.exit_reasons.get("SESSION_FLATTEN", 0)
+        ):
+            causes.append(
+                "15:55 ET SESSION_FLATTEN active in live-parity while reference backtest "
+                "holds overnight."
+            )
+        pnl_gap = round(live_metrics.net_pnl_usd - ref_metrics.net_pnl_usd, 2)
+        if abs(pnl_gap) > 1.0 and ref_metrics.trades_count == live_metrics.trades_count:
+            causes.append(
+                f"P&L gap ${pnl_gap:+,.2f} on identical trade count: live anchors % exits "
+                "to slipped fill price (open ± 0.125) rather than unslipped bar open."
+            )
+        if not causes:
+            causes.append("Reference backtest and live-parity replay matched identically.")
+
+        return {
+            "strategy_code": code,
+            "dataset_uri": dataset_uri,
+            "account_id": bind.account_id,
+            "thresholds_locked": True,
+            "reference_backtest": ref_metrics.to_dict(),
+            "live_parity_backtest": live_metrics.to_dict(),
+            "pnl_gap_usd": pnl_gap,
+            "trade_count_gap": live_metrics.trades_count - ref_metrics.trades_count,
+            "root_causes": causes,
+            "reference_trades": ref_trades[-50:],
+            "live_parity_trades": live_trades[-50:],
+        }

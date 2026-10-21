@@ -27,8 +27,8 @@ LEFT JOIN ref.instrument i USING (instrument_id);
 
 CREATE OR REPLACE VIEW api.v_backtest_trades AS
 SELECT s.strategy_code, t.session_date, t.trade_seq, t.direction, t.entry_ts, t.exit_ts,
-       t.entry_px, t.exit_px, t.points, t.contracts, t.contracts_inferred, t.net_pnl,
-       t.net_pnl_derived, t.exit_reason, t.hold_min,
+       t.entry_px, t.exit_px, t.points, t.contracts, t.contracts_inferred, t.gross_pnl,
+       t.commission, t.net_pnl, t.net_pnl_derived, t.exit_reason, t.hold_min,
        r.config_label, r.params_fp, r.vol_index, r.bar_count, r.status AS run_status
 FROM core.backtest_trade t
 JOIN core.backtest_run r USING (run_id)

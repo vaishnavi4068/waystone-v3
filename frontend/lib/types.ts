@@ -643,6 +643,8 @@ export interface HqBacktestTrade {
   points: number | null;
   contracts: number | null;
   contracts_inferred: boolean;
+  gross_pnl?: number | null;
+  commission?: number | null;
   net_pnl: number | null;
   net_pnl_derived: boolean;
   exit_reason: string | null;

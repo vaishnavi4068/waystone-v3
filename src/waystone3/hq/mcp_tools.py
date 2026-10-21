@@ -243,10 +243,12 @@ def register_hq_strategy_exec_tools(
         gcs_key: str | None = None,
         contracts: int | None = None,
         fng_prior_day: float | None = None,
+        live_parity: bool = False,
     ) -> dict[str, Any]:
         """Run an isolated Sandbox Backtest of an HQ strategy (nq_v221, es_v221, r2_mnq)
         pointing to 1) historical data in the GCS bucket (gs://$IBKR_REPORTS_BUCKET/NSDQ250/...).
-        Uses the strategy's bound paper account metadata and locked thresholds."""
+        Set live_parity=True to enforce live paper session rules (-$2,500 loss cap, 15:55 flatten,
+        and fill-anchored % exits)."""
         authorize()
         return sbx.run_gcs_backtest(
             strategy,
@@ -255,6 +257,7 @@ def register_hq_strategy_exec_tools(
             gcs_key=gcs_key,
             contracts=contracts,
             fng_prior_day=fng_prior_day,
+            live_parity=live_parity,
         )
 
     @mcp.tool()
@@ -266,10 +269,11 @@ def register_hq_strategy_exec_tools(
         account_id: str | None = None,
         contracts: int | None = None,
         fng_prior_day: float | None = None,
+        live_parity: bool = False,
     ) -> dict[str, Any]:
         """Run an isolated Sandbox Backtest of an HQ strategy (nq_v221, es_v221, r2_mnq)
         pointing to 2) IBKR daily/historical data fetched through the SAME bound IBKR paper
-        account (D...). Replays the locked V221/R2 engine and stores the sandbox run."""
+        account (D...). Set live_parity=True to enforce live paper rules."""
         authorize()
         return sbx.run_ibkr_backtest(
             strategy,
@@ -279,6 +283,22 @@ def register_hq_strategy_exec_tools(
             account_id=account_id,
             contracts=contracts,
             fng_prior_day=fng_prior_day,
+            live_parity=live_parity,
+        )
+
+    @mcp.tool()
+    def hq_sandbox_diagnose_discrepancy(
+        strategy: str,
+        start: str | None = None,
+        end: str | None = None,
+        gcs_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare Reference Backtest vs Live-Parity Backtest on the exact same bars and
+        diagnose the root causes of any P&L or trade-count discrepancy (daily loss cap,
+        15:55 flatten, or entry-fill % exit bar shift)."""
+        authorize()
+        return sbx.diagnose_replay_discrepancy(
+            strategy, start=start, end=end, gcs_key=gcs_key
         )
 
     @mcp.tool()

@@ -27,6 +27,7 @@ class SandboxGcsBacktestBody(BaseModel):
     gcs_key: str | None = None
     contracts: int | None = None
     fng_prior_day: float | None = None
+    live_parity: bool = False
     overrides: dict[str, Any] | None = None
 
 
@@ -38,6 +39,7 @@ class SandboxIbkrBacktestBody(BaseModel):
     account_id: str | None = None
     contracts: int | None = None
     fng_prior_day: float | None = None
+    live_parity: bool = False
     overrides: dict[str, Any] | None = None
 
 
@@ -444,6 +446,7 @@ def build_hq_router(
                 gcs_key=body.gcs_key,
                 contracts=body.contracts,
                 fng_prior_day=body.fng_prior_day,
+                live_parity=body.live_parity,
                 overrides=body.overrides,
             )
         except (ValueError, FileNotFoundError) as exc:
@@ -460,9 +463,22 @@ def build_hq_router(
                 account_id=body.account_id,
                 contracts=body.contracts,
                 fng_prior_day=body.fng_prior_day,
+                live_parity=body.live_parity,
                 overrides=body.overrides,
             )
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/sandbox/diagnose-discrepancy")
+    def hq_sandbox_diagnose_discrepancy(body: SandboxGcsBacktestBody) -> dict[str, Any]:
+        try:
+            return sbx.diagnose_replay_discrepancy(
+                body.strategy,
+                start=body.start,
+                end=body.end,
+                gcs_key=body.gcs_key,
+            )
+        except (ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/sandbox/runs")

@@ -162,6 +162,7 @@ STRATEGY_INBOX_ACTIONS: frozenset[str] = frozenset(
         "strategy-context-apply",
         "sandbox-backtest-gcs",
         "sandbox-backtest-ibkr",
+        "sandbox-diagnose-discrepancy",
         "sandbox-datasets",
         "sandbox-runs",
     }
@@ -213,6 +214,7 @@ def execute_strategy_instruction(
             gcs_key=params.get("gcs_key"),
             contracts=params.get("contracts"),
             fng_prior_day=params.get("fng_prior_day"),
+            live_parity=bool(params.get("live_parity", False)),
         )
     if action == "sandbox-backtest-ibkr":
         if not strategy:
@@ -226,6 +228,17 @@ def execute_strategy_instruction(
             account_id=params.get("account_id"),
             contracts=params.get("contracts"),
             fng_prior_day=params.get("fng_prior_day"),
+            live_parity=bool(params.get("live_parity", False)),
+        )
+    if action == "sandbox-diagnose-discrepancy":
+        if not strategy:
+            raise ValueError("strategy parameter is required for sandbox-diagnose-discrepancy")
+        sbx = HqBacktestSandbox(runner=rt, store=store)
+        return sbx.diagnose_replay_discrepancy(
+            strategy,
+            start=params.get("start"),
+            end=params.get("end"),
+            gcs_key=params.get("gcs_key"),
         )
     if action == "strategy-context-brief":
         clm = HqContextLanguageModel(runner=rt)
