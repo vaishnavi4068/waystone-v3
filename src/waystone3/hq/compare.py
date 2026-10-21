@@ -208,11 +208,15 @@ def daily_sync(
         return row
 
     flags: list[str] = []
-    pair_matches = [m.exit_reason_match for m in matches if m.match_type == "MATCHED"]
-    if row.live_exit_reason and row.bt_exit_reason:
-        agrees = row.live_exit_reason == row.bt_exit_reason and all(
-            x is not False for x in pair_matches
-        )
+    matched_pairs = [m for m in matches if m.match_type == "MATCHED"]
+    pair_matches = [m.exit_reason_match for m in matched_pairs if m.exit_reason_match is not None]
+    if pair_matches:
+        agrees = all(x is True for x in pair_matches)
+        row.exit_reason_match = "Y" if agrees else "N"
+        if not agrees:
+            flags.append("exit reason differs")
+    elif row.live_exit_reason and row.bt_exit_reason:
+        agrees = row.live_exit_reason == row.bt_exit_reason
         row.exit_reason_match = "Y" if agrees else "N"
         if not agrees:
             flags.append("exit reason differs")
@@ -224,7 +228,22 @@ def daily_sync(
         and abs(row.pnl_delta_pct) > pct_threshold
         and abs(row.pnl_delta) > usd_floor
     ):
-        flags.append(f"P&L delta {row.pnl_delta_pct:.1%} exceeds {pct_threshold:.0%}")
+        same_signal_exit_drift = (
+            row.live_trades == row.bt_trades
+            and len(matched_pairs) == row.live_trades
+            and row.exit_reason_match == "Y"
+            and any(
+                m.exit_gap_min is not None and abs(m.exit_gap_min) >= Decimal("1")
+                for m in matched_pairs
+            )
+        )
+        if same_signal_exit_drift:
+            flags.append(
+                f"P&L delta {row.pnl_delta_pct:.1%} exceeds {pct_threshold:.0%} "
+                "(same signal & exit reason; entry fill price shifted % exit bar)"
+            )
+        else:
+            flags.append(f"P&L delta {row.pnl_delta_pct:.1%} exceeds {pct_threshold:.0%}")
     row.sync_status = "FLAG" if flags else "OK"
     row.notes.extend(flags)
     return row

@@ -15,6 +15,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from waystone3.hq.backtest_sandbox import HqBacktestSandbox
 from waystone3.hq.mcp_tools import register_hq_strategy_exec_tools, register_hq_tools
 from waystone3.hq.reader import HqReader
 from waystone3.hq.strategy_runner import HqStrategyRunner
@@ -30,13 +31,15 @@ def build_hq_mcp(
     reader: HqReader | None,
     authenticate: Authenticate,
     runner: HqStrategyRunner | None = None,
+    sandbox: HqBacktestSandbox | None = None,
 ) -> FastMCP:
     mcp = FastMCP(
         "waystone-hq",
         instructions=(
-            "Waystone futures HQ & IBKR Agentic Strategy MCP: live paper trading vs backtest "
-            "replay, daily P&L, trades, signals, fills, engine events and workbook KPIs for "
-            "es_v221, nq_v221 and r2_mnq, plus the futures sentiment gate (hq_sentiment*) and "
+            "Waystone futures HQ, Backtest Sandbox & IBKR Agentic Strategy MCP: live paper "
+            "trading vs backtest replay, daily P&L, trades, signals, fills, engine events and "
+            "workbook KPIs for es_v221, nq_v221 and r2_mnq, plus the futures sentiment gate "
+            "(hq_sentiment*), Backtest Sandbox (hq_sandbox_*), Context LM (hq_context_*), and "
             "agentic IBKR execution tools (hq_strategy_*, ibkr_futures_*). Strategy signal and "
             "stop thresholds are immutable. Dates are session dates (YYYY-MM-DD, US/Eastern)."
         ),
@@ -51,9 +54,9 @@ def build_hq_mcp(
             raise PermissionError("invalid or missing dashboard token")
 
     if reader is not None:
-        register_hq_tools(mcp, reader, authorize, runner=runner)
+        register_hq_tools(mcp, reader, authorize, runner=runner, sandbox=sandbox)
     elif runner is not None:
-        register_hq_strategy_exec_tools(mcp, runner, authorize)
+        register_hq_strategy_exec_tools(mcp, runner, authorize, sandbox=sandbox)
     return mcp
 
 

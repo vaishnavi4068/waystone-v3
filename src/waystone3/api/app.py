@@ -151,11 +151,13 @@ def build_app(
     def _authenticate(token: str) -> str | None:
         return factory().authenticate(token) if token else None
 
+    from waystone3.hq.backtest_sandbox import HqBacktestSandbox
     from waystone3.hq.mcp_http import HqMcpMount, build_hq_mcp
     from waystone3.hq.strategy_runner import HqStrategyRunner
 
     runner = strategy_runner if strategy_runner is not None else HqStrategyRunner()
-    hq_mcp = build_hq_mcp(hq, _authenticate, runner=runner)
+    sandbox = HqBacktestSandbox(runner=runner, store=store)
+    hq_mcp = build_hq_mcp(hq, _authenticate, runner=runner, sandbox=sandbox)
     hq_mcp_app = hq_mcp.streamable_http_app()
 
     @asynccontextmanager
@@ -183,7 +185,7 @@ def build_app(
             raise HTTPException(status_code=401, detail="invalid token")
         return ws, name
 
-    app.include_router(build_hq_router(hq, _session, runner=runner))
+    app.include_router(build_hq_router(hq, _session, runner=runner, sandbox=sandbox))
 
     @app.get("/api/health")
     async def health() -> dict[str, bool]:
@@ -531,10 +533,14 @@ def build_app(
                 params=body.params,
                 store=store,
             )
-            if body.execute_now and body.action.strip().lower().startswith("strategy-"):
+            if body.execute_now and body.action.strip().lower().startswith(
+                ("strategy-", "sandbox-")
+            ):
                 from waystone3.research.ops import execute_strategy_instruction
 
-                exec_out = execute_strategy_instruction(row, runner=runner, spawn=False)
+                exec_out = execute_strategy_instruction(
+                    row, runner=runner, store=store, spawn=False
+                )
                 ack_instruction(str(row["id"]), store=store)
                 row = {**row, "acked": True, "execution": exec_out}
         except ValueError as exc:

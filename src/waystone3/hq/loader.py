@@ -718,6 +718,10 @@ def _backtest_rows(parsed: BacktestDay, pv: Decimal, settings: Row) -> list[dict
         if net is None and gross is not None:
             commission = commission if commission is not None else comm_rt * contracts
             net, derived = gross - commission, True
+        elif commission is None and gross is not None and net is not None:
+            inferred_comm = gross - net
+            if Decimal(0) <= inferred_comm <= Decimal(50) * contracts:
+                commission = inferred_comm
         hold = t.hold_min
         if hold is None and t.exit_ts is not None:
             hold = Decimal(str((t.exit_ts - t.entry_ts).total_seconds() / 60))
