@@ -13,6 +13,8 @@ import copy
 import json
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -22,6 +24,7 @@ from waystone3.ibkr.store import ReportStore, build_report_store_from_env
 from waystone3.ibkr.timeutil import NY
 
 FACTORY_STATE_KEY = "factory/v1/line.json"
+HISTORICAL_BACKTEST_TIMEOUT_S = 5.0
 
 _FALLBACK: dict[str, Any] = {}
 _FALLBACK_LOCK = threading.Lock()
@@ -31,8 +34,28 @@ def _now() -> str:
     return datetime.now(NY).isoformat()
 
 
+def _default_standing() -> dict[str, Any]:
+    """The operator granted this before leaving the line running."""
+    return {
+        "enabled": True,
+        "actor": "operator",
+        "run_historical_backtest": True,
+        "note": (
+            "Standing approval: implement safe fixes, run the historical backtest "
+            "at the gate, and continue. Locked thresholds are not changed."
+        ),
+        "granted_at": None,
+        "revoked_at": None,
+    }
+
+
 def _empty_state() -> dict[str, Any]:
-    return {"tickets": [], "policies": {}, "cycles": []}
+    return {
+        "tickets": [],
+        "policies": {},
+        "cycles": [],
+        "standing_approval": _default_standing(),
+    }
 
 
 def _jsonable(value: Any) -> Any:
@@ -285,9 +308,11 @@ class HqStrategyFactory:
             )
             state["cycles"] = state["cycles"][-40:]
             self._save(state)
+        applied = self._apply_standing()
         report = self.pipeline()
         report["raised"] = created
         report["source"] = source
+        report["standing_applied"] = applied
         return report
 
     def pipeline(self) -> dict[str, Any]:
@@ -350,6 +375,27 @@ class HqStrategyFactory:
             if latest
             else "Waiting for the first compare."
         )
+        grant = self._standing(state)
+        if pending and grant["enabled"]:
+            approval_state = "waiting"
+            approval_detail = "Standing approval is on, and a ticket is still open."
+        elif pending:
+            approval_state = "waiting"
+            approval_detail = (
+                "Approve, reject, or run a historical backtest before the line continues."
+            )
+        elif grant["enabled"]:
+            approval_state = "clear"
+            approval_detail = (
+                "Standing approval is on. Safe fixes are applied, a historical "
+                "backtest is attempted, and the line continues."
+            )
+        elif checked:
+            approval_state = "clear"
+            approval_detail = "Nothing is waiting on a person."
+        else:
+            approval_state = "idle"
+            approval_detail = "Nothing is waiting on a person."
         return {
             "name": "Strategy test assembly line",
             "thresholds_locked": True,
@@ -381,12 +427,8 @@ class HqStrategyFactory:
                 {
                     "id": "approval",
                     "label": "Human approval",
-                    "state": "waiting" if pending else "clear" if checked else "idle",
-                    "detail": (
-                        "Approve, reject, or run a historical backtest before the line continues."
-                        if pending
-                        else "Nothing is waiting on a person."
-                    ),
+                    "state": approval_state,
+                    "detail": approval_detail,
                 },
                 {
                     "id": "implement",
@@ -400,6 +442,7 @@ class HqStrategyFactory:
             ],
             "strategies": strategies,
             "policies": state["policies"],
+            "standing_approval": grant,
             "tickets": tickets,
             "cycles": cycles[-8:],
         }
@@ -424,6 +467,7 @@ class HqStrategyFactory:
         actor: str = "operator",
         note: str = "",
         run_historical_backtest: bool = False,
+        continue_if_backtest_fails: bool = False,
         overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Human gate. Optionally run a historical backtest, then implement or continue."""
@@ -432,7 +476,7 @@ class HqStrategyFactory:
         historical: dict[str, Any] | None = None
         if run_historical_backtest:
             historical = self._historical_backtest(ticket_id)
-            if not historical["ok"]:
+            if not historical["ok"] and not continue_if_backtest_fails:
                 with self._lock:
                     state = self._load()
                     ticket = self._find(state, ticket_id)
@@ -454,6 +498,71 @@ class HqStrategyFactory:
             self._apply(state, ticket, actor=actor, note=note)
             self._save(state)
             return copy.deepcopy(ticket)
+
+    def set_standing_approval(
+        self,
+        *,
+        enabled: bool,
+        actor: str = "operator",
+        note: str = "",
+        run_historical_backtest: bool = True,
+        overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Record the operator's standing decision. Enabling drains open tickets."""
+        assert_no_threshold_changes(overrides)
+        with self._lock:
+            state = self._load()
+            current = self._standing(state)
+            state["standing_approval"] = {
+                "enabled": enabled,
+                "actor": actor,
+                "run_historical_backtest": run_historical_backtest if enabled else False,
+                "note": note or current.get("note") or _default_standing()["note"],
+                "granted_at": _now() if enabled else current.get("granted_at"),
+                "revoked_at": None if enabled else _now(),
+            }
+            self._save(state)
+        if enabled:
+            self._apply_standing()
+        report = self.pipeline()
+        report["standing_applied"] = []
+        return report
+
+    def _apply_standing(self) -> list[str]:
+        with self._lock:
+            state = self._load()
+            grant = self._standing(state)
+            if not grant["enabled"]:
+                return []
+            pending = [
+                ticket["ticket_id"]
+                for ticket in state["tickets"]
+                if ticket["status"] == "pending_approval"
+            ]
+        applied: list[str] = []
+        for ticket_id in pending:
+            try:
+                decided = self.approve(
+                    ticket_id,
+                    actor=str(grant.get("actor") or "operator"),
+                    note=str(grant.get("note") or ""),
+                    run_historical_backtest=bool(grant.get("run_historical_backtest")),
+                    continue_if_backtest_fails=True,
+                )
+            except ValueError:
+                continue
+            if decided["status"] != "pending_approval":
+                applied.append(ticket_id)
+        return applied
+
+    def _standing(self, state: dict[str, Any]) -> dict[str, Any]:
+        raw = state.get("standing_approval")
+        grant = _default_standing()
+        if isinstance(raw, dict):
+            grant.update(raw)
+        grant["enabled"] = bool(grant.get("enabled"))
+        grant["run_historical_backtest"] = bool(grant.get("run_historical_backtest"))
+        return grant
 
     def reject(
         self,
@@ -496,15 +605,27 @@ class HqStrategyFactory:
             ticket = copy.deepcopy(self._find(self._load(), ticket_id))
         if self.sandbox is None:
             return {"ok": False, "error": "backtest sandbox is not configured", "live_parity": True}
+        pool = ThreadPoolExecutor(max_workers=1)
         try:
-            run = self.sandbox.run_gcs_backtest(
+            future = pool.submit(
+                self.sandbox.run_gcs_backtest,
                 ticket["strategy_code"],
                 start=ticket["session_date"],
                 end=ticket["session_date"],
                 live_parity=True,
             )
-        except Exception as exc:
-            return {"ok": False, "error": str(exc), "live_parity": True}
+            try:
+                run = future.result(timeout=HISTORICAL_BACKTEST_TIMEOUT_S)
+            except FuturesTimeout:
+                return {
+                    "ok": False,
+                    "error": "historical backtest timed out before the bars were ready",
+                    "live_parity": True,
+                }
+            except Exception as exc:
+                return {"ok": False, "error": str(exc), "live_parity": True}
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         metrics = run.get("metrics") or {}
         return {
             "ok": True,
@@ -658,7 +779,7 @@ class HqStrategyFactory:
                 raw = _FALLBACK.get("state")
             if not isinstance(raw, dict):
                 return _empty_state()
-            return copy.deepcopy(raw)
+            return self._normalize(copy.deepcopy(raw))
         blob = self.store.get(FACTORY_STATE_KEY)
         if not blob:
             return _empty_state()
@@ -668,10 +789,15 @@ class HqStrategyFactory:
             return _empty_state()
         if not isinstance(parsed, dict):
             return _empty_state()
-        parsed.setdefault("tickets", [])
-        parsed.setdefault("policies", {})
-        parsed.setdefault("cycles", [])
-        return parsed
+        return self._normalize(parsed)
+
+    def _normalize(self, state: dict[str, Any]) -> dict[str, Any]:
+        state.setdefault("tickets", [])
+        state.setdefault("policies", {})
+        state.setdefault("cycles", [])
+        if not isinstance(state.get("standing_approval"), dict):
+            state["standing_approval"] = _default_standing()
+        return state
 
     def _save(self, state: dict[str, Any]) -> None:
         if self.store is None:

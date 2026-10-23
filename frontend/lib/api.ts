@@ -246,6 +246,12 @@ export const getHqSentimentSeries = (layer: string, component: string, start?: s
 export const getHqSentimentQuality = () => get<SentimentQuality>("/api/hq/sentiment/quality");
 export const getFactoryLine = () => get<FactoryLine>("/api/hq/factory/line");
 export const scanFactory = () => post<FactoryLine>("/api/hq/factory/scan", {});
+export const setFactoryStandingApproval = (enabled: boolean, note = "") =>
+  post<FactoryLine>("/api/hq/factory/standing-approval", {
+    enabled,
+    note,
+    run_historical_backtest: enabled,
+  });
 export async function approveFactoryTicket(
   ticketId: string,
   runHistoricalBacktest: boolean,

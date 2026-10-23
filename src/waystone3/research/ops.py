@@ -182,6 +182,7 @@ STRATEGY_INBOX_ACTIONS: frozenset[str] = frozenset(
         "factory-scan",
         "factory-approve",
         "factory-reject",
+        "factory-standing",
     }
 )
 
@@ -207,7 +208,13 @@ def execute_strategy_instruction(
     action = str(item.get("action") or "").strip().lower()
     params = dict(item.get("params") or {})
     assert_no_threshold_changes(params)
-    if action in {"factory-line", "factory-scan", "factory-approve", "factory-reject"}:
+    if action in {
+        "factory-line",
+        "factory-scan",
+        "factory-approve",
+        "factory-reject",
+        "factory-standing",
+    }:
         sbx = HqBacktestSandbox(runner=rt, store=store)
         scan_reader = None
         if action == "factory-scan" and params.get("rows") is None:
@@ -215,6 +222,19 @@ def execute_strategy_instruction(
         factory_line = HqStrategyFactory(runner=rt, reader=scan_reader, sandbox=sbx, store=store)
         if action == "factory-line":
             return factory_line.pipeline()
+        if action == "factory-standing":
+            enabled = params.get("enabled")
+            if not isinstance(enabled, bool):
+                raise ValueError("enabled must be true or false")
+            decision_overrides = params.get("overrides")
+            overrides = decision_overrides if isinstance(decision_overrides, dict) else None
+            return factory_line.set_standing_approval(
+                enabled=enabled,
+                actor=str(item.get("source") or "grok_bot"),
+                note=str(params.get("note") or item.get("text") or ""),
+                run_historical_backtest=bool(params.get("run_historical_backtest", True)),
+                overrides=overrides,
+            )
         if action == "factory-scan":
             raw_rows = params.get("rows")
             if raw_rows is not None and not isinstance(raw_rows, list):

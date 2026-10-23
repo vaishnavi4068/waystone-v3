@@ -10,6 +10,7 @@ import {
   getFactoryLine,
   rejectFactoryTicket,
   scanFactory,
+  setFactoryStandingApproval,
 } from "@/lib/api";
 import type { FactoryStation, FactoryStrategy, FactoryTicket } from "@/lib/types";
 
@@ -186,6 +187,15 @@ export default function Page() {
     onError: (error) => setActionError(apiErrorMessage(error)),
   });
 
+  const standing = useMutation({
+    mutationFn: (enabled: boolean) => setFactoryStandingApproval(enabled, note),
+    onSuccess: async (data) => {
+      setActionError("");
+      queryClient.setQueryData(["factory-line"], data);
+    },
+    onError: (error) => setActionError(apiErrorMessage(error)),
+  });
+
   const decide = useMutation({
     mutationFn: async (input: { id: string; kind: "approve" | "reject"; historical: boolean }) => {
       if (input.kind === "reject") return rejectFactoryTicket(input.id, note);
@@ -215,10 +225,9 @@ export default function Page() {
         <div>
           <h1 className="text-2xl font-semibold">Strategy test line</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-400">
-            Paper trade keeps running. Each day the line compares it with the backtest, opens a bug
-            when they disagree, and waits for a person. Approving applies a safe comparison note or
-            records a proposal. Locked thresholds are not changed. At this gate you can also run a
-            historical backtest for that session.
+            Paper trade keeps running. Each pass compares it with the daily backtest and opens a bug
+            when they disagree. Standing approval implements the safe fix, runs a historical
+            backtest for that session, and continues. Locked thresholds are not changed.
           </p>
         </div>
         <button
@@ -234,6 +243,21 @@ export default function Page() {
       {data.thresholds_locked && (
         <div className="mb-4 text-xs text-emerald-300">Signal, stop, and profit-take thresholds are locked.</div>
       )}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 px-4 py-3">
+        <p className="text-sm text-slate-300">
+          {data.standing_approval?.enabled
+            ? "Standing approval is on. Safe fixes are implemented, a historical backtest is attempted, and the line continues."
+            : "Standing approval is off. Each mismatch waits for a person."}
+        </p>
+        <button
+          type="button"
+          disabled={standing.isPending}
+          onClick={() => standing.mutate(!data.standing_approval?.enabled)}
+          className="rounded-lg bg-slate-800 px-3 py-2 text-sm text-slate-100 hover:bg-slate-700 disabled:opacity-50"
+        >
+          {data.standing_approval?.enabled ? "Revoke standing approval" : "Grant standing approval"}
+        </button>
+      </div>
       {actionError && <div className="mb-4 text-sm text-rose-300">{actionError}</div>}
       {data.source === "no_hq_database" && (
         <div className="mb-4 text-sm text-amber-200">

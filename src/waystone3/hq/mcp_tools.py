@@ -322,10 +322,26 @@ def register_hq_strategy_exec_tools(
 
     @mcp.tool()
     def hq_factory_scan() -> dict[str, Any]:
-        """Run one pass of the line. Read the daily sync log and open a bug, with a
-        suggested fix, for each paper-vs-backtest mismatch. Does not apply a fix."""
+        """Run one pass of the line. Open a bug for each mismatch. When standing
+        approval is on, apply the safe fix and attempt the historical backtest."""
         authorize()
         return line.scan()
+
+    @mcp.tool()
+    def hq_factory_standing_approval(
+        enabled: bool,
+        note: str = "",
+        run_historical_backtest: bool = True,
+    ) -> dict[str, Any]:
+        """Grant or revoke standing approval. Granting implements open safe fixes
+        and can run the historical backtest. Locked thresholds are not changed."""
+        authorize()
+        return line.set_standing_approval(
+            enabled=enabled,
+            actor="mcp",
+            note=note,
+            run_historical_backtest=run_historical_backtest,
+        )
 
     @mcp.tool()
     def hq_factory_approve(

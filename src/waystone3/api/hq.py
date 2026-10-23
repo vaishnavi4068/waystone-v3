@@ -103,6 +103,14 @@ class FactoryDecisionBody(BaseModel):
     overrides: dict[str, Any] | None = None
 
 
+class FactoryStandingBody(BaseModel):
+    enabled: bool
+    note: str = ""
+    actor: str = "operator"
+    run_historical_backtest: bool = True
+    overrides: dict[str, Any] | None = None
+
+
 def _day(value: str | None, name: str) -> date | None:
     if not value:
         return None
@@ -526,6 +534,19 @@ def build_hq_router(
         try:
             return line.approve(
                 ticket_id,
+                actor=body.actor,
+                note=body.note,
+                run_historical_backtest=body.run_historical_backtest,
+                overrides=body.overrides,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/factory/standing-approval")
+    def hq_factory_standing(body: FactoryStandingBody) -> dict[str, Any]:
+        try:
+            return line.set_standing_approval(
+                enabled=body.enabled,
                 actor=body.actor,
                 note=body.note,
                 run_historical_backtest=body.run_historical_backtest,

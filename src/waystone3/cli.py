@@ -1121,6 +1121,39 @@ def hq_factory_approve_cmd(
     console.print_json(_json.dumps(out, default=str))
 
 
+@app.command("hq-factory-grant")
+def hq_factory_grant_cmd(
+    note: str = typer.Option("", "--note"),
+    historical: bool = typer.Option(
+        True, "--historical/--no-historical", help="Run a live-parity historical backtest"
+    ),
+) -> None:
+    """Grant standing approval: implement safe fixes and continue. Thresholds stay locked."""
+    import json as _json
+
+    from waystone3.hq.factory import HqStrategyFactory
+
+    out = HqStrategyFactory().set_standing_approval(
+        enabled=True, actor="cli", note=note, run_historical_backtest=historical
+    )
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-factory-revoke")
+def hq_factory_revoke_cmd(
+    note: str = typer.Option("", "--note"),
+) -> None:
+    """Revoke standing approval. Later mismatches wait for a person again."""
+    import json as _json
+
+    from waystone3.hq.factory import HqStrategyFactory
+
+    out = HqStrategyFactory().set_standing_approval(
+        enabled=False, actor="cli", note=note, run_historical_backtest=False
+    )
+    console.print_json(_json.dumps(out, default=str))
+
+
 @app.command("hq-factory-reject")
 def hq_factory_reject_cmd(
     ticket_id: str = typer.Argument(..., help="fac_... ticket id"),

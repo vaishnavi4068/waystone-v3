@@ -986,12 +986,22 @@ export interface FactoryTicket {
   thresholds_locked: boolean;
 }
 
+export interface FactoryStandingApproval {
+  enabled: boolean;
+  actor: string;
+  run_historical_backtest: boolean;
+  note: string;
+  granted_at: string | null;
+  revoked_at: string | null;
+}
+
 export interface FactoryLine {
   name: string;
   thresholds_locked: boolean;
   stations: FactoryStation[];
   strategies: FactoryStrategy[];
   policies: Record<string, { comparison_mode?: string; commission_check?: string }>;
+  standing_approval: FactoryStandingApproval;
   tickets: FactoryTicket[];
   cycles: {
     cycle_id: string;

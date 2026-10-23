@@ -88,11 +88,14 @@ class _Sandbox:
 
 
 def _line(tmp_path: Path, sandbox: _Sandbox | None = None) -> HqStrategyFactory:
-    return HqStrategyFactory(
+    """Manual-gate factory. Standing approval is revoked so a person still decides."""
+    line = HqStrategyFactory(
         runner=_Runner(),
         sandbox=sandbox,
         store=LocalFsStore(tmp_path / "reports"),
     )
+    line.set_standing_approval(enabled=False, actor="test", run_historical_backtest=False)
+    return line
 
 
 def test_ok_rows_do_not_raise_bugs() -> None:
@@ -159,6 +162,68 @@ def test_scan_raises_bugs_and_approval_does_not_change_thresholds(tmp_path: Path
     assert line.scan([COUNT_ROW])["raised"] == []
 
 
+def test_standing_approval_implements_and_continues(tmp_path: Path) -> None:
+    sandbox = _Sandbox()
+    line = HqStrategyFactory(
+        runner=_Runner(), sandbox=sandbox, store=LocalFsStore(tmp_path / "granted")
+    )
+    assert line.pipeline()["standing_approval"]["enabled"] is True
+    report = line.scan([FILL_ROW, EXIT_ROW])
+    assert set(report["standing_applied"]) == {ticket["ticket_id"] for ticket in report["tickets"]}
+    fill = next(ticket for ticket in report["tickets"] if ticket["bucket"] == "fill_exit_drift")
+    exit_bug = next(ticket for ticket in report["tickets"] if ticket["bucket"] == "exit_reason")
+    assert fill["status"] == "implemented"
+    assert fill["implementation"]["thresholds_changed"] is False
+    assert fill["historical_backtest"]["ok"] is True
+    assert fill["historical_backtest"]["run_id"] == "sbx_hist_1"
+    assert sandbox.calls[0]["live_parity"] is True
+    assert exit_bug["status"] == "continued"
+    assert exit_bug["implementation"]["applied"] is False
+    assert report["policies"]["nq_v221"]["comparison_mode"] == "live_parity"
+    assert report["stations"]
+    approval = next(station for station in report["stations"] if station["id"] == "approval")
+    assert approval["state"] == "clear"
+    assert "Standing approval is on" in approval["detail"]
+
+    failing = _Sandbox(fail=True)
+    blocked = HqStrategyFactory(
+        runner=_Runner(), sandbox=failing, store=LocalFsStore(tmp_path / "missing-bars")
+    )
+    held = blocked.scan([FILL_ROW])["tickets"][0]
+    assert held["status"] == "implemented"
+    assert held["historical_backtest"]["ok"] is False
+    try:
+        blocked.set_standing_approval(enabled=True, overrides={"hard_stop_pct": 0.1})
+    except ValueError as exc:
+        assert "immutable" in str(exc)
+    else:
+        raise AssertionError("threshold override should have been refused")
+
+
+def test_standing_approval_does_not_stall_when_history_is_slow(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import time
+
+    monkeypatch.setattr("waystone3.hq.factory.HISTORICAL_BACKTEST_TIMEOUT_S", 0.15)
+
+    class _Slow:
+        def run_gcs_backtest(self, strategy: str, **kwargs: Any) -> dict[str, Any]:
+            del strategy, kwargs
+            time.sleep(2)
+            return {"run_id": "late", "metrics": {}}
+
+    line = HqStrategyFactory(
+        runner=_Runner(), sandbox=_Slow(), store=LocalFsStore(tmp_path / "slow")
+    )
+    started = time.perf_counter()
+    ticket = line.scan([FILL_ROW])["tickets"][0]
+    assert time.perf_counter() - started < 1.5
+    assert ticket["status"] == "implemented"
+    assert ticket["historical_backtest"]["ok"] is False
+    assert ticket["implementation"]["thresholds_changed"] is False
+
+
 def test_historical_backtest_gate(tmp_path: Path) -> None:
     sandbox = _Sandbox()
     line = _line(tmp_path, sandbox)
@@ -175,6 +240,7 @@ def test_historical_backtest_gate(tmp_path: Path) -> None:
     blocked = HqStrategyFactory(
         runner=_Runner(), sandbox=failing, store=LocalFsStore(tmp_path / "b")
     )
+    blocked.set_standing_approval(enabled=False, actor="test", run_historical_backtest=False)
     pending = blocked.scan([EXIT_ROW])["tickets"][0]
     held = blocked.approve(pending["ticket_id"], run_historical_backtest=True)
     assert held["status"] == "pending_approval"
@@ -196,6 +262,7 @@ def test_api_mcp_and_grokbot_share_the_line(tmp_path: Path, monkeypatch: Any) ->
         "hq_factory_scan",
         "hq_factory_approve",
         "hq_factory_reject",
+        "hq_factory_standing_approval",
     } <= names
 
     client = TestClient(
@@ -207,6 +274,14 @@ def test_api_mcp_and_grokbot_share_the_line(tmp_path: Path, monkeypatch: Any) ->
         )
     )
     headers = {"Authorization": f"Bearer {member['token']}"}
+    paused = client.post(
+        "/api/hq/factory/standing-approval",
+        headers=headers,
+        json={"enabled": False, "actor": "ada"},
+    )
+    assert paused.status_code == 200
+    assert paused.json()["standing_approval"]["enabled"] is False
+
     scanned = client.post(
         "/api/hq/factory/scan",
         headers=headers,
@@ -246,3 +321,33 @@ def test_api_mcp_and_grokbot_share_the_line(tmp_path: Path, monkeypatch: Any) ->
     stations = {row["id"]: row["state"] for row in board.json()["stations"]}
     assert stations["paper"] == "mixed"
     assert stations["approval"] == "waiting"
+
+    granted = client.post(
+        "/api/hq/factory/standing-approval",
+        headers=headers,
+        json={
+            "enabled": True,
+            "actor": "ada",
+            "run_historical_backtest": False,
+            "note": "overnight approval",
+            "overrides": {"hard_stop_pct": 0.2},
+        },
+    )
+    assert granted.status_code == 400
+    finished = client.post(
+        "/api/hq/factory/standing-approval",
+        headers=headers,
+        json={
+            "enabled": True,
+            "actor": "ada",
+            "run_historical_backtest": False,
+            "note": "overnight approval",
+        },
+    )
+    assert finished.status_code == 200
+    body = finished.json()
+    assert body["standing_approval"]["enabled"] is True
+    assert body["thresholds_locked"] is True
+    exit_bug = next(ticket for ticket in body["tickets"] if ticket["bucket"] == "exit_reason")
+    assert exit_bug["status"] == "continued"
+    assert exit_bug["implementation"]["thresholds_changed"] is False
