@@ -534,7 +534,7 @@ def build_app(
                 store=store,
             )
             if body.execute_now and body.action.strip().lower().startswith(
-                ("strategy-", "sandbox-")
+                ("strategy-", "sandbox-", "factory-")
             ):
                 from waystone3.research.ops import execute_strategy_instruction
 

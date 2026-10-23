@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 from waystone3.hq.backtest_sandbox import HqBacktestSandbox
 from waystone3.hq.context_lm import HqContextLanguageModel
+from waystone3.hq.factory import HqStrategyFactory
 from waystone3.hq.reader import HqReader
 from waystone3.hq.strategy_runner import HqStrategyRunner
 
@@ -40,6 +41,7 @@ def register_hq_strategy_exec_tools(
         else HqContextLanguageModel(runner=runner, reader=reader)
     )
     sbx = sandbox if sandbox is not None else HqBacktestSandbox(runner=runner)
+    line = HqStrategyFactory(runner=runner, reader=reader, sandbox=sbx, store=sbx.store)
 
     @mcp.tool()
     def hq_strategy_runtime(strategy: str | None = None) -> dict[str, Any]:
@@ -297,9 +299,7 @@ def register_hq_strategy_exec_tools(
         diagnose the root causes of any P&L or trade-count discrepancy (daily loss cap,
         15:55 flatten, or entry-fill % exit bar shift)."""
         authorize()
-        return sbx.diagnose_replay_discrepancy(
-            strategy, start=start, end=end, gcs_key=gcs_key
-        )
+        return sbx.diagnose_replay_discrepancy(strategy, start=start, end=end, gcs_key=gcs_key)
 
     @mcp.tool()
     def hq_sandbox_runs(limit: int = 20, run_id: str | None = None) -> dict[str, Any]:
@@ -312,6 +312,43 @@ def register_hq_strategy_exec_tools(
                 raise ValueError(f"sandbox run {run_id!r} not found")
             return found
         return {"runs": sbx.list_runs(limit)}
+
+    @mcp.tool()
+    def hq_factory_line() -> dict[str, Any]:
+        """Strategy test assembly line: paper trade, daily backtest, compare, open
+        mismatch bugs, and which station each strategy is waiting on. Thresholds are locked."""
+        authorize()
+        return line.pipeline()
+
+    @mcp.tool()
+    def hq_factory_scan() -> dict[str, Any]:
+        """Run one pass of the line. Read the daily sync log and open a bug, with a
+        suggested fix, for each paper-vs-backtest mismatch. Does not apply a fix."""
+        authorize()
+        return line.scan()
+
+    @mcp.tool()
+    def hq_factory_approve(
+        ticket_id: str,
+        note: str = "",
+        run_historical_backtest: bool = False,
+    ) -> dict[str, Any]:
+        """Human approval gate. Applies a safe comparison-policy fix, or records a
+        proposal when the fix would change locked thresholds. Set run_historical_backtest
+        to replay that session from GCS history in live-parity mode before continuing."""
+        authorize()
+        return line.approve(
+            ticket_id,
+            actor="mcp",
+            note=note,
+            run_historical_backtest=run_historical_backtest,
+        )
+
+    @mcp.tool()
+    def hq_factory_reject(ticket_id: str, note: str = "") -> dict[str, Any]:
+        """Reject a mismatch bug. Paper trading and locked thresholds stay as they are."""
+        authorize()
+        return line.reject(ticket_id, actor="mcp", note=note)
 
 
 def register_hq_tools(
@@ -488,4 +525,3 @@ def register_hq_tools(
             context_lm=context_lm,
             sandbox=sandbox,
         )
-

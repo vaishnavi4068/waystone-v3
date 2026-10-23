@@ -926,3 +926,80 @@ export interface SentimentPoint {
   state: string | null;
   source: string | null;
 }
+
+export interface FactoryStation {
+  id: string;
+  label: string;
+  state: string;
+  detail: string;
+}
+
+export interface FactoryStrategy {
+  strategy_code: string;
+  account_id: string | null;
+  paper: string;
+  process_running: boolean;
+  station: string;
+  open_bugs: number;
+  last_ticket_status: string | null;
+}
+
+export interface FactoryImplementation {
+  applied: boolean;
+  action?: string;
+  engine_changed: boolean;
+  thresholds_changed: boolean;
+  thresholds_locked: boolean;
+  blocked_reason?: string;
+  follow_up?: string;
+}
+
+export interface FactoryBacktest {
+  ok: boolean;
+  run_id?: string;
+  error?: string;
+  live_parity?: boolean;
+  thresholds_locked?: boolean;
+  net_pnl_usd?: number | null;
+}
+
+export interface FactoryTicket {
+  ticket_id: string;
+  strategy_code: string;
+  session_date: string;
+  bucket: string;
+  title: string;
+  detail: string;
+  suggested_fix: string;
+  safe_to_apply: boolean;
+  action: string;
+  status: string;
+  station: string;
+  sync_status: string | null;
+  evidence: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  approved_by: string | null;
+  approval_note: string;
+  historical_backtest: FactoryBacktest | null;
+  implementation: FactoryImplementation | null;
+  thresholds_locked: boolean;
+}
+
+export interface FactoryLine {
+  name: string;
+  thresholds_locked: boolean;
+  stations: FactoryStation[];
+  strategies: FactoryStrategy[];
+  policies: Record<string, { comparison_mode?: string; commission_check?: string }>;
+  tickets: FactoryTicket[];
+  cycles: {
+    cycle_id: string;
+    scanned_at: string;
+    rows_seen: number;
+    bugs_raised: number;
+    source: string;
+  }[];
+  raised?: string[];
+  source?: string;
+}

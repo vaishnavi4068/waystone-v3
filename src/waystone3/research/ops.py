@@ -151,6 +151,19 @@ def inbox_token() -> str:
     ).strip()
 
 
+def _factory_reader() -> Any | None:
+    """HQ reader for a GrokBot factory scan, or None when the database is unset."""
+    try:
+        from waystone3.hq.reader import HqReader, hq_dsn_from_env
+
+        dsn = hq_dsn_from_env()
+    except Exception:
+        return None
+    if not dsn:
+        return None
+    return HqReader(dsn)
+
+
 STRATEGY_INBOX_ACTIONS: frozenset[str] = frozenset(
     {
         "strategy-start",
@@ -165,6 +178,10 @@ STRATEGY_INBOX_ACTIONS: frozenset[str] = frozenset(
         "sandbox-diagnose-discrepancy",
         "sandbox-datasets",
         "sandbox-runs",
+        "factory-line",
+        "factory-scan",
+        "factory-approve",
+        "factory-reject",
     }
 )
 
@@ -183,12 +200,42 @@ def execute_strategy_instruction(
     """
     from waystone3.hq.backtest_sandbox import HqBacktestSandbox
     from waystone3.hq.context_lm import HqContextLanguageModel
+    from waystone3.hq.factory import HqStrategyFactory
     from waystone3.hq.strategy_runner import HqStrategyRunner, assert_no_threshold_changes
 
     rt = runner if runner is not None else HqStrategyRunner()
     action = str(item.get("action") or "").strip().lower()
     params = dict(item.get("params") or {})
     assert_no_threshold_changes(params)
+    if action in {"factory-line", "factory-scan", "factory-approve", "factory-reject"}:
+        sbx = HqBacktestSandbox(runner=rt, store=store)
+        scan_reader = None
+        if action == "factory-scan" and params.get("rows") is None:
+            scan_reader = _factory_reader()
+        factory_line = HqStrategyFactory(runner=rt, reader=scan_reader, sandbox=sbx, store=store)
+        if action == "factory-line":
+            return factory_line.pipeline()
+        if action == "factory-scan":
+            raw_rows = params.get("rows")
+            if raw_rows is not None and not isinstance(raw_rows, list):
+                raise ValueError("rows must be a list")
+            return factory_line.scan(raw_rows)
+        ticket_id = str(params.get("ticket_id") or "").strip()
+        if not ticket_id:
+            raise ValueError("ticket_id is required")
+        actor = str(item.get("source") or "grok_bot")
+        note = str(params.get("note") or item.get("text") or "")
+        decision_overrides = params.get("overrides")
+        overrides = decision_overrides if isinstance(decision_overrides, dict) else None
+        if action == "factory-approve":
+            return factory_line.approve(
+                ticket_id,
+                actor=actor,
+                note=note,
+                run_historical_backtest=bool(params.get("run_historical_backtest", False)),
+                overrides=overrides,
+            )
+        return factory_line.reject(ticket_id, actor=actor, note=note, overrides=overrides)
 
     strategy = str(params.get("strategy") or item.get("strategy") or "").strip() or None
     if action == "sandbox-datasets":
@@ -329,4 +376,3 @@ def process_strategy_inbox(
         except Exception as exc:
             results.append({"id": item_id, "action": action, "ok": False, "error": str(exc)})
     return results
-
