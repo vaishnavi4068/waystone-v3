@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from waystone3.hq.backtest_sandbox import HqBacktestSandbox
 from waystone3.hq.context_lm import HqContextLanguageModel
+from waystone3.hq.factory import HqStrategyFactory
 from waystone3.hq.reader import HqReader
 from waystone3.hq.strategy_runner import HqStrategyRunner
 
@@ -91,6 +92,25 @@ class IbkrExecuteBody(BaseModel):
     reason: str = "grok_bot"
 
 
+class FactoryScanBody(BaseModel):
+    rows: list[dict[str, Any]] | None = None
+
+
+class FactoryDecisionBody(BaseModel):
+    note: str = ""
+    actor: str = "operator"
+    run_historical_backtest: bool = False
+    overrides: dict[str, Any] | None = None
+
+
+class FactoryStandingBody(BaseModel):
+    enabled: bool
+    note: str = ""
+    actor: str = "operator"
+    run_historical_backtest: bool = True
+    overrides: dict[str, Any] | None = None
+
+
 def _day(value: str | None, name: str) -> date | None:
     if not value:
         return None
@@ -115,6 +135,7 @@ def build_hq_router(
         else HqContextLanguageModel(runner=strategy_runner, reader=reader)
     )
     sbx = sandbox if sandbox is not None else HqBacktestSandbox(runner=strategy_runner)
+    line = HqStrategyFactory(runner=strategy_runner, reader=reader, sandbox=sbx, store=sbx.store)
 
     def _reader() -> HqReader:
         if reader is None:
@@ -402,9 +423,7 @@ def build_hq_router(
     @router.post("/context/brief")
     def hq_context_brief_post(body: ContextBriefBody) -> dict[str, Any]:
         try:
-            return clm.generate_brief(
-                body.strategy, question=body.question, use_llm=body.use_llm
-            )
+            return clm.generate_brief(body.strategy, question=body.question, use_llm=body.use_llm)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -418,9 +437,7 @@ def build_hq_router(
     @router.post("/context/apply")
     def hq_context_apply(body: ContextApplyBody) -> dict[str, Any]:
         try:
-            return clm.apply_recommendation(
-                body.strategy, actor="api", overrides=body.overrides
-            )
+            return clm.apply_recommendation(body.strategy, actor="api", overrides=body.overrides)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -491,5 +508,63 @@ def build_hq_router(
         if found is None:
             raise HTTPException(status_code=404, detail=f"sandbox run {run_id} not found")
         return found
+
+    # ── Strategy test assembly line ──────────────────────────────────────────
+    @router.get("/factory/line")
+    def hq_factory_line() -> dict[str, Any]:
+        return line.pipeline()
+
+    @router.get("/factory/tickets")
+    def hq_factory_tickets(
+        status: str | None = None, strategy: str | None = None
+    ) -> dict[str, Any]:
+        return {"tickets": line.tickets(status=status, strategy=strategy)}
+
+    @router.post("/factory/scan")
+    def hq_factory_scan(body: FactoryScanBody) -> dict[str, Any]:
+        try:
+            return line.scan(body.rows)
+        except psycopg.OperationalError as exc:
+            raise HTTPException(status_code=503, detail="HQ database unavailable") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/factory/tickets/{ticket_id}/approve")
+    def hq_factory_approve(ticket_id: str, body: FactoryDecisionBody) -> dict[str, Any]:
+        try:
+            return line.approve(
+                ticket_id,
+                actor=body.actor,
+                note=body.note,
+                run_historical_backtest=body.run_historical_backtest,
+                overrides=body.overrides,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/factory/standing-approval")
+    def hq_factory_standing(body: FactoryStandingBody) -> dict[str, Any]:
+        try:
+            return line.set_standing_approval(
+                enabled=body.enabled,
+                actor=body.actor,
+                note=body.note,
+                run_historical_backtest=body.run_historical_backtest,
+                overrides=body.overrides,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/factory/tickets/{ticket_id}/reject")
+    def hq_factory_reject(ticket_id: str, body: FactoryDecisionBody) -> dict[str, Any]:
+        try:
+            return line.reject(
+                ticket_id,
+                actor=body.actor,
+                note=body.note,
+                overrides=body.overrides,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return router

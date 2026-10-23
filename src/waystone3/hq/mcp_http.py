@@ -39,9 +39,10 @@ def build_hq_mcp(
             "Waystone futures HQ, Backtest Sandbox & IBKR Agentic Strategy MCP: live paper "
             "trading vs backtest replay, daily P&L, trades, signals, fills, engine events and "
             "workbook KPIs for es_v221, nq_v221 and r2_mnq, plus the futures sentiment gate "
-            "(hq_sentiment*), Backtest Sandbox (hq_sandbox_*), Context LM (hq_context_*), and "
-            "agentic IBKR execution tools (hq_strategy_*, ibkr_futures_*). Strategy signal and "
-            "stop thresholds are immutable. Dates are session dates (YYYY-MM-DD, US/Eastern)."
+            "(hq_sentiment*), Backtest Sandbox (hq_sandbox_*), the strategy test assembly line "
+            "(hq_factory_*), Context LM (hq_context_*), and agentic IBKR execution tools "
+            "(hq_strategy_*, ibkr_futures_*). Strategy signal and stop thresholds are immutable. "
+            "Dates are session dates (YYYY-MM-DD, US/Eastern)."
         ),
         stateless_http=True,
         json_response=True,

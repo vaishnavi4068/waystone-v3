@@ -84,6 +84,11 @@ Actions the agent understands:
   - `sandbox-backtest-gcs`: run an isolated Sandbox Backtest against historical data in the GCS bucket
   - `sandbox-backtest-ibkr`: run an isolated Sandbox Backtest against IBKR daily/historical data fetched through the strategy's same bound IBKR paper account (`D...`)
   - `sandbox-runs`: list or fetch stored Sandbox Backtest runs (`sandbox/v1/runs/<run_id>.json`)
+  - `factory-line`: show the strategy test assembly line (paper, daily backtest, compare, open bugs, approval)
+  - `factory-scan`: raise a bug for each paper-vs-backtest mismatch. With standing approval on, apply the safe fix in the same pass
+  - `factory-approve`: approve one bug (`ticket_id`). Optional `run_historical_backtest` replays that session from GCS in live-parity mode. Locked thresholds are not changed
+  - `factory-reject`: reject one bug (`ticket_id`). Paper trading stays as it is
+  - `factory-standing`: grant or revoke standing approval (`enabled` true or false). Granting also runs the historical backtest at the gate unless `run_historical_backtest` is false
 
 
 
