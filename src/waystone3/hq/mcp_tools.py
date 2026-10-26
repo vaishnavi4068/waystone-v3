@@ -8,6 +8,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from waystone3.hq.backtest_sandbox import HqBacktestSandbox
 from waystone3.hq.context_lm import HqContextLanguageModel
 from waystone3.hq.reader import HqReader
 from waystone3.hq.strategy_runner import HqStrategyRunner
@@ -28,14 +29,17 @@ def register_hq_strategy_exec_tools(
     authorize: Callable[[], None],
     reader: HqReader | None = None,
     context_lm: HqContextLanguageModel | None = None,
+    sandbox: HqBacktestSandbox | None = None,
 ) -> None:
-    """Add ``hq_strategy_*``, ``hq_context_*``, and ``ibkr_futures_*`` tools for running
-    ``hq-strategy`` algorithms on IBKR agentic paper accounts with immutable thresholds."""
+    """Add ``hq_strategy_*``, ``hq_context_*``, ``hq_sandbox_*``, and ``ibkr_futures_*``
+    tools for running ``hq-strategy`` algorithms and sandbox backtests on IBKR agentic
+    paper accounts with immutable thresholds."""
     clm = (
         context_lm
         if context_lm is not None
         else HqContextLanguageModel(runner=runner, reader=reader)
     )
+    sbx = sandbox if sandbox is not None else HqBacktestSandbox(runner=runner)
 
     @mcp.tool()
     def hq_strategy_runtime(strategy: str | None = None) -> dict[str, Any]:
@@ -223,6 +227,92 @@ def register_hq_strategy_exec_tools(
         authorize()
         return clm.notify_grokbot(strategy, question=question)
 
+    @mcp.tool()
+    def hq_sandbox_datasets() -> dict[str, Any]:
+        """Backtest Sandbox discovery: list available historical CSV datasets in the GCS
+        bucket (gs://$IBKR_REPORTS_BUCKET/NSDQ250/...) and local mirror, plus the bound
+        IBKR paper account for each strategy (nq_v221, es_v221, r2_mnq)."""
+        authorize()
+        return sbx.list_datasets()
+
+    @mcp.tool()
+    def hq_sandbox_backtest_gcs(
+        strategy: str,
+        start: str | None = None,
+        end: str | None = None,
+        gcs_key: str | None = None,
+        contracts: int | None = None,
+        fng_prior_day: float | None = None,
+        live_parity: bool = False,
+    ) -> dict[str, Any]:
+        """Run an isolated Sandbox Backtest of an HQ strategy (nq_v221, es_v221, r2_mnq)
+        pointing to 1) historical data in the GCS bucket (gs://$IBKR_REPORTS_BUCKET/NSDQ250/...).
+        Set live_parity=True to enforce live paper session rules (-$2,500 loss cap, 15:55 flatten,
+        and fill-anchored % exits)."""
+        authorize()
+        return sbx.run_gcs_backtest(
+            strategy,
+            start=start,
+            end=end,
+            gcs_key=gcs_key,
+            contracts=contracts,
+            fng_prior_day=fng_prior_day,
+            live_parity=live_parity,
+        )
+
+    @mcp.tool()
+    def hq_sandbox_backtest_ibkr(
+        strategy: str,
+        days: int = 30,
+        bar_size: str = "1 min",
+        use_rth: bool = False,
+        account_id: str | None = None,
+        contracts: int | None = None,
+        fng_prior_day: float | None = None,
+        live_parity: bool = False,
+    ) -> dict[str, Any]:
+        """Run an isolated Sandbox Backtest of an HQ strategy (nq_v221, es_v221, r2_mnq)
+        pointing to 2) IBKR daily/historical data fetched through the SAME bound IBKR paper
+        account (D...). Set live_parity=True to enforce live paper rules."""
+        authorize()
+        return sbx.run_ibkr_backtest(
+            strategy,
+            days=days,
+            bar_size=bar_size,
+            use_rth=use_rth,
+            account_id=account_id,
+            contracts=contracts,
+            fng_prior_day=fng_prior_day,
+            live_parity=live_parity,
+        )
+
+    @mcp.tool()
+    def hq_sandbox_diagnose_discrepancy(
+        strategy: str,
+        start: str | None = None,
+        end: str | None = None,
+        gcs_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare Reference Backtest vs Live-Parity Backtest on the exact same bars and
+        diagnose the root causes of any P&L or trade-count discrepancy (daily loss cap,
+        15:55 flatten, or entry-fill % exit bar shift)."""
+        authorize()
+        return sbx.diagnose_replay_discrepancy(
+            strategy, start=start, end=end, gcs_key=gcs_key
+        )
+
+    @mcp.tool()
+    def hq_sandbox_runs(limit: int = 20, run_id: str | None = None) -> dict[str, Any]:
+        """List recent Sandbox Backtest runs (both GCS historical and IBKR paper-account
+        backtests), or fetch full metrics and trade list for a specific run_id."""
+        authorize()
+        if run_id:
+            found = sbx.get_run(run_id)
+            if found is None:
+                raise ValueError(f"sandbox run {run_id!r} not found")
+            return found
+        return {"runs": sbx.list_runs(limit)}
+
 
 def register_hq_tools(
     mcp: FastMCP,
@@ -230,6 +320,7 @@ def register_hq_tools(
     authorize: Callable[[], None],
     runner: HqStrategyRunner | None = None,
     context_lm: HqContextLanguageModel | None = None,
+    sandbox: HqBacktestSandbox | None = None,
 ) -> None:
     """Add ``hq_*`` tools. ``authorize`` raises when the caller's token is not valid."""
 
@@ -390,6 +481,11 @@ def register_hq_tools(
 
     if runner is not None:
         register_hq_strategy_exec_tools(
-            mcp, runner, authorize, reader=reader, context_lm=context_lm
+            mcp,
+            runner,
+            authorize,
+            reader=reader,
+            context_lm=context_lm,
+            sandbox=sandbox,
         )
 

@@ -1023,5 +1023,57 @@ def hq_context_apply_cmd(
     console.print_json(_json.dumps(clm.apply_recommendation(strategy, actor="cli"), default=str))
 
 
+@app.command("hq-sandbox-gcs")
+def hq_sandbox_gcs_cmd(
+    strategy: str = typer.Argument(..., help="nq_v221, es_v221, or r2_mnq"),
+    start: str | None = typer.Option(None, "--start", help="YYYY-MM-DD"),
+    end: str | None = typer.Option(None, "--end", help="YYYY-MM-DD"),
+    gcs_key: str | None = typer.Option(None, "--gcs-key", help="Explicit GCS object key"),
+    contracts: int | None = typer.Option(None, "--contracts"),
+) -> None:
+    """Run a Sandbox Backtest pointing to 1) historical data in the GCS bucket."""
+    import json as _json
+
+    from waystone3.hq.backtest_sandbox import HqBacktestSandbox
+
+    sbx = HqBacktestSandbox()
+    try:
+        out = sbx.run_gcs_backtest(
+            strategy, start=start, end=end, gcs_key=gcs_key, contracts=contracts
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-sandbox-ibkr")
+def hq_sandbox_ibkr_cmd(
+    strategy: str = typer.Argument(..., help="nq_v221, es_v221, or r2_mnq"),
+    days: int = typer.Option(30, "--days", help="Days of IBKR history to fetch"),
+    bar_size: str = typer.Option("1 min", "--bar-size", help="IBKR barSizeSetting"),
+    use_rth: bool = typer.Option(False, "--rth/--globex"),
+    account_id: str | None = typer.Option(None, "--account-id", help="IBKR paper account (D...)"),
+    contracts: int | None = typer.Option(None, "--contracts"),
+) -> None:
+    """Run a Sandbox Backtest pointing to 2) IBKR daily/historical data through the same account."""
+    import json as _json
+
+    from waystone3.hq.backtest_sandbox import HqBacktestSandbox
+
+    sbx = HqBacktestSandbox()
+    try:
+        out = sbx.run_ibkr_backtest(
+            strategy,
+            days=days,
+            bar_size=bar_size,
+            use_rth=use_rth,
+            account_id=account_id,
+            contracts=contracts,
+        )
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print_json(_json.dumps(out, default=str))
+
+
 if __name__ == "__main__":
     app()

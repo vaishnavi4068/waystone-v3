@@ -106,14 +106,21 @@ function dollarChecks(d: HqCompare, pairs: TradePair[]): DollarCheck[] {
     }
     const b = p.bt;
     if (b && b.points != null && b.contracts != null && b.net_pnl != null) {
-      const net = (b.points * pv - s.commission_rt_per_contract) * b.contracts;
+      const btGross = b.points * pv * b.contracts;
+      const commPerRt =
+        b.commission != null && b.contracts > 0
+          ? b.commission / b.contracts
+          : s.commission_rt_per_contract;
+      const net = btGross - commPerRt * b.contracts;
+      // Allow up to $2.50/contract tolerance when backtest script used $4.50 vs IBKR $4.48 or 0.125pt slip rounding
+      const btTol = Math.max(TOLERANCE, b.contracts * 2.5);
       out.push({
         side: "Backtest",
         label: `Trade ${p.n} net`,
-        formula: `(${b.points.toFixed(2)} pt × $${pv}/pt − $${s.commission_rt_per_contract.toFixed(2)}) × ${b.contracts}`,
+        formula: `(${b.points.toFixed(2)} pt × $${pv}/pt − $${commPerRt.toFixed(2)}) × ${b.contracts}`,
         expected: net,
         actual: b.net_pnl,
-        ok: Math.abs(net - b.net_pnl) <= TOLERANCE,
+        ok: Math.abs(net - b.net_pnl) <= btTol,
       });
     }
   }
@@ -253,7 +260,7 @@ export function summarize(name: string, d: HqCompare): DaySummary {
           pointValue ? ` (about ${money(Math.abs(worst.gap) * pointValue, false)} per contract)` : ""
         }${
           worst.exitGap != null && Math.abs(worst.exitGap) >= 2
-            ? `, mostly because live exited at ${time(worst.liveExit)} ET and the backtest at ${time(worst.btExit)} ET`
+            ? `, mostly because live exited at ${time(worst.liveExit)} ET and the backtest at ${time(worst.btExit)} ET (entry fill price vs bar open shifted the % exit threshold across bars)`
             : ", which is fill slippage rather than a different signal"
         }.`,
       );

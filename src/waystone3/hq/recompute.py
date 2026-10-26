@@ -187,8 +187,27 @@ def recompute(conn: Conn, ref: RefData, strategy: Strategy, now: datetime) -> No
             settings = ref.settings_for(sid, day)
             session = sessions.get(day)
             paper = paper_by_day.get(day, [])
+            # Determine when the daily loss cap fired: prefer the actual exit_ts of the
+            # paper trade that pushed cumulative realized P&L <= daily_loss_cap, falling
+            # back to the ops_event LOSS_CAP log timestamp.
+            cap_limit = dec(settings["daily_loss_cap"])
+            trade_cap_ts: datetime | None = None
+            if cap_limit is not None:
+                threshold = -abs(cap_limit)
+                running_net = Decimal(0)
+                for pt in sorted(paper, key=lambda t: t.exit_ts or t.entry_ts):
+                    if pt.net_pnl is not None and pt.exit_ts is not None:
+                        running_net += pt.net_pnl
+                        if running_net <= threshold:
+                            trade_cap_ts = pt.exit_ts
+                            break
+            event_cap_ts = loss_cap_at.get(day)
+            if trade_cap_ts and event_cap_ts:
+                effective_cap_ts: datetime | None = min(trade_cap_ts, event_cap_ts)
+            else:
+                effective_cap_ts = trade_cap_ts or event_cap_ts
             matches = (
-                match_trades(paper, bt_by_day.get(day, []), loss_cap_at.get(day))
+                match_trades(paper, bt_by_day.get(day, []), effective_cap_ts)
                 if day in runs
                 else None
             )
@@ -196,7 +215,9 @@ def recompute(conn: Conn, ref: RefData, strategy: Strategy, now: datetime) -> No
             row = daily_sync(
                 paper,
                 matches,
-                loss_cap_hit=bool(session and session["loss_cap_hit"]),
+                loss_cap_hit=bool(
+                    (session and session["loss_cap_hit"]) or trade_cap_ts is not None
+                ),
                 pct_threshold=dec(settings["sync_pct_threshold"]) or Decimal("0.15"),
                 usd_floor=dec(settings["sync_usd_floor"]) or Decimal(0),
             )
@@ -213,6 +234,11 @@ def recompute(conn: Conn, ref: RefData, strategy: Strategy, now: datetime) -> No
             )
             bt_status = backtest_status(strategy, day, runs.get(day), now)
             final = bool(session and session["summary_present"]) and bt_status == "LOADED"
+            initial_paper_status = (
+                "NONE"
+                if session is None
+                else ("FINAL" if session["summary_present"] else "PRELIMINARY")
+            )
             cur.execute(
                 """
                 INSERT INTO ops.day_status (strategy_id, session_date, paper_status,
@@ -227,7 +253,7 @@ def recompute(conn: Conn, ref: RefData, strategy: Strategy, now: datetime) -> No
                 (
                     sid,
                     day,
-                    "NONE" if session is None else "PRELIMINARY",
+                    initial_paper_status,
                     bt_status,
                     row.sync_status,
                     final,
