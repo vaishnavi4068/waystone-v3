@@ -10,6 +10,8 @@ import type {
   BacktestResult,
   Bar,
   CompareDays,
+  FactoryLine,
+  FactoryTicket,
   HqCompare,
   HqDailyPnl,
   HqKpis,
@@ -242,3 +244,25 @@ export const getHqSentimentSeries = (layer: string, component: string, start?: s
     `/api/hq/sentiment/series${q({ layer, component, start, end })}`,
   );
 export const getHqSentimentQuality = () => get<SentimentQuality>("/api/hq/sentiment/quality");
+export const getFactoryLine = () => get<FactoryLine>("/api/hq/factory/line");
+export const scanFactory = () => post<FactoryLine>("/api/hq/factory/scan", {});
+export const setFactoryStandingApproval = (enabled: boolean, note = "") =>
+  post<FactoryLine>("/api/hq/factory/standing-approval", {
+    enabled,
+    note,
+    run_historical_backtest: enabled,
+  });
+export async function approveFactoryTicket(
+  ticketId: string,
+  runHistoricalBacktest: boolean,
+  note = "",
+): Promise<FactoryTicket> {
+  const { data } = await client.post<FactoryTicket>(
+    `/api/hq/factory/tickets/${ticketId}/approve`,
+    { note, run_historical_backtest: runHistoricalBacktest },
+    { timeout: 120_000 },
+  );
+  return data;
+}
+export const rejectFactoryTicket = (ticketId: string, note = "") =>
+  post<FactoryTicket>(`/api/hq/factory/tickets/${ticketId}/reject`, { note });

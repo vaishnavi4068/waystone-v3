@@ -1075,5 +1075,101 @@ def hq_sandbox_ibkr_cmd(
     console.print_json(_json.dumps(out, default=str))
 
 
+@app.command("hq-factory-line")
+def hq_factory_line_cmd() -> None:
+    """Show the strategy test assembly line: paper, daily backtest, bugs, and approval."""
+    import json as _json
+
+    from waystone3.hq.factory import HqStrategyFactory
+
+    console.print_json(_json.dumps(HqStrategyFactory().pipeline(), default=str))
+
+
+@app.command("hq-factory-scan")
+def hq_factory_scan_cmd() -> None:
+    """Scan daily sync and raise mismatch bugs. Does not change locked thresholds."""
+    import json as _json
+
+    from waystone3.hq.factory import HqStrategyFactory
+
+    try:
+        out = HqStrategyFactory().scan()
+    except Exception as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-factory-approve")
+def hq_factory_approve_cmd(
+    ticket_id: str = typer.Argument(..., help="fac_... ticket id"),
+    historical: bool = typer.Option(
+        False, "--historical", help="Run a live-parity historical backtest at this gate"
+    ),
+    note: str = typer.Option("", "--note"),
+) -> None:
+    """Approve a mismatch bug, optionally run a historical backtest, then continue."""
+    import json as _json
+
+    from waystone3.hq.factory import HqStrategyFactory
+
+    try:
+        out = HqStrategyFactory().approve(
+            ticket_id, actor="cli", note=note, run_historical_backtest=historical
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-factory-grant")
+def hq_factory_grant_cmd(
+    note: str = typer.Option("", "--note"),
+    historical: bool = typer.Option(
+        True, "--historical/--no-historical", help="Run a live-parity historical backtest"
+    ),
+) -> None:
+    """Grant standing approval: implement safe fixes and continue. Thresholds stay locked."""
+    import json as _json
+
+    from waystone3.hq.factory import HqStrategyFactory
+
+    out = HqStrategyFactory().set_standing_approval(
+        enabled=True, actor="cli", note=note, run_historical_backtest=historical
+    )
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-factory-revoke")
+def hq_factory_revoke_cmd(
+    note: str = typer.Option("", "--note"),
+) -> None:
+    """Revoke standing approval. Later mismatches wait for a person again."""
+    import json as _json
+
+    from waystone3.hq.factory import HqStrategyFactory
+
+    out = HqStrategyFactory().set_standing_approval(
+        enabled=False, actor="cli", note=note, run_historical_backtest=False
+    )
+    console.print_json(_json.dumps(out, default=str))
+
+
+@app.command("hq-factory-reject")
+def hq_factory_reject_cmd(
+    ticket_id: str = typer.Argument(..., help="fac_... ticket id"),
+    note: str = typer.Option("", "--note"),
+) -> None:
+    """Reject a mismatch bug. Paper trading and locked thresholds stay unchanged."""
+    import json as _json
+
+    from waystone3.hq.factory import HqStrategyFactory
+
+    try:
+        out = HqStrategyFactory().reject(ticket_id, actor="cli", note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print_json(_json.dumps(out, default=str))
+
+
 if __name__ == "__main__":
     app()
